@@ -123,6 +123,9 @@ pub struct QuantumKuramotoNetwork {
 }
 
 impl QuantumKuramotoNetwork {
+    /// Creates a new Kuramoto network with the given noise temperature `kT`.
+    ///
+    /// Higher `temperature` → stronger stochastic exploration (AXIOMA-006).
     pub fn new(temperature: f64) -> Self {
         Self {
             oscillators: Vec::new(),
@@ -504,7 +507,7 @@ impl QuantumKuramotoNetwork {
         }
     }
 
-    /// Parámetro de orden de Kuramoto r = |Σ e^{iφ}| / N ∈ [0,1].
+    /// Parámetro de orden de Kuramoto r = |Σ e^{iφ}| / N ∈ `[0,1]`.
     ///
     /// Resultado cacheado: recomputa solo si `step()` fue llamado desde la
     /// última invocación. En bucles de control que llaman este método sin
@@ -603,7 +606,14 @@ impl QuantumKuramotoNetwork {
         self.dirty = false;
     }
 
-    // ─── CRATE-004 prerequisite APIs (FIX-H) ────────────────────────────────
+    /// Number of coupling edges currently registered.
+    ///
+    /// Useful for verifying that `remove_oscillator` correctly purges edges.
+    pub fn coupling_count(&self) -> usize {
+        self.coupling.len()
+    }
+
+        // ─── CRATE-004 prerequisite APIs (FIX-H) ────────────────────────────────
 
     /// Amplitude norm of the oscillator for `id`. O(1) via direct-index lookup.
     ///
@@ -1180,5 +1190,86 @@ mod tests {
         assert!(first.is_finite());
         assert!(second.is_finite());
         assert_ne!(first, second);
+    }
+}
+
+#[cfg(test)]
+mod prerequisite_api_tests {
+    use super::*;
+    use genesis_types::NodeId;
+    use crate::oscillator::{OscillatorState, QuantumOscillator};
+
+    fn node(raw: u64) -> NodeId { NodeId::try_new(raw).unwrap() }
+
+    fn make_osc(id: NodeId) -> QuantumOscillator {
+        QuantumOscillator::new(id, [0.1_f64; 5])
+    }
+
+    #[test]
+    fn amplitude_norm_returns_zero_for_missing_node() {
+        let net = QuantumKuramotoNetwork::new(0.01);
+        assert_eq!(net.amplitude_norm(node(99)), 0.0);
+    }
+
+    #[test]
+    fn amplitude_norm_returns_expected_value() {
+        let mut net = QuantumKuramotoNetwork::new(0.01);
+        let id = node(1);
+        let mut osc = make_osc(id);
+        osc.amplitudes = [0.5; 5];
+        net.add_oscillator(osc).unwrap();
+        // amplitude_norm = sum(amplitudes) / 5.0 = 2.5 / 5.0 = 0.5
+        assert!((net.amplitude_norm(id) - 0.5).abs() < 1e-10);
+    }
+
+    #[test]
+    fn set_amplitude_all_grades_clamps_and_applies() {
+        let mut net = QuantumKuramotoNetwork::new(0.01);
+        let id = node(2);
+        net.add_oscillator(make_osc(id)).unwrap();
+        // Set beyond 1.0 — should clamp
+        net.set_amplitude_all_grades(id, 1.5);
+        assert!((net.amplitude_norm(id) - 1.0).abs() < 1e-10);
+        // Set to 0.3
+        net.set_amplitude_all_grades(id, 0.3);
+        assert!((net.amplitude_norm(id) - 0.3).abs() < 1e-10);
+    }
+
+    #[test]
+    fn set_amplitude_noop_for_missing_node() {
+        let mut net = QuantumKuramotoNetwork::new(0.01);
+        // Should not panic
+        net.set_amplitude_all_grades(node(999), 0.5);
+    }
+
+    #[test]
+    fn remove_oscillator_returns_err_for_missing_node() {
+        let mut net = QuantumKuramotoNetwork::new(0.01);
+        assert!(net.remove_oscillator(node(999)).is_err());
+    }
+
+    #[test]
+    fn remove_oscillator_removes_and_marks_pruned() {
+        let mut net = QuantumKuramotoNetwork::new(0.01);
+        let id = node(7);
+        net.add_oscillator(make_osc(id)).unwrap();
+        assert_eq!(net.amplitude_norm(id), 1.0); // active
+        net.remove_oscillator(id).unwrap();
+        // After removal: amplitude_norm should return 0.0 (Pruned oscillator has zero amplitudes)
+        assert_eq!(net.amplitude_norm(id), 0.0);
+    }
+
+    #[test]
+    fn remove_oscillator_purges_coupling_edges() {
+        let mut net = QuantumKuramotoNetwork::new(0.01);
+        let a = node(10);
+        let b = node(11);
+        net.add_oscillator(make_osc(a)).unwrap();
+        net.add_oscillator(make_osc(b)).unwrap();
+        net.set_coupling(a, b, 0.5);
+        assert_eq!(net.coupling_count(), 1);
+        net.remove_oscillator(a).unwrap();
+        // Coupling referencing a should be removed
+        assert_eq!(net.coupling_count(), 0);
     }
 }

@@ -42,20 +42,21 @@ static_assertions::const_assert_eq!(core::mem::align_of::<DerivedMetadata>(), 8)
 
 impl DerivedMetadata {
     /// Returns true if blade `i` is active in this metadata.
-    #[inline(always)]
-    pub fn is_active(&self, blade: usize) -> bool {
+    #[inline] // bit-mask check: always inlined by optimizer anyway
+    pub const fn is_active(&self, blade: usize) -> bool {
         blade < 32 && (self.active_mask & (1u32 << blade)) != 0
     }
 
     /// Construct a new `DerivedMetadata` from computed fields.
     /// Internal constructor — `_pad` is zero-initialized.
-    #[inline(always)]
-    pub fn new(active_mask: u32, max_abs_coeff: f64, clifford_norm_sq: f64) -> Self {
+    #[inline]
+    pub const fn new(active_mask: u32, max_abs_coeff: f64, clifford_norm_sq: f64) -> Self {
         Self { active_mask, _pad: 0, max_abs_coeff, clifford_norm_sq }
     }
 
     /// Mark blade `i` as active.
-    #[inline(always)]
+    #[inline]
+    #[allow(clippy::missing_const_for_fn)] // &mut self not const-stable on MSRV 1.75
     pub fn set_active(&mut self, blade: usize) {
         if blade < 32 { self.active_mask |= 1u32 << blade; }
     }

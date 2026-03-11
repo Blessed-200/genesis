@@ -24,6 +24,10 @@ use rayon::prelude::*;
 /// Error: < 1e-9 for |x| ≤ 1e12 (verified by test).
 ///
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+/// Polynomial approximation of `sin(x)` with < 1e-9 error for `|x| ≤ 1e12`.
+///
+/// Two-range strategy: Cody-Waite reduction for `|x| < 2^20`, `f64::sin` fallback
+/// for large phases (Kuramoto physically bounded well below 2^20). AX-ID: AXIOMA-006
 #[inline(always)]
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) fn poly_sin(x: f64) -> f64 {
@@ -59,6 +63,9 @@ pub(crate) fn poly_sin(x: f64) -> f64 {
 /// Numerically-stable cosine approximation. Same reduction as poly_sin.
 ///
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+/// Polynomial approximation of `cos(x)`. Same accuracy and strategy as [`poly_sin`].
+///
+/// AX-ID: AXIOMA-006
 #[inline(always)]
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) fn poly_cos(x: f64) -> f64 {

@@ -15,7 +15,13 @@ pub fn kuramoto_critical_coupling(temperature: f64) -> f64 {
 /// `r < SOC_R_SYNC_MIN`: caos dominante — sin cognición coherente.
 /// `r > SOC_R_SYNC_MAX`: sincronía excesiva — rigidez, sin creatividad.
 /// AX-ID: AXIOMA-005, AXIOMA-006
+/// Minimum synchrony order r for SOC regime (below → subcritical, frozen).
+///
+/// AX-ID: AXIOMA-005
 pub const SOC_R_SYNC_MIN: f64 = 0.3;
+/// Maximum synchrony order r for SOC regime (above → supercritical, rigid).
+///
+/// AX-ID: AXIOMA-005
 pub const SOC_R_SYNC_MAX: f64 = 0.7;
 
 /// Monitor de criticalidad autoorganizada (SOC).

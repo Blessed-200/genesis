@@ -7,9 +7,15 @@ use crate::multivector::SparseCliffordVector;
 use crate::sign::CAYLEY_SIGN;
 
 /// Scalar dual number `value + grad ε` for forward AD.
+/// Scalar dual number `f + ε·f'` for forward-mode automatic differentiation.
+///
+/// Used to propagate gradients through sparse G(1,3) geometric products.
+/// Arithmetic is standard dual-number algebra: `(a+bε)(c+dε) = ac + (ad+bc)ε`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Dual {
+    /// Primal value (the regular coefficient).
     pub value: f64,
+    /// Dual component (the derivative / sensitivity).
     pub grad: f64,
 }
 
@@ -17,14 +23,19 @@ pub struct Dual {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SparseDualVector {
+    /// Dual-valued coefficient array for all 16 blades of G(1,3).
     pub coeffs: [Dual; TOTAL_BLADES],
+    /// Dual-valued Lorentz-invariant norm squared `⟨A·Ã⟩₀`.
     pub clifford_norm_sq: Dual,
+    /// Dual-valued maximum absolute coefficient (used for CS gate).
     pub max_abs_coeff: Dual,
+    /// Active blade bitmask (bit i = 1 iff `|coeffs[i].value| > PLANCK`).
     pub active_mask: u16,
     _pad: [u8; 14],
 }
 
 impl SparseDualVector {
+    /// Returns the zero dual multivector (all coefficients zero, inactive mask).
     #[must_use]
     pub const fn zero() -> Self {
         Self {
@@ -45,6 +56,9 @@ impl SparseDualVector {
         }
     }
 
+    /// Constructs a `SparseDualVector` from a dense 16-element dual buffer.
+    ///
+    /// Computes norm, active mask, and max coefficient in a single pass.
     #[must_use]
     pub fn from_dense_buf(buf: &[Dual; TOTAL_BLADES]) -> Self {
         let mut active_mask = 0u16;
@@ -110,6 +124,11 @@ impl From<SparseCliffordVector> for SparseDualVector {
     }
 }
 
+/// Geometric product of two dual sparse multivectors in G(1,3).
+///
+/// Returns `None` if the Cauchy-Schwarz energy gate fires (product vanishes
+/// below `COGNITIVE_PLANCK_CONSTANT`). Propagates dual (gradient) components
+/// via the Leibniz rule: `d(AB) = dA·B + A·dB`.
 #[must_use]
 pub fn geometric_product_dual(
     lhs: &SparseDualVector,

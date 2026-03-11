@@ -20,6 +20,30 @@
 //! - No global simulation clock (AXIOMA-002).
 //! - No external basis parameter in geometric product (Mandato §4.2).
 //! - CS gate uses `max_abs_coeff`, NOT the Clifford/L2 norm (Mandato §2.3).
+//! # Compiler directives — lint policy
+//!
+//! These crate-level lints enforce production-grade engineering standards.
+//! All public API must be documented. All unsafe must be justified.
+//! All clippy::pedantic issues not explicitly allowed must be zero.
+#![deny(missing_docs)]
+#![deny(clippy::undocumented_unsafe_blocks)]
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    clippy::doc_markdown,
+    clippy::float_cmp,
+    clippy::items_after_statements,
+    clippy::missing_errors_doc,    // added in favour of explicit fallibility docs
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::semicolon_if_nothing_returned,
+    clippy::uninlined_format_args,
+)]
+
+
 
 #![allow(
     clippy::cast_possible_truncation,

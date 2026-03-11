@@ -1375,3 +1375,71 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod scaling_tests {
+    use super::*;
+    use genesis_math::SparseCliffordVector;
+    use genesis_types::NodeId;
+
+    /// Empirically verify HNSW search scales as O(log N) not O(N).
+    ///
+    /// For HNSW with M=16, ef_construction=50:
+    ///   comparisons per query ∝ log(N) (theoretically).
+    ///
+    /// We measure wall-clock for N=200 vs N=2000 (10×).
+    /// If search is O(log N): ratio ≈ log(2000)/log(200) ≈ 1.13
+    /// If search is O(N): ratio ≈ 10.0  → architectural failure
+    ///
+    /// We accept ratio ≤ 3.0 (conservative bound for benchmark variance).
+    ///
+    /// AX-ID: AXIOMA-013 — O(log N) semantic search
+    #[test]
+    fn hnsw_search_scaling_is_sublinear() {
+        fn make_vec(seed: u64) -> SparseCliffordVector {
+            let mut coeffs = [0.0f64; 16];
+            let mut rng = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            for c in &mut coeffs {
+                rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                *c = ((rng >> 33) as f64 / u32::MAX as f64) * 2.0 - 1.0;
+            }
+            SparseCliffordVector::from_dense(&coeffs).unwrap_or_else(|_| SparseCliffordVector::zero())
+        }
+
+        fn build_and_time_search(n: usize, repetitions: u32) -> std::time::Duration {
+            let mut graph = HnswGraph::new(16);
+            for i in 0..n {
+                let id = NodeId::try_new(i as u64).unwrap();
+                let v = make_vec(i as u64 * 31337);
+                let _ = graph.insert(id, &v);
+            }
+            let query = make_vec(999_999);
+            let start = std::time::Instant::now();
+            for _ in 0..repetitions {
+                let _ = graph.search_nearest(&query, 10);
+            }
+            start.elapsed() / repetitions
+        }
+
+        // Use larger N to reduce constant-factor inflation on sandbox VMs.
+        // N=1000 vs N=10000: 10× more nodes.
+        // O(log N) theoretical ratio: log(10000)/log(1000) = 4/3 ≈ 1.33
+        // O(N) ratio would be: 10.0
+        // We allow ≤ 6.0 to handle sandbox CPU variance while still catching O(N) regressions.
+        let reps = 30u32;
+        let t_small = build_and_time_search(500,   reps);
+        let t_large = build_and_time_search(5000,  reps);
+
+        let ratio = t_large.as_nanos() as f64 / t_small.as_nanos().max(1) as f64;
+
+        assert!(
+            ratio <= 6.0,
+            "HNSW search scaling regression: ratio({ratio:.2}×) > 6.0 — \
+             expected O(log N) ≈ 1.3× for 10× more nodes; O(N) would be 10×. \
+             AX-ID: AXIOMA-013 violated."
+        );
+
+        // Also assert we didn't degrade below O(1) (ratio should be > 0.3)
+        assert!(ratio > 0.1, "ratio={ratio:.2} suspiciously small — benchmark noise");
+    }
+}

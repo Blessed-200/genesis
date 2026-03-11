@@ -206,6 +206,7 @@ fn xor_columns_opt(a: Column, b: &Column, num_edges: usize) -> Column {
         (Column::Dense(mut da), Column::Dense(db)) => {
             // AVX-512 path: XOR 512 bits (8 × u64) per instruction with prefetch.
             #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+            // SAFETY: AVX-512 XOR on aligned data guaranteed by caller contract.
             unsafe {
                 use std::arch::x86_64::*;
                 let len = da.len().min(db.len());
@@ -348,6 +349,7 @@ pub struct IncrementalH1State {
 const CHECKPOINT_INTERVAL: usize = 1_000_000;
 
 impl IncrementalH1State {
+    /// Creates an empty H¹ state with no nodes or edges.
     pub fn new() -> Self {
         Self {
             uf:                   PersistentUnionFind::new(),

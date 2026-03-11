@@ -7,8 +7,8 @@
 //! Offset  Size  Field               Description
 //!      0   128  coeffs: [f64; 16]   blade coefficients (dense, zeros for inactive)
 //!    128     8  clifford_norm_sq    ⟨A·Ã⟩₀ — Lorentz-invariant, not for CS gate
-//!    136     8  max_abs_coeff       max_i(|coeffs[i]|) — ONLY valid for CS gate
-//!    144     2  active_mask: u16    bit i set ↔ |coeffs[i]| > PLANCK
+//!    136     8  max_abs_coeff       max_i(|`coeffs[i]`|) — ONLY valid for CS gate
+//!    144     2  active_mask: u16    bit i set ↔ |`coeffs[i]`| > PLANCK
 //!    146    14  _pad: [u8; 14]      explicit padding to 160 bytes
 //! ```
 //!
@@ -51,12 +51,12 @@ pub struct SparseCliffordVector {
     /// Inactive blades are stored as exactly 0.0.
     pub coeffs: [f64; TOTAL_BLADES],
 
-    /// ⟨A·Ã⟩₀ = Σᵢ coeffs[i]² × CLIFFORD_NORM_WEIGHTS[i].
+    /// ⟨A·Ã⟩₀ = Σᵢ `coeffs[i]`² × `CLIFFORD_NORM_WEIGHTS[i]`.
     /// Lorentz-invariant. Positive (timelike), negative (spacelike), zero (null).
     /// **PROHIBITED** for CS gate — use `max_abs_coeff` instead.
     pub clifford_norm_sq: f64,
 
-    /// max_i(|coeffs[i]|) over active blades. Zero for the zero multivector.
+    /// max_i(|`coeffs[i]`|) over active blades. Zero for the zero multivector.
     /// The **sole** valid field for the Cauchy-Schwarz gate (see MANDATO §2.3).
     pub max_abs_coeff: f64,
 
@@ -332,14 +332,14 @@ impl SparseCliffordVector {
     ///
     /// ADVERTENCIA: NO es ⟨A·Ã⟩₀ (norma de Lorentz). Para grado k ≥ 2,
     /// `metric_scalar_product(&v, &v) ≠ clifford_norm_sq` — el signo difiere
-    /// por REVERSE_SIGN[k]. Use `clifford_norm_sq` para la norma invariante.
+    /// por `REVERSE_SIGN[k]`. Use `clifford_norm_sq` para la norma invariante.
     ///
     /// - `metric_scalar_product(&v, &v)` = Σᵢ vᵢ² · ηᵢᵢ (suma con signo de métrica)
     /// - `clifford_norm_sq`              = ⟨v·ṽ⟩₀ (incluye signo de reverso)
     ///
     /// Ejemplo concreto para e₀₁ (grado 2, coef = 1.0):
-    ///   `metric_scalar_product` = +1.0  (SIGNATURE_TABLE[0b0011])
-    ///   `clifford_norm_sq`      = −1.0  (CLIFFORD_NORM_WEIGHTS[0b0011])
+    ///   `metric_scalar_product` = +1.0  (`SIGNATURE_TABLE[0b0011]`)
+    ///   `clifford_norm_sq`      = −1.0  (`CLIFFORD_NORM_WEIGHTS[0b0011]`)
     ///
     /// Uso legítimo: contracciones geométricas grado-preservadas, no normas.
     ///
@@ -552,7 +552,7 @@ impl crate::GeometricProduct for SparseCliffordVector {
 /// Grade-weighted metric on G(1,3) blade coefficients.
 ///
 /// Derived **at compile time** from `GRADE_TABLE` to guarantee consistency:
-/// `METRIC_WEIGHTS[i] = GRADE_WEIGHTS[GRADE_TABLE[i]]`
+/// `M`ETRIC_WEIGHTS[i]` = GRADE_WEIGHTS[`GRADE_TABLE[i]`]`
 ///
 /// Grade semantics (AXIOMA-001, H_estructura):
 /// - Grade 0 (scalar):      2.0 — global orientation, highest weight
@@ -580,7 +580,7 @@ pub(crate) const METRIC_WEIGHTS: [f64; TOTAL_BLADES] = {
 /// Distancia semántica diferenciada por grado en el espacio de coeficientes de G(1,3).
 ///
 /// ```text
-/// d(x, y) = √( Σᵢ METRIC_WEIGHTS[i] · (xᵢ − yᵢ)² )
+/// d(x, y) = √( Σᵢ `METRIC_WEIGHTS[i]` · (xᵢ − yᵢ)² )
 /// ```
 ///
 /// Satisface los cuatro axiomas métricos por construcción:
@@ -951,8 +951,8 @@ mod tests {
     /// para grado ≥ 2. Documentado y esperado — son dos bilineales distintas.
     ///
     /// Para e₀₁ (blade 0b0011, grado 2, coef = 1.0):
-    ///   metric_scalar_product = +1.0  (SIGNATURE_TABLE[3] = +1)
-    ///   clifford_norm_sq      = −1.0  (CLIFFORD_NORM_WEIGHTS[3] = −1)
+    ///   metric_scalar_product = +1.0  (`SIGNATURE_TABLE[3]` = +1)
+    ///   clifford_norm_sq      = −1.0  (`CLIFFORD_NORM_WEIGHTS[3]` = −1)
     ///
     /// AX-ID: AXIOMA-001
     #[test]
@@ -1175,7 +1175,7 @@ mod tests {
         );
     }
 
-    /// Invariant: METRIC_WEIGHTS[i] == GRADE_WEIGHTS[GRADE_TABLE[i]] for all i.
+    /// Invariant: `METRIC_WEIGHTS[i]` == GRADE_WEIGHTS[`GRADE_TABLE[i]`] for all i.
     ///
     /// This test is the formal proof that the compile-time derivation is correct
     /// and that no future edit can silently diverge the weights from the grade table.

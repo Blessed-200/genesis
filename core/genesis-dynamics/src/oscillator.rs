@@ -413,11 +413,17 @@ pub enum OscillatorState {
     /// El oscilador no acepta nuevos inputs de aprendizaje pero sigue
     /// contribuyendo al parámetro de orden r_sync.
     /// `since_ns`: timestamp en nanosegundos del momento de saturación.
-    Saturated { since_ns: u64 },
+    Saturated {
+        /// Timestamp in nanoseconds when the oscillator entered the Saturated state.
+        since_ns: u64
+    },
     /// Podado por la ecuación de calor (AXIOMA-016).
     /// El oscilador es inactivo: sus fases no se actualizan y no contribuye a Ω.
     /// `at_ns`: timestamp del momento de poda.
-    Pruned { at_ns: u64 },
+    Pruned {
+        /// Timestamp in nanoseconds when the oscillator was pruned.
+        at_ns: u64
+    },
 }
 
 impl OscillatorState {

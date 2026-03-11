@@ -1,0 +1,40 @@
+[package]
+name    = "genesis-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+genesis-types    = { path = "../shared/genesis-types" }
+genesis-math     = { path = "../core/genesis-math" }
+genesis-topology = { path = "../core/genesis-topology" }
+genesis-dynamics = { path = "../core/genesis-dynamics" }
+
+# Prevent this from being included in normal builds
+[[bin]]
+name = "fuzz_geometric_product"
+path = "fuzz_targets/fuzz_geometric_product.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "fuzz_hnsw_insert_search"
+path = "fuzz_targets/fuzz_hnsw_insert_search.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "fuzz_proof_roundtrip"
+path = "fuzz_targets/fuzz_proof_roundtrip.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "fuzz_vfe_compute"
+path = "fuzz_targets/fuzz_vfe_compute.rs"
+test = false
+doc  = false

@@ -116,6 +116,7 @@ impl AxiomSet {
     }
 
     /// Inserta un axioma en el conjunto.
+    #[allow(clippy::missing_const_for_fn)] // &mut self not const-stable on MSRV 1.75
     pub fn insert(&mut self, axiom: AxiomID) {
         self.0 |= Self::from_axiom(axiom).0;
     }
@@ -163,11 +164,11 @@ impl AxiomID {
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.1
     pub const STRUCTURAL_REQUIRED: &'static [AxiomID] = &[
-        AxiomID::MinkowskiSignature,
-        AxiomID::CohomologyZero,
-        AxiomID::AlgebraicConnectivity,
-        AxiomID::PlanckConstant,
-        AxiomID::ProofGuard,
+        Self::MinkowskiSignature,
+        Self::CohomologyZero,
+        Self::AlgebraicConnectivity,
+        Self::PlanckConstant,
+        Self::ProofGuard,
     ];
 
     /// Invariantes requeridos para expansión dimensional.
@@ -175,13 +176,13 @@ impl AxiomID {
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.1
     pub const EXPANSION_REQUIRED: &'static [AxiomID] = &[
-        AxiomID::MinkowskiSignature,
-        AxiomID::CohomologyZero,
-        AxiomID::AlgebraicConnectivity,
-        AxiomID::PlanckConstant,
-        AxiomID::ProofGuard,
-        AxiomID::DualityConsistency,
-        AxiomID::DimensionalAdmission,
+        Self::MinkowskiSignature,
+        Self::CohomologyZero,
+        Self::AlgebraicConnectivity,
+        Self::PlanckConstant,
+        Self::ProofGuard,
+        Self::DualityConsistency,
+        Self::DimensionalAdmission,
     ];
 }
 
@@ -243,7 +244,7 @@ impl Proof {
     /// Corrección [A1-1]: `saturating_sub` aceptaba timestamps futuros
     /// (`current_ns` < timestamp → 0 < `PROOF_MAX_AGE_NS` → siempre fresco).
     /// La nueva implementación rechaza explícitamente proofs del futuro.
-    pub fn is_fresh(&self, current_ns: u64) -> bool {
+    pub const fn is_fresh(&self, current_ns: u64) -> bool {
         use crate::constants::PROOF_MAX_AGE_NS;
         current_ns >= self.timestamp && current_ns - self.timestamp < PROOF_MAX_AGE_NS
     }
@@ -560,11 +561,13 @@ mod tests {
             std::alloc::System.alloc(layout)
         }
 
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: delegates directly to GlobalAlloc::dealloc with matching ptr and layout.
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
             std::alloc::System.dealloc(ptr, layout)
         }
 
-        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // SAFETY: delegates directly to GlobalAlloc::realloc; ptr was allocated by this allocator.
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
             ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
             std::alloc::System.realloc(ptr, layout, new_size)
         }

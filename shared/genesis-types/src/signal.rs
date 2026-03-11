@@ -60,6 +60,10 @@ use serde::{Deserialize, Serialize};
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
+// SAFETY: NodeId is #[repr(transparent)] over u64. Deserialize is safe because
+// the only invalid value (u64::MAX) is checked at construction, and deserialization
+// produces a raw NodeId that callers must validate via try_new().
+#[allow(clippy::unsafe_derive_deserialize)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct NodeId(u64);
 
@@ -71,7 +75,7 @@ impl NodeId {
     pub const MAX_VALID: u64 = u64::MAX - 1;
 
     /// Sentinel value used to fill empty slots (never a valid node identifier).
-    pub const INVALID: Self = NodeId(u64::MAX);
+    pub const INVALID: Self = Self(u64::MAX);
 
     /// Attempts to construct a `NodeId` from a raw `u64`.
     ///
@@ -79,7 +83,7 @@ impl NodeId {
     /// Returns [`GenesisError::NodeIdOutOfRange`] when `raw` exceeds
     /// [`NodeId::MAX_VALID`].
     #[inline]
-    pub fn try_new(raw: u64) -> Result<Self, GenesisError> {
+    pub const fn try_new(raw: u64) -> Result<Self, GenesisError> {
         if raw <= Self::MAX_VALID {
             Ok(Self(raw))
         } else {
@@ -94,6 +98,8 @@ impl NodeId {
     /// i.e. `raw <= NodeId::MAX_VALID`, unless using the sentinel
     /// [`NodeId::INVALID`].
     #[inline]
+    // SAFETY: caller guarantees `raw <= NodeId::MAX_VALID`. Used only in
+    // internal const constructors where the value is a compile-time literal.
     pub const unsafe fn from_raw_unchecked(raw: u64) -> Self {
         // SAFETY: `raw` must satisfy the same invariant as [`NodeId::try_new`]
         // (`raw <= NodeId::MAX_VALID`) unless constructing the sentinel [`NodeId::INVALID`].
@@ -141,7 +147,7 @@ static_assertions::const_assert_eq!(core::mem::align_of::<GaussianPair>(), 8);
 
 impl Timestamp {
     /// Zero timestamp (epoch origin of a local processing unit).
-    pub const ZERO: Self = Timestamp(0);
+    pub const ZERO: Self = Self(0);
 
     /// Constructs a `Timestamp` from a raw nanosecond count.
     #[inline]
@@ -474,7 +480,7 @@ impl SpikeComponents {
     ///
     /// AX-ID: AXIOMA-018
     #[inline]
-    pub fn cardinality(&self) -> usize {
+    pub const fn cardinality(&self) -> usize {
         self.count as usize
     }
 
@@ -627,20 +633,20 @@ impl SpikeEvent {
     /// Returns `true` if this spike is a spontaneous internal drive event
     /// (no external stimulus; the system's curiosity — AX-ID: AXIOMA-003).
     #[inline]
-    pub fn is_internal_drive(&self) -> bool {
+    pub const fn is_internal_drive(&self) -> bool {
         self.collapse_grade.is_none()
     }
 
     /// Returns `true` if this spike results from a Lindblad phase collapse
     /// (AX-ID: AXIOMA-006).
     #[inline]
-    pub fn is_phase_collapse(&self) -> bool {
+    pub const fn is_phase_collapse(&self) -> bool {
         self.collapse_grade.is_some()
     }
 
     /// Number of non-zero components in the associated multivector snapshot.
     #[inline]
-    pub fn cardinality(&self) -> usize {
+    pub const fn cardinality(&self) -> usize {
         self.components.cardinality()
     }
 }
@@ -872,7 +878,7 @@ impl DomainConsolidationSignal<Saturated> {
     /// Constructs a `Saturated` consolidation signal.
     ///
     /// AX-ID: AXIOMA-008
-    pub fn saturated(domain: &'static str, timestamp_ns: Timestamp, fisher_delta_g: f64) -> Self {
+    pub const fn saturated(domain: &'static str, timestamp_ns: Timestamp, fisher_delta_g: f64) -> Self {
         Self {
             domain,
             timestamp_ns,
@@ -887,7 +893,7 @@ impl DomainConsolidationSignal<Saturated> {
     /// `DomainResetSignal::validate_against`.
     ///
     /// AX-ID: AXIOMA-009
-    pub fn certify(self) -> DomainConsolidationSignal<Certified> {
+    pub const fn certify(self) -> DomainConsolidationSignal<Certified> {
         DomainConsolidationSignal {
             domain: self.domain,
             timestamp_ns: self.timestamp_ns,
@@ -904,7 +910,7 @@ impl DomainConsolidationSignal<Certified> {
     /// a prior `Saturated` signal (e.g. after a full atlas redeploy).
     ///
     /// AX-ID: AXIOMA-009
-    pub fn certified(domain: &'static str, timestamp_ns: Timestamp) -> Self {
+    pub const fn certified(domain: &'static str, timestamp_ns: Timestamp) -> Self {
         Self {
             domain,
             timestamp_ns,

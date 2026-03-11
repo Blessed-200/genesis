@@ -13,24 +13,54 @@
 //!
 //! AX-ID: AXIOMA-003, AXIOMA-004, AXIOMA-005, AXIOMA-006,
 //!        `H_dinámica`, `H_información` (`LEY_FUNDACIONAL` §3.2, §3.3)
-
+//! # Compiler directives — lint policy
+//!
+//! These crate-level lints enforce production-grade engineering standards.
+//! All public API must be documented. All unsafe must be justified.
+//! All clippy::pedantic issues not explicitly allowed must be zero.
+#![deny(missing_docs)]
+#![deny(clippy::undocumented_unsafe_blocks)]
+#![warn(clippy::pedantic)]
 #![allow(
-    dead_code,
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
+    clippy::cast_lossless,
     clippy::doc_markdown,
+    clippy::float_cmp,
     clippy::items_after_statements,
-    clippy::manual_range_contains,
+    clippy::missing_errors_doc,    // added in favour of explicit fallibility docs
+    clippy::module_name_repetitions,
     clippy::must_use_candidate,
-    clippy::unreadable_literal
+    clippy::semicolon_if_nothing_returned,
+    clippy::uninlined_format_args,
 )]
+#![allow(dead_code)] // internal utility fns used by tests
 
+
+/// Kuramoto attractor energy landscape — concept recognition via gradient descent.
+///
+/// AX-ID: AXIOMA-004, `H_información`
 pub mod attractor;
+/// Self-Organised Criticality monitor — ensures system operates near the phase transition.
+///
+/// AX-ID: AXIOMA-005
 pub mod criticality;
+/// Variational Free Energy minimiser — the sole learning mechanism.
+///
+/// AX-ID: AXIOMA-003, AXIOMA-008, `H_información`
 pub mod free_energy;
+/// Quantum Kuramoto network — synchronisation dynamics over G(1,3) phases.
+///
+/// AX-ID: AXIOMA-006, `H_dinámica`
 pub mod kuramoto;
+/// Quantum oscillator state: amplitude, phase, and saturation per Clifford grade.
+///
+/// AX-ID: AXIOMA-006
 pub mod oscillator;
+/// Synchrony order parameters and cluster extraction from Kuramoto network.
+///
+/// AX-ID: AXIOMA-006
 pub mod synchrony;
 
 pub use attractor::AttractorLandscape;

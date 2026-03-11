@@ -108,6 +108,7 @@ pub const FISHER_SATIATION_EPSILON: f64 = 1e-6;
 // SAFETY: 50 is a non-zero literal. NonZeroUsize::new(50).unwrap() is the const-safe
 // equivalent but Option::unwrap() is not yet stable as a const fn on our MSRV (Rust 1.75).
 // When MSRV >= 1.83, replace with: NonZeroUsize::new(50).unwrap()
+// SAFETY: 50 is non-zero; new_unchecked avoids const-unstable Option::unwrap on MSRV 1.75.
 #[allow(clippy::useless_nonzero_new_unchecked)]
 pub const FISHER_SATIATION_WINDOW: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(50) };
 
@@ -144,9 +145,10 @@ pub const SYNCHRONY_COLLAPSE_THRESHOLD: f64 = 0.85;
 // WORMHOLE / MYELINATION
 // ============================================================================
 
-/// Ollivier-Ricci curvature threshold below which an edge is a candidate
-/// for wormhole collapse (myelination). A highly negative curvature indicates
-/// strong semantic attraction between two concept clusters.
+/// Ollivier-Ricci curvature threshold for wormhole collapse (myelination).
+///
+/// A highly negative curvature indicates strong semantic attraction between
+/// two concept clusters.
 ///
 /// AX-ID: AXIOMA-015 — Myelination by Coupled Ricci Flow
 pub const WORMHOLE_CURVATURE_THRESHOLD: f64 = -0.5;
@@ -167,6 +169,7 @@ pub const WORMHOLE_CURVATURE_THRESHOLD: f64 = -0.5;
 // SAFETY: 1_000 is a non-zero literal. NonZeroUsize::new(1_000).unwrap() is the const-safe
 // equivalent but Option::unwrap() is not yet stable as a const fn on our MSRV (Rust 1.75).
 // When MSRV >= 1.83, replace with: NonZeroUsize::new(1_000).unwrap()
+// SAFETY: 1_000 is non-zero; new_unchecked avoids const-unstable Option::unwrap on MSRV 1.75.
 #[allow(clippy::useless_nonzero_new_unchecked)]
 pub const SINKHORN_MAX_ITER: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(1_000) };
 

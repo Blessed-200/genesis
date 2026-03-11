@@ -508,33 +508,33 @@ impl GenesisError {
     /// Classifies this error according to payload policy tiers.
     pub const fn payload_tier(&self) -> ErrorPayloadTier {
         match self {
-            GenesisError::SignatureViolation { .. }
-            | GenesisError::BladeIndexOutOfRange { .. }
-            | GenesisError::DimensionMismatch { .. }
-            | GenesisError::CohomologyNonTrivial
-            | GenesisError::HnswNoNeighbours { .. }
-            | GenesisError::DelaunayForbidden
-            | GenesisError::BasisExpansionFailed { .. }
-            | GenesisError::KuramotoNetworkEmpty
-            | GenesisError::KuramotoDuplicateNodeId { .. }
-            | GenesisError::PrematureCollapse { .. }
-            | GenesisError::VfeNonFinite { .. }
-            | GenesisError::SinkhornNotConverged { .. }
-            | GenesisError::RicciMetricDegenerate { .. }
-            | GenesisError::ProjectionHomeomorphismViolated { .. }
-            | GenesisError::FirewallBlocked
-            | GenesisError::GlobalClockForbidden
-            | GenesisError::ExternalLossForbidden { .. }
-            | GenesisError::HashMapInHotPath { .. }
-            | GenesisError::DomainMismatch { .. }
-            | GenesisError::NodeIdOutOfRange { .. }
-            | GenesisError::NodeIdTooLarge { .. }
-            | GenesisError::InternalIndexOverflow { .. }
-            | GenesisError::NodeNotFound { .. }
-            | GenesisError::ProofMissing { .. }
-            | GenesisError::ProofInvalid { .. }
-            | GenesisError::InvariantViolation { .. } => ErrorPayloadTier::Tier1Invariant,
-            GenesisError::DomainSatiated { .. } | GenesisError::FunctorEmbeddingFailed { .. } => {
+            Self::SignatureViolation { .. }
+            | Self::BladeIndexOutOfRange { .. }
+            | Self::DimensionMismatch { .. }
+            | Self::CohomologyNonTrivial
+            | Self::HnswNoNeighbours { .. }
+            | Self::DelaunayForbidden
+            | Self::BasisExpansionFailed { .. }
+            | Self::KuramotoNetworkEmpty
+            | Self::KuramotoDuplicateNodeId { .. }
+            | Self::PrematureCollapse { .. }
+            | Self::VfeNonFinite { .. }
+            | Self::SinkhornNotConverged { .. }
+            | Self::RicciMetricDegenerate { .. }
+            | Self::ProjectionHomeomorphismViolated { .. }
+            | Self::FirewallBlocked
+            | Self::GlobalClockForbidden
+            | Self::ExternalLossForbidden { .. }
+            | Self::HashMapInHotPath { .. }
+            | Self::DomainMismatch { .. }
+            | Self::NodeIdOutOfRange { .. }
+            | Self::NodeIdTooLarge { .. }
+            | Self::InternalIndexOverflow { .. }
+            | Self::NodeNotFound { .. }
+            | Self::ProofMissing { .. }
+            | Self::ProofInvalid { .. }
+            | Self::InvariantViolation { .. } => ErrorPayloadTier::Tier1Invariant,
+            Self::DomainSatiated { .. } | Self::FunctorEmbeddingFailed { .. } => {
                 ErrorPayloadTier::Tier2Operational
             }
         }
@@ -543,15 +543,15 @@ impl GenesisError {
     /// Expands compact Tier-1 payloads into richer strings at IO/logging boundaries.
     pub fn to_boundary_message(&self) -> String {
         match self {
-            GenesisError::SignatureViolation {
+            Self::SignatureViolation {
                 code,
                 blade_index,
                 normalized_value,
             } => Self::signature_violation_diagnostic(*code, *blade_index, *normalized_value),
-            GenesisError::VfeNonFinite { term } => {
+            Self::VfeNonFinite { term } => {
                 format!("VFE non-finite detail: term={term:?}")
             }
-            GenesisError::DomainMismatch { reset, signal } => format!(
+            Self::DomainMismatch { reset, signal } => format!(
                 "Domain mismatch detail: reset_code=0x{reset:08x}, signal_code=0x{signal:08x}"
             ),
             _ => self.to_string(),
@@ -563,16 +563,16 @@ impl GenesisError {
     ///
     /// These errors should cause a hard panic in debug builds and be treated
     /// as fatal (process abort) in release builds.
-    pub fn is_invariant_violation(&self) -> bool {
+    pub const fn is_invariant_violation(&self) -> bool {
         matches!(
             self,
-            GenesisError::GlobalClockForbidden
-                | GenesisError::ExternalLossForbidden { .. }
-                | GenesisError::HashMapInHotPath { .. }
-                | GenesisError::DelaunayForbidden
-                | GenesisError::ProofMissing { .. }
-                | GenesisError::ProofInvalid { .. }
-                | GenesisError::InvariantViolation { .. }
+            Self::GlobalClockForbidden
+                | Self::ExternalLossForbidden { .. }
+                | Self::HashMapInHotPath { .. }
+                | Self::DelaunayForbidden
+                | Self::ProofMissing { .. }
+                | Self::ProofInvalid { .. }
+                | Self::InvariantViolation { .. }
         )
     }
 
@@ -581,10 +581,10 @@ impl GenesisError {
     ///
     /// Topological rejections do not indicate bugs — they indicate that an
     /// input or generated state failed the H¹ consistency gate (AXIOMA-007).
-    pub fn is_topological_rejection(&self) -> bool {
+    pub const fn is_topological_rejection(&self) -> bool {
         matches!(
             self,
-            GenesisError::CohomologyNonTrivial | GenesisError::FirewallBlocked
+            Self::CohomologyNonTrivial | Self::FirewallBlocked
         )
     }
 }

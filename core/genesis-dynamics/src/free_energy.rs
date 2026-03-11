@@ -109,6 +109,7 @@ pub struct Belief {
     /// Precisión diagonal sobre los 16 blades. `precision_full[i]` ∈ [0, 1e6].
     /// Inicializa en `1.0` para todos los blades (prior no informativo).
     pub precision_full: [f64; 16],
+    /// Node identifier this belief is associated with.
     pub node_id: NodeId,
 }
 
@@ -223,6 +224,7 @@ impl VFEMinimizer {
         (dt / (1.0 + dt * trace)).min(0.9)
     }
 
+    /// Creates an empty VFE minimiser with no registered nodes.
     pub fn new() -> Self {
         Self {
             beliefs: Vec::new(),
@@ -291,12 +293,12 @@ impl VFEMinimizer {
         })
     }
 
-    /// VFE sobre el subespacio de grado 1 — retrocompatibilidad con callers [f64;4].
+    /// VFE sobre el subespacio de grado 1 — retrocompatibilidad con callers `[f64;4]`.
     ///
     /// Calcula la distancia de Mahalanobis al cuadrado entre `mean_full[grade1]`
     /// y `obs` (interpretado como 4 componentes de grado 1). Siempre ≥ 0.
     ///
-    /// Con obs=None: predicción interna μ̂ = [0,0,0,0] (prior no informativo).
+    /// Con obs=None: predicción interna μ̂ = `[0,0,0,0]` (prior no informativo).
     ///
     /// # Política de valores no finitos
     /// Si `obs` contiene `NaN`/`±Inf`, retorna `0.0`.

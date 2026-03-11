@@ -4,9 +4,9 @@
 //!
 //! # CLIFFORD_NORM_WEIGHTS
 //! Compile-time `[i8; 16]` table for the Lorentz-invariant norm:
-//!   ⟨A·Ã⟩₀ = Σᵢ coeffs[i]² × CLIFFORD_NORM_WEIGHTS[i]
+//!   ⟨A·Ã⟩₀ = Σᵢ `coeffs[i]²` × `CLIFFORD_NORM_WEIGHTS[i]`
 //!
-//! Values: REVERSE_SIGN[grade(i)] × SIGNATURE_TABLE[i]
+//! Values: `REVERSE_SIGN[grade(i)] × SIGNATURE_TABLE[i]`
 //! Verified: [+1,+1,−1,−1,−1,−1,+1,+1,−1,−1,+1,+1,+1,+1,−1,−1]
 //!
 //! # All projections
@@ -29,7 +29,7 @@ pub const REVERSE_SIGN: [i8; 5] = [1, 1, -1, -1, 1];
 
 /// Weights for the Lorentz-invariant Clifford norm ⟨A·Ã⟩₀.
 ///
-/// `CLIFFORD_NORM_WEIGHTS[i]` = REVERSE_SIGN[grade(i)] × SIGNATURE_TABLE[i]
+/// ``CLIFFORD_NORM_WEIGHTS[i]`` = REVERSE_SIGN[grade(i)] × `SIGNATURE_TABLE[i]`
 ///
 /// Verified values:
 /// `[+1,+1,−1,−1,−1,−1,+1,+1,−1,−1,+1,+1,+1,+1,−1,−1]`
@@ -69,7 +69,7 @@ pub(crate) const CLIFFORD_NORM_WEIGHTS_F64: [f64; TOTAL_BLADES] = {
     w
 };
 
-/// Computes ⟨A·Ã⟩₀ = Σᵢ cᵢ² × CLIFFORD_NORM_WEIGHTS[i].
+/// Computes ⟨A·Ã⟩₀ = Σᵢ cᵢ² × `CLIFFORD_NORM_WEIGHTS[i]`.
 ///
 /// This is the **Lorentz-invariant** norm squared: preserved under boosts
 /// and rotations in G(1,3). It is NOT the L2 norm.

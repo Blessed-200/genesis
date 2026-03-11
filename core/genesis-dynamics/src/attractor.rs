@@ -83,6 +83,7 @@ pub struct AttractorLandscape {
 }
 
 impl AttractorLandscape {
+    /// Creates an empty attractor landscape with no registered attractors.
     pub fn new() -> Self {
         Self {
             id_to_energy:      HashMap::new(),
@@ -135,6 +136,7 @@ impl AttractorLandscape {
         self.ordered_landscape.iter().map(|e| e.id)
     }
 
+    /// Number of registered attractors. O(1).
     pub fn attractor_count(&self) -> usize {
         self.ordered_landscape.len()
     }

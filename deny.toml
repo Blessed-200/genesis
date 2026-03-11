@@ -1,0 +1,63 @@
+# cargo-deny configuration for GÉNESIS workspace.
+# Run: cargo deny check
+# AX-ID: Arquitectural hygiene — no unvetted dependencies, no dual-licensed code
+
+[graph]
+# Only evaluate dependencies that could appear in the final binary
+all-features = false
+
+[licenses]
+# GÉNESIS requires permissive licensing — no GPL or AGPL in the dependency tree.
+# Acceptable licenses for a commercial cognitive system:
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",    # ring/untrusted (WebPKI), allowed with dynamic linking exception
+]
+# Do not allow copyleft licenses
+deny = [
+    "GPL-2.0",
+    "GPL-3.0",
+    "AGPL-3.0",
+    "LGPL-2.0",
+    "LGPL-2.1",
+    "LGPL-3.0",
+]
+# Packages where license is ambiguous — document exceptions explicitly
+exceptions = [
+    { allow = ["ISC", "MIT", "OpenSSL"], name = "openssl-sys", version = "*" },
+]
+# Unlicensed packages (must be explicitly allowed)
+unlicensed = "deny"
+copyleft = "deny"
+
+[bans]
+# Prohibit known-problematic crate versions
+multiple-versions = "warn"    # warn, not deny, for dev speed
+wildcards = "deny"            # no wildcard dependencies
+
+[[bans.deny]]
+name = "sha2"
+# GENESIS uses BLAKE3 exclusively (see AGENTS.md prohibition)
+reason = "GÉNESIS uses BLAKE3 via blake3 crate — sha2 is prohibited by AGENTS.md"
+
+[advisories]
+# Security vulnerabilities
+ignore = []
+# Reject crates with known CVEs
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "deny"
+
+[sources]
+# Only allow crates.io and our workspace paths
+unknown-registry = "deny"
+unknown-git = "deny"

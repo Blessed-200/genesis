@@ -73,6 +73,7 @@ impl BladeIndex {
     /// the result is used to index `CAYLEY_SIGN` — which is `[_; 16]`,
     /// so the actual UB is an out-of-bounds slice read.
     #[inline]
+    // SAFETY: caller guarantees `idx < 16` (blade count in G(1,3) = 2^4 = 16).
     pub const unsafe fn new_unchecked(idx: u8) -> Self {
         Self(idx)
     }
@@ -99,9 +100,15 @@ impl BladeIndex {
 ///
 /// AX-ID: AXIOMA-001
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Represents the algebraic sign of a Cayley product entry.
+///
+/// Stored as `i8` for SIMD-friendly packing. Derived from parity
+/// of blade permutations in G(1,3) via `CAYLEY_SIGN` table.
 #[repr(i8)]
 pub enum Sign {
+    /// Positive sign: even number of basis vector permutations.
     Pos = 1,
+    /// Negative sign: odd number of basis vector permutations.
     Neg = -1,
 }
 

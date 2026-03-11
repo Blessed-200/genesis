@@ -65,7 +65,7 @@ impl FisherEdgeMetric {
                 // New edge — insert at sorted position.
                 self.edges.insert(pos, (key, value));
                 // Update current_nodes for the new edge.
-                for &n in &[key.0, key.1] {
+                for n in [key.0, key.1] {
                     if self.current_nodes.binary_search(&n).is_err() {
                         let ins = self.current_nodes.partition_point(|&x| x < n);
                         self.current_nodes.insert(ins, n);
@@ -87,7 +87,7 @@ impl FisherEdgeMetric {
             self.edges.remove(pos);
             // Rebuild current_nodes incrementally.
             let (ni, nj) = key;
-            for &n in &[ni, nj] {
+            for n in [ni, nj] {
                 let still_present = self.edges.iter().any(|((a, b), _)| *a == n || *b == n);
                 if !still_present {
                     if let Ok(p) = self.current_nodes.binary_search(&n) {

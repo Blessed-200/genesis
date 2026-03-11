@@ -27,7 +27,7 @@
 //!
 //! # CS gate proof (Mandato §2.3)
 //! Para cada blade k del resultado:
-//!   |result[k]| ≤ Σ_{i⊕j=k} |aᵢ|·|bⱼ| ≤ 16 · max_abs_a · max_abs_b
+//!   `|result[k]|` ≤ Σ_{i⊕j=k} `|aᵢ|·|bⱼ|` ≤ 16 · max_abs_a · max_abs_b
 //!
 //! Para k fijo, los pares (i,j) con i⊕j=k son exactamente 16: {(i, i⊕k) : i∈0..15}.
 //! Por tanto: si 16·max_abs_a·max_abs_b < PLANCK, todos los blades del resultado
@@ -641,9 +641,18 @@ const BIVECTOR_LORENTZ_WEIGHTS: [f64; 16] = {
     w
 };
 
+/// Computes the Lorentz-invariant bivector norm squared of the geometric product `A*B`.
+///
+/// Extracts only grade-2 (bivector) components of `A*B` and weights by Minkowski
+/// signature. Returns [`BivectorProduct::SubPlanck`] when the CS gate vetoes the
+/// product. Used as the primary distance metric for HNSW semantic search.
+///
+/// **Notation:** `i` = source blade index, `j` = rhs blade index (canonical GA).
+/// Renaming conflicts with Hestenes 2003 §2.1 convention.
+///
+/// AX-ID: AXIOMA-013, AXIOMA-001
 #[allow(clippy::many_single_char_names)]
-// Notación canónica GA: i = blade_a, j = blade_b, k = blade_resultado.
-// Renombrar diverge de la literatura estándar (Hestenes 2003, §2.1).
+// i = blade_a, j = blade_b, k = blade_resultado — canonical GA notation.
 pub fn bivector_norm_sq_of_product(
     a: &SparseCliffordVector,
     b: &SparseCliffordVector,
@@ -734,6 +743,13 @@ pub fn bivector_norm_sq_of_product(
     BivectorProduct::Computed(norm_sq)
 }
 
+/// Bivector norm squared of `A*B` where `A` is provided as a dense `[f64; 16]` buffer.
+///
+/// Equivalent to [`bivector_norm_sq_of_product`] but avoids the sparse-to-dense
+/// conversion overhead when the left operand is already dense (e.g. from AVX-512 output).
+/// Used internally by HNSW distance computation after the NEON/AVX path.
+///
+/// AX-ID: AXIOMA-013
 #[inline]
 #[allow(clippy::many_single_char_names)]
 pub fn bivector_norm_sq_of_product_lhs_dense(
