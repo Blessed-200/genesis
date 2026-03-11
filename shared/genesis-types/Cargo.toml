@@ -1,0 +1,38 @@
+[package]
+name        = "genesis-types"
+version     = "0.1.0"
+edition     = "2021"
+authors     = ["GÉNESIS Engineering"]
+description = "Primitive types, constants, errors and signals for the GÉNESIS cognitive core."
+
+# AX-ID: Cross-cutting — zero internal genesis deps (MACRO_ARCHITECTURE §CRATE-000)
+[dependencies]
+thiserror         = "1.0"
+static_assertions = "1.1"
+blake3            = "=1.5.4"
+arrayvec          = "0.7"
+smallvec          = { version = "1.13", features = ["const_generics"] }
+
+[dependencies.serde]
+version  = "1.0"
+features = ["derive"]
+optional = true
+
+[features]
+default = []
+serde   = ["dep:serde"]
+
+# When integrated under [workspace], replace above with:
+# thiserror.workspace         = true
+# static_assertions.workspace = true
+# blake3.workspace            = true
+# serde = { workspace = true, optional = true }
+# Comment preserved as integration instruction for FASE 6.
+
+[dev-dependencies]
+criterion = "0.5"
+ring      = "0.17"
+
+[[bench]]
+name    = "hash_bench"
+harness = false

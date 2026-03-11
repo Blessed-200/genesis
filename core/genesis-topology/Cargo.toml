@@ -1,0 +1,20 @@
+[package]
+name    = "genesis-topology"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+hnsw-f16 = []
+
+[dependencies]
+genesis-types = { workspace = true }
+genesis-math  = { workspace = true }
+fixedbitset   = "0.5"
+smallvec      = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name    = "topology"
+harness = false

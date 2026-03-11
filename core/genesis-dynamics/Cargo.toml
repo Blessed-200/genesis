@@ -1,0 +1,25 @@
+[package]
+name    = "genesis-dynamics"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+# When enabled, synchrony_order_fast uses the polynomial sin/cos approximation
+# (Cody-Waite + Horner kernel) instead of libm sin/cos.
+# Faster for |x| < 2^20 (typical Kuramoto phases); libm fallback for |x| >= 2^20.
+# Enable with: cargo build --features genesis-dynamics/poly_trig
+poly_trig = []
+
+[dependencies]
+genesis-types    = { workspace = true }
+genesis-math     = { workspace = true }
+genesis-topology = { workspace = true }
+num-complex      = { workspace = true }
+rayon            = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name    = "dynamics"
+harness = false
