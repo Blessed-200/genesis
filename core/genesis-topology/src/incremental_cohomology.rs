@@ -90,26 +90,40 @@ enum Column {
 
 const DENSE_THRESHOLD: usize = 64;
 
+/// Incremental basis for `im(∂₂)` — uses standard column reduction over Z/2Z.
+///
+/// # Why no clearance algorithm
+///
+/// The Ripser "clearance" optimisation is only correct for **batch** persistent
+/// homology where all columns are processed left-to-right in a single sweep.
+/// In our **incremental** (online) setting, clearing a base column is
+/// mathematically wrong: the cleared column may still be needed as a pivot
+/// for future triangles, and skipping it causes the reduction loop to
+/// re-extract the same pivot indefinitely — an infinite loop.
+///
+/// The correct incremental algorithm is pure Gaussian elimination over Z/2Z:
+/// each iteration either kills the leading bit (strict progress) or finds a
+/// new pivot slot (terminates). Total reductions ≤ `num_edges` (theoretical
+/// bound from linear algebra), so termination is guaranteed.
 pub(crate) struct IncrementalD2 {
-    base_cols:   Vec<Column>,
-    pivot_row:   Vec<u32>,   // edge_idx -> index in base_cols (u32::MAX = free)
-    /// Clearance flags (BN-09): once a base column has been used as a pivot in a
-    /// reduction that produced a zero column (triangle boundary = exact cycle),
-    /// it is marked cleared and skipped in future XOR traversals.
-    /// This mirrors the Ripser clearance algorithm for persistent homology.
-    cleared:     Vec<bool>,
-    num_edges:   usize,
-    rank:        usize,
+    /// Reduced basis columns of `im(∂₂)`, one per H¹ generator found so far.
+    base_cols: Vec<Column>,
+    /// Maps edge index → index in `base_cols`. `u32::MAX` = no pivot at this edge.
+    pivot_row: Vec<u32>,
+    /// Number of edges registered (= dimension of the C₁ chain group).
+    num_edges: usize,
+    /// Rank of `im(∂₂)` = number of independent triangle boundaries found.
+    rank:      usize,
 }
 
 impl IncrementalD2 {
+    /// Creates an empty `IncrementalD2` with no edges or basis columns.
     pub fn new() -> Self {
         Self {
             base_cols: Vec::new(),
             pivot_row: Vec::new(),
-            cleared:   Vec::new(),
             num_edges: 0,
-            rank: 0,
+            rank:      0,
         }
     }
 
@@ -121,77 +135,86 @@ impl IncrementalD2 {
         self.num_edges = self.num_edges.max(idx + 1);
     }
 
+    /// Adds a triangle (2-simplex) to the boundary matrix and returns `true` if
+    /// this triangle contributes a new independent cycle to `im(∂₂)`.
+    ///
+    /// # Algorithm — Pure column reduction over Z/2Z (no clearance)
+    ///
+    /// We maintain a reduced column basis of `im(∂₂)`. For each new triangle
+    /// `{e1, e2, e3}` we form its boundary column `[e_min, e_mid, e_max]`
+    /// (sorted ascending) and reduce it by XOR with existing basis columns
+    /// that share the same lowest edge index (pivot).
+    ///
+    /// **Termination:** Each XOR eliminates the current leading edge index,
+    /// so `low(col)` strictly decreases on every step. Since `low(col) ≥ 0`,
+    /// the loop terminates in at most `num_edges` iterations.
+    ///
+    /// **No clearance:** The Ripser clearance optimisation is only correct for
+    /// batch processing. In an incremental system, a base column must never be
+    /// skipped because a later triangle may need it as its pivot. Skipping (and
+    /// `continue`-ing) without modifying `col` is an infinite loop.
+    ///
+    /// Returns `true`  → new basis column added, `rank(im ∂₂)` increases by 1.
+    /// Returns `false` → triangle is an exact boundary (redundant cycle), rank unchanged.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009 — H¹(M,F) = 0 invariant maintenance
     pub fn add_triangle(&mut self, mut e1: u32, mut e2: u32, mut e3: u32) -> bool {
+        // Canonical sort: e1 ≤ e2 ≤ e3 (ascending edge indices).
+        // This ensures a deterministic `low()` element for pivot matching.
         if e1 > e2 { std::mem::swap(&mut e1, &mut e2); }
         if e2 > e3 { std::mem::swap(&mut e2, &mut e3); }
         if e1 > e2 { std::mem::swap(&mut e1, &mut e2); }
 
+        // Initial boundary column of this triangle: exactly the three edges.
         let mut col = Column::Sparse({
             let mut sv: SmallVec<[u32; 8]> = SmallVec::new();
-            sv.push(e1); sv.push(e2); sv.push(e3);
+            sv.push(e1);
+            sv.push(e2);
+            sv.push(e3);
             sv
         });
 
-        loop {
-            let pivot = match &col {
-                Column::Sparse(sv) => sv.first().copied(),
-                Column::Dense(bm)  => first_set_bit(bm),
-            };
+        // Defensive bound: in correct code this is never reached (the loop terminates
+        // because low(col) strictly decreases). In a corrupt state it prevents hanging.
+        let max_steps = self.num_edges.saturating_add(4);
 
-            let p = match pivot {
-                None    => return false,
+        for _step in 0..=max_steps {
+            // low(col) = minimum set bit = leading edge index under boundary ordering.
+            let p = match low_col(&col) {
+                None    => return false, // col = 0 → boundary, no new cycle
                 Some(p) => p as usize,
             };
 
             if p >= self.pivot_row.len() || self.pivot_row[p] == u32::MAX {
-                if p >= self.pivot_row.len() { self.pivot_row.resize(p + 1, u32::MAX); }
-                let col_idx = self.base_cols.len();
-                self.pivot_row[p] = col_idx as u32;
-                self.base_cols.push(col);
-                // Extend cleared flags to match base_cols length
-                if self.cleared.len() <= col_idx {
-                    self.cleared.resize(col_idx + 1, false);
+                // p is a free pivot: install this column as the new basis element.
+                if p >= self.pivot_row.len() {
+                    self.pivot_row.resize(p + 1, u32::MAX);
                 }
+                let col_idx = self.base_cols.len() as u32;
+                self.pivot_row[p] = col_idx;
+                self.base_cols.push(col);
                 self.rank += 1;
                 return true;
             }
 
+            // Eliminate pivot p: XOR with the existing basis column that owns p.
+            // This strictly decreases low(col) (the bit at position p disappears),
+            // guaranteeing progress. No column is ever skipped.
             let base_idx = self.pivot_row[p] as usize;
-
-            // BN-09 / FIX-4 Clearance: if this base column was already used in a reduction
-            // that produced zero (it's been cleared), skip it.
-            //
-            // CRITICAL: do NOT mutate pivot_row[p] = u32::MAX here.
-            // Setting pivot_row[p] = u32::MAX during a live reduction corrupts the
-            // pivot index and breaks future reductions that need to find that pivot.
-            // The correct Ripser clearance contract is: skip the column in XOR traversal,
-            // but leave pivot_row[p] intact so subsequent insertions can use it.
-            // Compaction of cleared columns is done during a checkpoint sweep (future
-            // run_checkpoint() when base_cols grows large), not during per-triangle reduction.
-            if base_idx < self.cleared.len() && self.cleared[base_idx] {
-                // Column cleared — skip without touching pivot_row.
-                continue;
-            }
-
-            let next_col = xor_columns_opt(col, &self.base_cols[base_idx], self.num_edges);
-
-            // If result is zero, this triangle was a boundary (no new H¹).
-            // Mark the base column as cleared — it produced a witness.
-            let is_zero = match &next_col {
-                Column::Sparse(sv) => sv.is_empty(),
-                Column::Dense(bm)  => bm.iter().all(|&w| w == 0),
-            };
-            if is_zero {
-                if base_idx < self.cleared.len() {
-                    self.cleared[base_idx] = true;
-                }
-            }
-
-            col = next_col;
+            col = xor_columns_opt(col, &self.base_cols[base_idx], self.num_edges);
         }
+
+        // Unreachable in correct operation.
+        // If we somehow reach here, treat as boundary (conservative: no false H¹).
+        debug_assert!(false, "add_triangle: reduction did not terminate — topology state corrupt");
+        false
     }
 
-    #[inline] pub fn rank(&self) -> usize { self.rank }
+    /// Returns the current rank of `im(∂₂)` = number of independent triangle boundaries.
+    #[inline]
+    pub fn rank(&self) -> usize {
+        self.rank
+    }
 }
 
 /// XOR of two boundary columns — optimised version used by add_triangle (BN-09).
@@ -297,6 +320,19 @@ fn sparse_to_dense(sv: &[u32], num_edges: usize) -> Box<[u64]> {
         if word < bm.len() { bm[word] |= 1u64 << bit; }
     }
     bm
+}
+
+/// Returns the minimum set bit of a `Column` — the "lowest" edge index.
+///
+/// This is the `low` function from standard persistent homology: it returns
+/// the index of the leading term of the boundary chain under the chosen
+/// ordering (ascending edge indices). The pivot of a column is its `low`.
+#[inline]
+fn low_col(col: &Column) -> Option<u32> {
+    match col {
+        Column::Sparse(sv) => sv.first().copied(),
+        Column::Dense(bm)  => first_set_bit(bm),
+    }
 }
 
 fn first_set_bit(bm: &[u64]) -> Option<u32> {
