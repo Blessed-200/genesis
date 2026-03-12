@@ -55,6 +55,7 @@ pub mod signal;
 
 // — Constants —
 pub use constants::{
+    validate_constant_ordering,
     CLIFFORD_BASIS_SIZE,
     COGNITIVE_PLANCK_CONSTANT,
     DELTA_DUALITY,

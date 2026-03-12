@@ -223,6 +223,20 @@ static_assertions::const_assert_eq!(CLIFFORD_BASIS_SIZE, 1 << MAX_CLIFFORD_GRADE
 static_assertions::const_assert!(CLIFFORD_BASIS_SIZE > 0);
 static_assertions::const_assert!(MAX_CLIFFORD_GRADE > 0);
 
+/// Validates cross-constant floating-point ordering invariants at runtime.
+///
+/// This guard complements compile-time integer assertions; stable Rust cannot
+/// encode floating-point relational const-assertions on MSRV 1.75.
+///
+/// AX-ID: AXIOMA-001, AXIOMA-008, AXIOMA-014, AXIOMA-015, AXIOMA-016
+#[inline]
+pub const fn validate_constant_ordering() -> bool {
+    COGNITIVE_PLANCK_CONSTANT < HEAT_DIFFUSION_CONVERGENCE_EPSILON
+        && HEAT_DIFFUSION_CONVERGENCE_EPSILON < FISHER_SATIATION_EPSILON
+        && JL_RESIDUAL_EXPANSION_DELTA > COGNITIVE_PLANCK_CONSTANT
+        && SINKHORN_CONVERGENCE_EPSILON <= FISHER_SATIATION_EPSILON
+}
+
 // ============================================================================
 // TESTS
 // ============================================================================
@@ -363,6 +377,7 @@ mod tests {
         assert!(HEAT_DIFFUSION_CONVERGENCE_EPSILON < FISHER_SATIATION_EPSILON);
         assert!(JL_RESIDUAL_EXPANSION_DELTA > COGNITIVE_PLANCK_CONSTANT);
         assert!(SINKHORN_CONVERGENCE_EPSILON <= FISHER_SATIATION_EPSILON);
+        assert!(validate_constant_ordering());
     }
 }
 

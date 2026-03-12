@@ -1,0 +1,71 @@
+MODULE_ANALYSIS
+Module signal
+
+Block 1
+BLOCK_NAME: NODEID_TIMESTAMP_NEWTYPES
+ROLE: Strongly types identity/time channels with zero-cost wrappers.
+ASSUMPTIONS: repr(transparent) preserved; sentinel INVALID reserved.
+INVARIANTS:
+1) NodeId::try_new(raw) accepts raw<=MAX_VALID.
+2) NodeId::INVALID == u64::MAX never valid.
+3) Timestamp monotonicity enforced by producer discipline.
+PROBLEM: from_raw_unchecked enables invariant bypass if misused outside constrained internals.
+INEVITABLE_SOLUTION: keep function unsafe + crate-visible (pub(crate)) to narrow misuse surface while preserving const construction flexibility.
+WHY_BRIEF: Safety boundary should be minimal; public unsafe APIs are long-tail risk multipliers.
+PSEUDOCODE:
+```rust
+pub(crate) const unsafe fn from_raw_unchecked(raw:u64)->Self { Self(raw) }
+```
+SMT_ASSERTION: (assert (=> (> raw MAX_VALID) (is_err (try_new raw))))
+CYCLES_ESTIMATE: try_new ~1-3 cycles.
+HARDWARE_FALLBACK: N/A.
+PATCH: visibility reduction for from_raw_unchecked.
+RISK: potential downstream break if external users rely on unsafe constructor.
+CONFIDENCE: 0.83.
+
+Block 2
+BLOCK_NAME: BLADE_INDEX_DIMENSION_GUARD
+ROLE: Enforces dimension-dependent blade bound via const-generic BladeIndex<D>.
+ASSUMPTIONS: D known at compile time; upper_bound uses u32 width cutoff.
+INVARIANTS:
+1) valid iff index < 2^D and D < 32.
+2) returns InvalidBladeIndex otherwise.
+PROBLEM: D>=32 currently mapped to upper_bound=0, conflating overflow and invalid-domain semantics.
+INEVITABLE_SOLUTION: split error variants: DimensionUnsupported{D} vs InvalidBladeIndex for clearer diagnosis and formal contracts.
+WHY_BRIEF: Distinguishes domain-definition failure from runtime input failure.
+PSEUDOCODE:
+```rust
+if D>=32 { return Err(DimensionUnsupported{dimension:D}); }
+if index as u32 >= (1u32<<D) { return Err(InvalidBladeIndex{...}); }
+```
+SMT_ASSERTION: QuickCheck: D<32 && i<2^D => BladeIndex::<D>::new(i).is_ok()
+CYCLES_ESTIMATE: ~3-8 cycles.
+HARDWARE_FALLBACK: scalar.
+PATCH: extend SpikeComponentsError enum and constructor branches.
+RISK: error-type API change.
+CONFIDENCE: 0.9.
+
+Block 3
+BLOCK_NAME: SPIKE_COMPONENTS_TOPK
+ROLE: Builds fixed-capacity SoA sparse spike using magnitude-based top-K selection.
+ASSUMPTIONS: K=16 fixed; stack storage preferred; deterministic tie-break by index.
+INVARIANTS:
+1) count<=SPIKE_MAX_COMPONENTS.
+2) indices[0..count] sorted ascending after finalize.
+3) positions count..K zero/sentinel.
+PROBLEM: O(K) replacement scan per input element can become branch-heavy under dense streams.
+INEVITABLE_SOLUTION: maintain weakest-slot index incrementally and use branch-minimizing compare-swap updates; K small but this removes repeated full scans.
+WHY_BRIEF: Preserves zero-alloc deterministic behavior while reducing branch mispredicts.
+PSEUDOCODE:
+```rust
+for (idx,val) in input { if abs(val)<=eps {continue}
+  if filled<K { push(); update_min(); }
+  else if better_than_min(abs,idx) { buf[min_pos]=(abs,idx,val); recompute_min(); }
+}
+```
+SMT_ASSERTION: QuickCheck: output cardinality <= K && forall kept v: |v| among top K magnitudes.
+CYCLES_ESTIMATE: ~150-500 cycles/event for moderate candidate count.
+HARDWARE_FALLBACK: scalar loops; SIMD optional for abs pass.
+PATCH: isolate min-slot tracking helper.
+RISK: subtle tie-break regression could break determinism.
+CONFIDENCE: 0.85.

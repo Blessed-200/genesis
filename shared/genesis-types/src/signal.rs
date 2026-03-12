@@ -206,11 +206,16 @@ impl<const D: usize> BladeIndex<D> {
     /// Fallible constructor enforcing `index < (1 << D)`.
     ///
     /// # Errors
+    /// Returns [`SpikeComponentsError::DimensionUnsupported`] when `D >= 32`.
     /// Returns [`SpikeComponentsError::InvalidBladeIndex`] when `index` is not
     /// representable in the `D`-dimensional basis.
     pub const fn new(index: u16) -> Result<Self, SpikeComponentsError> {
+        if D >= u32::BITS as usize {
+            return Err(SpikeComponentsError::DimensionUnsupported { dimension: D });
+        }
+
         let upper = Self::upper_bound();
-        if upper == 0 || (index as u32) >= upper {
+        if (index as u32) >= upper {
             return Err(SpikeComponentsError::InvalidBladeIndex {
                 index,
                 dimension: D,
@@ -238,6 +243,12 @@ impl<const D: usize> TryFrom<u16> for BladeIndex<D> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum SpikeComponentsError {
+    /// The requested basis dimension is not supported by this representation.
+    DimensionUnsupported {
+        /// Requested basis dimension.
+        dimension: usize,
+    },
+
     /// A raw blade index is not valid for the requested dimension `D`.
     InvalidBladeIndex {
         /// Invalid raw index.
@@ -1100,6 +1111,15 @@ mod tests {
                 dimension: 4,
                 upper_bound: 16,
             }
+        );
+    }
+
+    #[test]
+    fn blade_index_rejects_unsupported_dimension() {
+        let err = BladeIndex::<32>::try_from(0u16).expect_err("D=32 is unsupported");
+        assert_eq!(
+            err,
+            SpikeComponentsError::DimensionUnsupported { dimension: 32 }
         );
     }
 

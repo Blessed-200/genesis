@@ -1,0 +1,45 @@
+MODULE_ANALYSIS
+Module fisher_edge
+
+Block 1
+BLOCK_NAME: CANONICAL_EDGE_NORMALIZER
+ROLE: Canonicalizes undirected edge key ordering (i<=j) for deterministic storage.
+ASSUMPTIONS: NodeId total ordering stable and inexpensive.
+INVARIANTS:
+1) canonical_edge(i,j)==canonical_edge(j,i).
+2) Stored edges remain sorted lexicographically by canonical key.
+PROBLEM: binary_search closure recomputes canonicalization per comparator invocation.
+INEVITABLE_SOLUTION: Store only canonical keys and compare raw tuple key directly in search closures, removing repeated canonical_edge calls in hot lookup/update paths.
+WHY_BRIEF: Eliminates redundant branches and function calls in O(log E) operations.
+PSEUDOCODE:
+```rust
+let key = canonical_edge(i,j);
+match edges.binary_search_by_key(&key, |(k,_)| *k) { ... }
+```
+SMT_ASSERTION: (assert (= (canonical i j) (canonical j i)))
+CYCLES_ESTIMATE: lookup ~80-180 cycles for E~1k.
+HARDWARE_FALLBACK: Scalar tuple compare.
+PATCH: replace binary_search_by(|...canonical_edge...|) with binary_search_by_key.
+RISK: Incorrect key extraction could break ordering assumptions.
+CONFIDENCE: 0.94.
+
+Block 2
+BLOCK_NAME: CURRENT_NODE_TRACKER
+ROLE: Maintains set of nodes with up-to-date Fisher edges.
+ASSUMPTIONS: current_nodes sorted unique; remove is less frequent than get.
+INVARIANTS:
+1) is_current(n) iff n appears in at least one stored edge.
+2) current_nodes sorted and deduplicated.
+PROBLEM: remove() scans all edges twice (for each endpoint), O(E) with branch-heavy iterator traversal.
+INEVITABLE_SOLUTION: Maintain per-node degree counters (sorted Vec of (NodeId, degree)) to support O(log V) decrement and zero-degree eviction during removals.
+WHY_BRIEF: Converts linear edge scans into logarithmic updates, reducing cache misses at larger E.
+PSEUDOCODE:
+```rust
+fn dec(node){ let p=find(node); deg[p]-=1; if deg[p]==0 { remove node; }}
+```
+SMT_ASSERTION: QuickCheck: remove(i,j) => get(i,j)==0.0
+CYCLES_ESTIMATE: current remove ~O(E) (~300-5000 cycles); proposed ~O(log V).
+HARDWARE_FALLBACK: Scalar operations on sorted Vec.
+PATCH: introduce degree index side-structure synchronized in new/set/remove.
+RISK: Consistency bugs between edges and degree index.
+CONFIDENCE: 0.86.

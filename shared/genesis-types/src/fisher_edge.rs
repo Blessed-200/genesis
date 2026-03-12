@@ -19,7 +19,7 @@ use crate::NodeId;
 #[derive(Clone, Debug, Default)]
 pub struct FisherEdgeMetric {
     edges: Vec<((NodeId, NodeId), f64)>,
-    current_nodes: Vec<NodeId>,
+    node_degrees: Vec<(NodeId, u32)>,
 }
 
 impl FisherEdgeMetric {
@@ -29,7 +29,7 @@ impl FisherEdgeMetric {
     pub fn new(edges: Vec<((NodeId, NodeId), f64)>) -> Self {
         let mut metric = Self {
             edges,
-            current_nodes: Vec::new(),
+            node_degrees: Vec::new(),
         };
         metric.normalize();
         metric
@@ -40,7 +40,7 @@ impl FisherEdgeMetric {
     pub fn get(&self, i: NodeId, j: NodeId) -> f64 {
         let key = canonical_edge(i, j);
         self.edges
-            .binary_search_by(|((a, b), _)| canonical_edge(*a, *b).cmp(&key))
+            .binary_search_by_key(&key, |(pair, _)| *pair)
             .map_or(0.0, |idx| self.edges[idx].1)
     }
 
@@ -56,10 +56,7 @@ impl FisherEdgeMetric {
     /// AX-ID: LEY_FUNDACIONAL §3.6, BN-10
     pub fn set(&mut self, i: NodeId, j: NodeId, value: f64) {
         let key = canonical_edge(i, j);
-        match self
-            .edges
-            .binary_search_by(|((a, b), _)| canonical_edge(*a, *b).cmp(&key))
-        {
+        match self.edges.binary_search_by_key(&key, |(pair, _)| *pair) {
             Ok(pos) => {
                 // Edge exists — update value in-place, no re-sort needed.
                 self.edges[pos].1 = value;
@@ -67,13 +64,8 @@ impl FisherEdgeMetric {
             Err(pos) => {
                 // New edge — insert at sorted position.
                 self.edges.insert(pos, (key, value));
-                // Update current_nodes for the new edge.
-                for n in [key.0, key.1] {
-                    if self.current_nodes.binary_search(&n).is_err() {
-                        let ins = self.current_nodes.partition_point(|&x| x < n);
-                        self.current_nodes.insert(ins, n);
-                    }
-                }
+                self.increment_degree(key.0);
+                self.increment_degree(key.1);
             }
         }
     }
@@ -86,21 +78,10 @@ impl FisherEdgeMetric {
     /// AX-ID: LEY_FUNDACIONAL §3.6, BN-10
     pub fn remove(&mut self, i: NodeId, j: NodeId) {
         let key = canonical_edge(i, j);
-        if let Ok(pos) = self
-            .edges
-            .binary_search_by(|((a, b), _)| canonical_edge(*a, *b).cmp(&key))
-        {
+        if let Ok(pos) = self.edges.binary_search_by_key(&key, |(pair, _)| *pair) {
             self.edges.remove(pos);
-            // Rebuild current_nodes incrementally.
-            let (ni, nj) = key;
-            for n in [ni, nj] {
-                let still_present = self.edges.iter().any(|((a, b), _)| *a == n || *b == n);
-                if !still_present {
-                    if let Ok(p) = self.current_nodes.binary_search(&n) {
-                        self.current_nodes.remove(p);
-                    }
-                }
-            }
+            self.decrement_degree(key.0);
+            self.decrement_degree(key.1);
         }
     }
 
@@ -112,7 +93,31 @@ impl FisherEdgeMetric {
     /// Retorna true si el nodo `n` tiene su Fisher actualizado.
     /// Requerido por AxiomID::DualityConsistency.
     pub fn is_current(&self, n: NodeId) -> bool {
-        self.current_nodes.binary_search(&n).is_ok()
+        self.node_degrees
+            .binary_search_by_key(&n, |(id, _)| *id)
+            .is_ok()
+    }
+
+    fn increment_degree(&mut self, n: NodeId) {
+        match self.node_degrees.binary_search_by_key(&n, |(id, _)| *id) {
+            Ok(pos) => {
+                self.node_degrees[pos].1 = self.node_degrees[pos].1.saturating_add(1);
+            }
+            Err(pos) => {
+                self.node_degrees.insert(pos, (n, 1));
+            }
+        }
+    }
+
+    fn decrement_degree(&mut self, n: NodeId) {
+        if let Ok(pos) = self.node_degrees.binary_search_by_key(&n, |(id, _)| *id) {
+            let degree = self.node_degrees[pos].1;
+            if degree <= 1 {
+                self.node_degrees.remove(pos);
+            } else {
+                self.node_degrees[pos].1 = degree - 1;
+            }
+        }
     }
 
     fn normalize(&mut self) {
@@ -124,15 +129,12 @@ impl FisherEdgeMetric {
         self.edges.sort_unstable_by_key(|(key, _)| *key);
         self.edges.dedup_by(|lhs, rhs| lhs.0 == rhs.0);
 
-        self.current_nodes.clear();
-        for ((left, right), _) in &self.edges {
-            self.current_nodes.push(*left);
-            if left != right {
-                self.current_nodes.push(*right);
-            }
+        self.node_degrees.clear();
+        for i in 0..self.edges.len() {
+            let (left, right) = self.edges[i].0;
+            self.increment_degree(left);
+            self.increment_degree(right);
         }
-        self.current_nodes.sort_unstable();
-        self.current_nodes.dedup();
     }
 }
 

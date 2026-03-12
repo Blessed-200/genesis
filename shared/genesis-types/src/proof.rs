@@ -322,26 +322,39 @@ pub trait Mutation: Send + Sync {
 pub struct AxiomGuard;
 
 impl AxiomGuard {
+    fn verify_with_error(
+        proof: &Proof,
+        required: &[AxiomID],
+    ) -> Result<(), crate::error::GenesisError> {
+        if !proof.is_internally_consistent() {
+            return Err(crate::error::GenesisError::ProofInvalid { axiom_id: u8::MAX });
+        }
+
+        if !proof.axioms_checked.is_valid() {
+            return Err(crate::error::GenesisError::ProofInvalid { axiom_id: u8::MAX });
+        }
+
+        let required_mask = AxiomSet::from_slice(required);
+        if (required_mask.bits() & proof.axioms_checked.bits()) != required_mask.bits() {
+            let missing = required_mask.difference(proof.axioms_checked).bits();
+            let axiom_id = missing.trailing_zeros() as u8;
+            return Err(crate::error::GenesisError::ProofInvalid { axiom_id });
+        }
+
+        if !Self::replay_witness(&proof.witness, proof.axioms_checked) {
+            return Err(crate::error::GenesisError::ProofInvalid { axiom_id: u8::MAX });
+        }
+
+        Ok(())
+    }
+
     /// Verifica que `proof` cubre todos los axiomas en `required`.
     ///
     /// Retorna `true` solo si:
     /// - El hash del witness es correcto
     /// - Cada axioma en `required` aparece en el witness con resultado positivo
     pub fn verify(proof: &Proof, required: &[AxiomID]) -> bool {
-        if !proof.is_internally_consistent() {
-            return false;
-        }
-
-        if !proof.axioms_checked.is_valid() {
-            return false;
-        }
-
-        let required_mask = AxiomSet::from_slice(required);
-        if (required_mask.bits() & proof.axioms_checked.bits()) != required_mask.bits() {
-            return false;
-        }
-
-        Self::replay_witness(&proof.witness, proof.axioms_checked)
+        Self::verify_with_error(proof, required).is_ok()
     }
 
     /// Verifica proof y emite token tipado. **ÚNICO camino legítimo hacia `apply()`.**
@@ -362,13 +375,23 @@ impl AxiomGuard {
         proof: &'p Proof,
         required: &[AxiomID],
     ) -> Option<VerifiedProof<'p, M>> {
-        if Self::verify(proof, required) {
-            Some(VerifiedProof {
-                _mutation: core::marker::PhantomData,
-            })
-        } else {
-            None
-        }
+        Self::verify_for_result::<M>(proof, required).ok()
+    }
+
+    /// Verifica proof y emite token tipado con diagnóstico estructurado.
+    ///
+    /// Retorna [`crate::error::GenesisError::ProofInvalid`] cuando el proof no
+    /// cumple integridad, cobertura de axiomas o replay del witness.
+    ///
+    /// AX-ID: `GENESIS_PROOF_SPEC` §2.4
+    pub fn verify_for_result<'p, M: Mutation>(
+        proof: &'p Proof,
+        required: &[AxiomID],
+    ) -> Result<VerifiedProof<'p, M>, crate::error::GenesisError> {
+        Self::verify_with_error(proof, required)?;
+        Ok(VerifiedProof {
+            _mutation: core::marker::PhantomData,
+        })
     }
 
     /// Deserializa el witness frame a frame y verifica que todos los axiomas
@@ -597,6 +620,74 @@ mod tests {
     fn valid_proof_passes() {
         let proof = build_proof(&[(AxiomID::MinkowskiSignature, true)]).unwrap();
         assert!(AxiomGuard::verify(&proof, &[AxiomID::MinkowskiSignature]));
+    }
+
+    #[test]
+    fn verify_for_result_returns_token_for_valid_proof() {
+        struct DummyMutation;
+
+        impl Mutation for DummyMutation {
+            fn propose(&self) -> Result<Proof, crate::error::GenesisError> {
+                build_proof(&[(AxiomID::MinkowskiSignature, true)])
+            }
+
+            fn apply(
+                &self,
+                _token: VerifiedProof<'_, Self>,
+            ) -> Result<(), crate::error::GenesisError>
+            where
+                Self: Sized,
+            {
+                Ok(())
+            }
+
+            fn name(&self) -> &'static str {
+                "dummy"
+            }
+        }
+
+        let mutation = DummyMutation;
+        let proof = mutation.propose().unwrap();
+        let token =
+            AxiomGuard::verify_for_result::<DummyMutation>(&proof, &[AxiomID::MinkowskiSignature])
+                .expect("proof should verify");
+        assert!(mutation.apply(token).is_ok());
+    }
+
+    #[test]
+    fn verify_for_result_returns_proof_invalid_for_missing_axiom() {
+        struct MissingMutation;
+
+        impl Mutation for MissingMutation {
+            fn propose(&self) -> Result<Proof, crate::error::GenesisError> {
+                build_proof(&[(AxiomID::MinkowskiSignature, true)])
+            }
+
+            fn apply(
+                &self,
+                _token: VerifiedProof<'_, Self>,
+            ) -> Result<(), crate::error::GenesisError>
+            where
+                Self: Sized,
+            {
+                Ok(())
+            }
+
+            fn name(&self) -> &'static str {
+                "missing"
+            }
+        }
+
+        let proof = build_proof(&[(AxiomID::MinkowskiSignature, true)]).unwrap();
+        let err =
+            match AxiomGuard::verify_for_result::<MissingMutation>(&proof, &[AxiomID::CohomologyZero]) {
+                Ok(_) => panic!("missing required axiom must fail"),
+                Err(err) => err,
+            };
+        assert_eq!(
+            err,
+            crate::error::GenesisError::ProofInvalid { axiom_id: 1 }
+        );
     }
 
     #[test]
