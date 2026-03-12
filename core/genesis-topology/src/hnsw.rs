@@ -691,7 +691,11 @@ impl HnswGraph {
                     .filter_map(|&(nb_id, _)| {
                         self.get_idx(nb_id).and_then(|ni| {
                             let d = self.distance_to_node(&nv, ni, 0);
-                            if d <= radius { Some(nb_id) } else { None }
+                            if d <= radius {
+                                Some(nb_id)
+                            } else {
+                                None
+                            }
                         })
                     })
                     .collect()
@@ -780,7 +784,9 @@ impl HnswGraph {
     ///
     /// AX-ID: LEY_FUNDACIONAL §3.7 (WormholeCollapse), CRATE-004 prerequisite (FIX-H)
     pub fn remove_node(&mut self, id: NodeId) -> Result<(), GenesisError> {
-        let idx = self.get_idx(id).ok_or(GenesisError::InvariantViolation { axiom_id: 4 })?;
+        let idx = self
+            .get_idx(id)
+            .ok_or(GenesisError::InvariantViolation { axiom_id: 4 })?;
 
         // Step 1: Remove all edges originating from this node.
         // Collect neighbour IDs first to avoid borrow conflicts.
@@ -788,9 +794,7 @@ impl HnswGraph {
             .layers
             .iter()
             .enumerate()
-            .flat_map(|(layer, adj)| {
-                adj.iter().map(move |&(nb_id, _)| (nb_id, layer))
-            })
+            .flat_map(|(layer, adj)| adj.iter().map(move |&(nb_id, _)| (nb_id, layer)))
             .collect();
 
         for (nb_id, layer) in all_neighbours {
@@ -818,12 +822,16 @@ impl HnswGraph {
         // Step 4: Update entry point if it was pointing to this node.
         if self.entry == Some(idx) {
             // Find a new entry point: the node with the highest layer.
-            self.entry = self.nodes
+            self.entry = self
+                .nodes
                 .iter()
                 .enumerate()
                 .filter(|(i, n)| *i != idx && !n.layers.is_empty())
                 .max_by_key(|(_, n)| n.layers.len())
-                .map(|(i, n)| { self.entry_layer = n.layers.len() - 1; i });
+                .map(|(i, n)| {
+                    self.entry_layer = n.layers.len() - 1;
+                    i
+                });
         }
 
         // Step 5: Mark the node slot as invalid (keep Vec size stable for index integrity).
@@ -1249,7 +1257,9 @@ mod tests {
                     assert!(
                         adj.len() <= m_max,
                         "node {:?} layer {layer_idx}: degree {} > m_max {}",
-                        node.id, adj.len(), m_max
+                        node.id,
+                        adj.len(),
+                        m_max
                     );
                 }
             }
@@ -1403,7 +1413,8 @@ mod scaling_tests {
                 rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
                 *c = ((rng >> 33) as f64 / u32::MAX as f64) * 2.0 - 1.0;
             }
-            SparseCliffordVector::from_dense(&coeffs).unwrap_or_else(|_| SparseCliffordVector::zero())
+            SparseCliffordVector::from_dense(&coeffs)
+                .unwrap_or_else(|_| SparseCliffordVector::zero())
         }
 
         fn build_and_time_search(n: usize, repetitions: u32) -> std::time::Duration {
@@ -1427,8 +1438,8 @@ mod scaling_tests {
         // O(N) ratio would be: 10.0
         // We allow ≤ 6.0 to handle sandbox CPU variance while still catching O(N) regressions.
         let reps = 30u32;
-        let t_small = build_and_time_search(500,   reps);
-        let t_large = build_and_time_search(5000,  reps);
+        let t_small = build_and_time_search(500, reps);
+        let t_large = build_and_time_search(5000, reps);
 
         let ratio = t_large.as_nanos() as f64 / t_small.as_nanos().max(1) as f64;
 
@@ -1440,6 +1451,9 @@ mod scaling_tests {
         );
 
         // Also assert we didn't degrade below O(1) (ratio should be > 0.3)
-        assert!(ratio > 0.1, "ratio={ratio:.2} suspiciously small — benchmark noise");
+        assert!(
+            ratio > 0.1,
+            "ratio={ratio:.2} suspiciously small — benchmark noise"
+        );
     }
 }

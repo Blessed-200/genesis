@@ -46,8 +46,8 @@ pub(crate) fn poly_sin(x: f64) -> f64 {
     }
     use core::f64::consts::FRAC_PI_2;
     // Standard two-part Cody-Waite from FDLIBM / glibc.
-    const C1: f64 = 1.5707963267948966_f64;    // π/2 high (f64 nearest)
-    const C2: f64 = 6.123233995736766e-17_f64;  // π/2 - C1 (low correction)
+    const C1: f64 = 1.5707963267948966_f64; // π/2 high (f64 nearest)
+    const C2: f64 = 6.123233995736766e-17_f64; // π/2 - C1 (low correction)
     let k = (x / FRAC_PI_2).round();
     let y = x - k * C1 - k * C2;
     let octant = (k as i64).rem_euclid(4);
@@ -93,23 +93,23 @@ pub(crate) fn poly_cos(x: f64) -> f64 {
 /// Degree-9 Horner form. Error < 5e-13.
 #[inline(always)]
 fn sin_kernel(y: f64, y2: f64) -> f64 {
-    y * (1.0 + y2 * (-1.666_666_666_666_666_6e-1
-        + y2 * (8.333_333_333_332_249e-3
-            + y2 * (-1.984_126_982_985_795e-4
-                + y2 * (2.755_731_370_707_006_8e-6
-                    + y2 * -2.505_210_838_544_172_5e-8)))))
+    y * (1.0
+        + y2 * (-1.666_666_666_666_666_6e-1
+            + y2 * (8.333_333_333_332_249e-3
+                + y2 * (-1.984_126_982_985_795e-4
+                    + y2 * (2.755_731_370_707_006_8e-6 + y2 * -2.505_210_838_544_172_5e-8)))))
 }
 
 /// Minimax polynomial kernel for cos(y) where y ∈ [-π/4, π/4].
 /// Degree-10 Horner form. Error < 5e-13.
 #[inline(always)]
 fn cos_kernel(_y: f64, y2: f64) -> f64 {
-    1.0 + y2 * (-4.999_999_999_999_998e-1
-        + y2 * (4.166_666_666_666_667e-2
-            + y2 * (-1.388_888_888_888_735e-3
-                + y2 * (2.480_158_730_159_014e-5
-                    + y2 * (-2.755_731_922_428_758e-7
-                        + y2 * 2.087_675_698_786_810_2e-9)))))
+    1.0 + y2
+        * (-4.999_999_999_999_998e-1
+            + y2 * (4.166_666_666_666_667e-2
+                + y2 * (-1.388_888_888_888_735e-3
+                    + y2 * (2.480_158_730_159_014e-5
+                        + y2 * (-2.755_731_922_428_758e-7 + y2 * 2.087_675_698_786_810_2e-9)))))
 }
 
 /// Amplitude-weighted Kuramoto order parameter — adaptive serial/parallel (BN-08, perf fix).
@@ -135,7 +135,9 @@ fn cos_kernel(_y: f64, y2: f64) -> f64 {
 /// r ∈ [0.0, 1.0]. AX-ID: AXIOMA-006, AXIOMA-008, H_dinámica (LEY_FUNDACIONAL §4)
 pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
     let oscs = network.phases();
-    if oscs.is_empty() { return 0.0; }
+    if oscs.is_empty() {
+        return 0.0;
+    }
 
     const N_GRADES: usize = 5;
     const EPS: f64 = 1e-30;
@@ -151,9 +153,15 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
             for g in 0..5 {
                 let a = osc.amplitudes[g];
                 #[cfg(feature = "poly_trig")]
-                { acc[g].0 += a * poly_cos(osc.phases[g]); acc[g].1 += a * poly_sin(osc.phases[g]); }
+                {
+                    acc[g].0 += a * poly_cos(osc.phases[g]);
+                    acc[g].1 += a * poly_sin(osc.phases[g]);
+                }
                 #[cfg(not(feature = "poly_trig"))]
-                { acc[g].0 += a * osc.phases[g].cos(); acc[g].1 += a * osc.phases[g].sin(); }
+                {
+                    acc[g].0 += a * osc.phases[g].cos();
+                    acc[g].1 += a * osc.phases[g].sin();
+                }
                 acc[g].2 += a;
             }
         }
@@ -165,32 +173,48 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
         reduce_slice(oscs)
     } else {
         // Parallel path: rayon fold-reduce — optimal for large N.
-        oscs.par_iter().fold(
-            || [(0.0f64, 0.0f64, 0.0f64); N_GRADES],
-            |mut acc, osc| {
-                for g in 0..N_GRADES {
-                    let a = osc.amplitudes[g];
-                    #[cfg(feature = "poly_trig")]
-                    { acc[g].0 += a * poly_cos(osc.phases[g]); acc[g].1 += a * poly_sin(osc.phases[g]); }
-                    #[cfg(not(feature = "poly_trig"))]
-                    { acc[g].0 += a * osc.phases[g].cos(); acc[g].1 += a * osc.phases[g].sin(); }
-                    acc[g].2 += a;
-                }
-                acc
-            },
-        ).reduce(
-            || [(0.0f64, 0.0f64, 0.0f64); N_GRADES],
-            |mut a, b| {
-                for g in 0..N_GRADES { a[g].0+=b[g].0; a[g].1+=b[g].1; a[g].2+=b[g].2; }
-                a
-            },
-        )
+        oscs.par_iter()
+            .fold(
+                || [(0.0f64, 0.0f64, 0.0f64); N_GRADES],
+                |mut acc, osc| {
+                    for g in 0..N_GRADES {
+                        let a = osc.amplitudes[g];
+                        #[cfg(feature = "poly_trig")]
+                        {
+                            acc[g].0 += a * poly_cos(osc.phases[g]);
+                            acc[g].1 += a * poly_sin(osc.phases[g]);
+                        }
+                        #[cfg(not(feature = "poly_trig"))]
+                        {
+                            acc[g].0 += a * osc.phases[g].cos();
+                            acc[g].1 += a * osc.phases[g].sin();
+                        }
+                        acc[g].2 += a;
+                    }
+                    acc
+                },
+            )
+            .reduce(
+                || [(0.0f64, 0.0f64, 0.0f64); N_GRADES],
+                |mut a, b| {
+                    for g in 0..N_GRADES {
+                        a[g].0 += b[g].0;
+                        a[g].1 += b[g].1;
+                        a[g].2 += b[g].2;
+                    }
+                    a
+                },
+            )
     };
 
-    let r_total: f64 = grade_totals.iter()
+    let r_total: f64 = grade_totals
+        .iter()
         .map(|(sc, ss, sa)| sc.hypot(*ss) / (sa + EPS))
         .sum();
-    #[allow(clippy::cast_precision_loss)] { r_total / N_GRADES as f64 }
+    #[allow(clippy::cast_precision_loss)]
+    {
+        r_total / N_GRADES as f64
+    }
 }
 
 /// Hub-sampled synchrony — distributed Ω without global barrier (BN-08).
@@ -204,7 +228,9 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
 /// AX-ID: AXIOMA-006, LEY_FUNDACIONAL §4, CLOUD_PLATFORM_ARCHITECTURE §3
 pub fn synchrony_order_hubs(network: &QuantumKuramotoNetwork, hub_indices: &[usize]) -> f64 {
     let oscs = network.phases();
-    if hub_indices.is_empty() || oscs.is_empty() { return f64::NAN; }
+    if hub_indices.is_empty() || oscs.is_empty() {
+        return f64::NAN;
+    }
     const N_GRADES: usize = 5;
     const EPS: f64 = 1e-30;
     let mut r_total = 0.0f64;
@@ -220,9 +246,11 @@ pub fn synchrony_order_hubs(network: &QuantumKuramotoNetwork, hub_indices: &[usi
         }
         r_total += sc.hypot(ss) / (sa + EPS);
     }
-    #[allow(clippy::cast_precision_loss)] { r_total / N_GRADES as f64 }
+    #[allow(clippy::cast_precision_loss)]
+    {
+        r_total / N_GRADES as f64
+    }
 }
-
 
 /// Parámetro de orden de Kuramoto multigrade:
 ///   r_sync = (1/G) × Σ_{g=0}^{G-1} |Σᵢ e^{i·φᵢg}| / N
@@ -468,20 +496,15 @@ mod tests {
     fn amplitude_zero_gives_rsync_zero() {
         let mut net = QuantumKuramotoNetwork::new(0.0);
         for i in 0..20u64 {
-            let mut osc = QuantumOscillator::new(
-                NodeId::try_new(i).expect("NodeId válido"),
-                [0.0; 5],
-            );
+            let mut osc =
+                QuantumOscillator::new(NodeId::try_new(i).expect("NodeId válido"), [0.0; 5]);
             osc.amplitudes = [0.0; 5]; // todos saturados
             net.add_oscillator(osc).expect("NodeId válido");
         }
         let r = synchrony_order(&net);
         // Con todas amplitudes = 0: sum_cos = 0, sum_sin = 0, sum_amp = 0
         // r = hypot(0,0)/(0+EPS) = 0/EPS = 0
-        assert!(
-            r < 1e-20,
-            "todos amplitude=0 → r_sync debe ser ~0, got {r}"
-        );
+        assert!(r < 1e-20, "todos amplitude=0 → r_sync debe ser ~0, got {r}");
     }
 
     /// r_sync ponderado < r_sync clásico cuando nodos desincronizados tienen amplitud alta
@@ -565,13 +588,15 @@ mod tests {
 // ── Tests for dot_bivectors and adaptive coupling ─────────────────────────────
 #[cfg(test)]
 mod adaptive_tests {
+    use super::{poly_cos, poly_sin};
     use crate::kuramoto::QuantumKuramotoNetwork;
     use crate::oscillator::QuantumOscillator;
     use genesis_math::SparseCliffordVector;
     use genesis_types::NodeId;
-    use super::{poly_sin, poly_cos};
 
-    fn id(n: u64) -> NodeId { NodeId::try_new(n).unwrap() }
+    fn id(n: u64) -> NodeId {
+        NodeId::try_new(n).unwrap()
+    }
 
     fn make_vec(pairs: &[(usize, f64)]) -> SparseCliffordVector {
         SparseCliffordVector::from_iter(pairs.iter().copied()).unwrap()
@@ -582,8 +607,11 @@ mod adaptive_tests {
     fn dot_bivectors_zero_for_grade1_only_vectors() {
         let a = make_vec(&[(0b0001, 1.0), (0b0010, 0.5)]); // solo grado 1
         let b = make_vec(&[(0b0001, 0.3), (0b0100, 0.7)]); // solo grado 1
-        assert_eq!(a.dot_bivectors(&b), 0.0,
-            "vectores sin bivectores deben dar dot_bivectors=0");
+        assert_eq!(
+            a.dot_bivectors(&b),
+            0.0,
+            "vectores sin bivectores deben dar dot_bivectors=0"
+        );
     }
 
     /// dot_bivectors retorna positivo para bivectores paralelos.
@@ -593,24 +621,33 @@ mod adaptive_tests {
         let a = make_vec(&[(3, 1.0)]);
         let b = make_vec(&[(3, 1.0)]);
         let d = a.dot_bivectors(&b);
-        assert!(d > 0.0, "bivectores paralelos deben dar producto positivo, got {d}");
+        assert!(
+            d > 0.0,
+            "bivectores paralelos deben dar producto positivo, got {d}"
+        );
     }
 
     /// dot_bivectors retorna negativo para bivectores antiparalelos.
     #[test]
     fn dot_bivectors_negative_for_anti_aligned_bivectors() {
-        let a = make_vec(&[(3, 1.0)]);   // e₀₁ positivo
+        let a = make_vec(&[(3, 1.0)]); // e₀₁ positivo
         let b = make_vec(&[(3, -1.0)]); // e₀₁ negativo
         let d = a.dot_bivectors(&b);
-        assert!(d < 0.0, "bivectores antiparalelos deben dar producto negativo, got {d}");
+        assert!(
+            d < 0.0,
+            "bivectores antiparalelos deben dar producto negativo, got {d}"
+        );
     }
 
     /// saturation_factor = 0 cuando amplitud = 1 (prior, incierto).
     #[test]
     fn saturation_factor_zero_at_full_amplitude() {
         let osc = QuantumOscillator::new(id(0), [0.0; 5]);
-        assert!((osc.saturation_factor() - 0.0).abs() < 1e-12,
-            "amplitudes=[1.0;5] → amplitude_norm=1 → sat=0, got {}", osc.saturation_factor());
+        assert!(
+            (osc.saturation_factor() - 0.0).abs() < 1e-12,
+            "amplitudes=[1.0;5] → amplitude_norm=1 → sat=0, got {}",
+            osc.saturation_factor()
+        );
     }
 
     /// saturation_factor = 1 cuando amplitud = 0 (saturado, aprendido).
@@ -618,20 +655,27 @@ mod adaptive_tests {
     fn saturation_factor_one_at_zero_amplitude() {
         let mut osc = QuantumOscillator::new(id(0), [0.0; 5]);
         osc.amplitudes = [0.0; 5];
-        assert!((osc.saturation_factor() - 1.0).abs() < 1e-12,
-            "amplitudes=[0;5] → amplitude_norm=0 → sat=1, got {}", osc.saturation_factor());
+        assert!(
+            (osc.saturation_factor() - 1.0).abs() < 1e-12,
+            "amplitudes=[0;5] → amplitude_norm=0 → sat=1, got {}",
+            osc.saturation_factor()
+        );
     }
 
     /// adaptive_step con vecs vacíos es no-op (longitud incorrecta).
     #[test]
     fn adaptive_step_noop_if_vecs_len_mismatch() {
         let mut net = QuantumKuramotoNetwork::new(0.0);
-        net.add_oscillator(QuantumOscillator::new(id(0), [1.0; 5])).unwrap();
+        net.add_oscillator(QuantumOscillator::new(id(0), [1.0; 5]))
+            .unwrap();
         let phases_before = net.phases()[0].phases;
         // vecs vacíos → mismatch → no-op
         net.adaptive_step(&[], 0.01);
-        assert_eq!(net.phases()[0].phases, phases_before,
-            "adaptive_step con vecs vacíos no debe modificar fases");
+        assert_eq!(
+            net.phases()[0].phases,
+            phases_before,
+            "adaptive_step con vecs vacíos no debe modificar fases"
+        );
     }
 
     /// adaptive_step con amplitud=1 y bivectores nulos reproduce Kuramoto clásico.
@@ -647,26 +691,31 @@ mod adaptive_tests {
 
         let phase0 = 0.0;
         let phase1 = PI / 4.0;
-        let gamma  = 0.5;
+        let gamma = 0.5;
 
         // Red clásica
         let mut classic = QuantumKuramotoNetwork::new(0.0);
-        classic.add_oscillator(QuantumOscillator::with_phases(id(0), [phase0; 5], [0.0; 5])).unwrap();
-        classic.add_oscillator(QuantumOscillator::with_phases(id(1), [phase1; 5], [0.0; 5])).unwrap();
+        classic
+            .add_oscillator(QuantumOscillator::with_phases(id(0), [phase0; 5], [0.0; 5]))
+            .unwrap();
+        classic
+            .add_oscillator(QuantumOscillator::with_phases(id(1), [phase1; 5], [0.0; 5]))
+            .unwrap();
         classic.set_coupling(id(0), id(1), gamma);
         classic.step(0.01);
 
         // Red adaptativa (sin bivectores → equivalente a clásica)
         let mut adaptive = QuantumKuramotoNetwork::new(0.0);
-        adaptive.add_oscillator(QuantumOscillator::with_phases(id(0), [phase0; 5], [0.0; 5])).unwrap();
-        adaptive.add_oscillator(QuantumOscillator::with_phases(id(1), [phase1; 5], [0.0; 5])).unwrap();
+        adaptive
+            .add_oscillator(QuantumOscillator::with_phases(id(0), [phase0; 5], [0.0; 5]))
+            .unwrap();
+        adaptive
+            .add_oscillator(QuantumOscillator::with_phases(id(1), [phase1; 5], [0.0; 5]))
+            .unwrap();
         adaptive.set_coupling(id(0), id(1), gamma);
 
         // Vectores sin componente de grado 2 (solo grado 1)
-        let vecs = [
-            make_vec(&[(0b0001, 1.0)]),
-            make_vec(&[(0b0001, 1.0)]),
-        ];
+        let vecs = [make_vec(&[(0b0001, 1.0)]), make_vec(&[(0b0001, 1.0)])];
         adaptive.adaptive_step(&vecs, 0.01);
 
         // Las fases deben coincidir porque las condiciones son idénticas
@@ -696,16 +745,40 @@ mod adaptive_tests {
 
         // Par A: bivectores paralelos → dot_biv > 0 → Γ_eff > Γ₀
         let mut net_a = QuantumKuramotoNetwork::new(0.0);
-        net_a.add_oscillator(QuantumOscillator::with_phases(id(0), [phase_a; 5], [0.0; 5])).unwrap();
-        net_a.add_oscillator(QuantumOscillator::with_phases(id(1), [phase_b; 5], [0.0; 5])).unwrap();
+        net_a
+            .add_oscillator(QuantumOscillator::with_phases(
+                id(0),
+                [phase_a; 5],
+                [0.0; 5],
+            ))
+            .unwrap();
+        net_a
+            .add_oscillator(QuantumOscillator::with_phases(
+                id(1),
+                [phase_b; 5],
+                [0.0; 5],
+            ))
+            .unwrap();
         net_a.set_coupling(id(0), id(1), gamma);
         let vecs_a = [make_vec(&[(3, 1.0)]), make_vec(&[(3, 1.0)])]; // mismo e₀₁
         net_a.adaptive_step(&vecs_a, dt);
 
         // Par B: bivectores antiparalelos → dot_biv < 0 → Γ_eff < Γ₀
         let mut net_b = QuantumKuramotoNetwork::new(0.0);
-        net_b.add_oscillator(QuantumOscillator::with_phases(id(0), [phase_a; 5], [0.0; 5])).unwrap();
-        net_b.add_oscillator(QuantumOscillator::with_phases(id(1), [phase_b; 5], [0.0; 5])).unwrap();
+        net_b
+            .add_oscillator(QuantumOscillator::with_phases(
+                id(0),
+                [phase_a; 5],
+                [0.0; 5],
+            ))
+            .unwrap();
+        net_b
+            .add_oscillator(QuantumOscillator::with_phases(
+                id(1),
+                [phase_b; 5],
+                [0.0; 5],
+            ))
+            .unwrap();
         net_b.set_coupling(id(0), id(1), gamma);
         let vecs_b = [make_vec(&[(3, 1.0)]), make_vec(&[(3, -1.0)])]; // e₀₁ vs −e₀₁
         net_b.adaptive_step(&vecs_b, dt);
@@ -733,15 +806,19 @@ mod adaptive_tests {
         // Threshold: 1e-6 (verified to hold for |x| ≤ 1e10 by Python simulation).
         // The former formula had 4e-4 error at 1e9 — this is 400× better.
         let test_vals: &[f64] = &[
-            1.0e3, 1.0e5, 1.0e7, 1.0e9, 1.234e9,
+            1.0e3,
+            1.0e5,
+            1.0e7,
+            1.0e9,
+            1.234e9,
             6.283_185_307_2e4, // 10_000 full rotations
         ];
         const THRESHOLD: f64 = 1e-6;
         for &x in test_vals {
             let sin_approx = poly_sin(x);
-            let sin_true   = x.sin();
+            let sin_true = x.sin();
             let cos_approx = poly_cos(x);
-            let cos_true   = x.cos();
+            let cos_true = x.cos();
 
             let sin_err = (sin_approx - sin_true).abs();
             let cos_err = (cos_approx - cos_true).abs();

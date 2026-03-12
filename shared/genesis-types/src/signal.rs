@@ -333,10 +333,10 @@ impl SpikeComponents {
                 filled += 1;
                 if filled == K {
                     // Find the weakest slot.
-                    (min_slot, min_abs) = buf[..K].iter().enumerate()
-                        .min_by(|(_, a), (_, b)| {
-                            a.0.total_cmp(&b.0).then(b.1.cmp(&a.1))
-                        })
+                    (min_slot, min_abs) = buf[..K]
+                        .iter()
+                        .enumerate()
+                        .min_by(|(_, a), (_, b)| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)))
                         .map(|(i, &(a, _ix, _))| (i, a))
                         .unwrap();
                 }
@@ -346,10 +346,10 @@ impl SpikeComponents {
                 if stronger {
                     buf[min_slot] = (abs, idx, coef);
                     // Recompute min slot.
-                    (min_slot, min_abs) = buf[..K].iter().enumerate()
-                        .min_by(|(_, a), (_, b)| {
-                            a.0.total_cmp(&b.0).then(b.1.cmp(&a.1))
-                        })
+                    (min_slot, min_abs) = buf[..K]
+                        .iter()
+                        .enumerate()
+                        .min_by(|(_, a), (_, b)| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)))
                         .map(|(i, &(a, _ix, _))| (i, a))
                         .unwrap();
                 }
@@ -878,7 +878,11 @@ impl DomainConsolidationSignal<Saturated> {
     /// Constructs a `Saturated` consolidation signal.
     ///
     /// AX-ID: AXIOMA-008
-    pub const fn saturated(domain: &'static str, timestamp_ns: Timestamp, fisher_delta_g: f64) -> Self {
+    pub const fn saturated(
+        domain: &'static str,
+        timestamp_ns: Timestamp,
+        fisher_delta_g: f64,
+    ) -> Self {
         Self {
             domain,
             timestamp_ns,
@@ -1577,20 +1581,25 @@ mod tests {
     fn spike_components_values_at_offset_zero() {
         let s = core::mem::MaybeUninit::<SpikeComponents>::zeroed();
         // SAFETY: MaybeUninit is only used to get addresses — we never read uninit data.
-        let base_addr   = s.as_ptr() as usize;
+        let base_addr = s.as_ptr() as usize;
         let values_addr = unsafe { core::ptr::addr_of!((*s.as_ptr()).values) } as usize;
-        assert_eq!(values_addr, base_addr,
-            "SpikeComponents::values must be at offset 0 for aligned SIMD loads");
+        assert_eq!(
+            values_addr, base_addr,
+            "SpikeComponents::values must be at offset 0 for aligned SIMD loads"
+        );
     }
 
     /// Verify `SpikeComponents::indices` is at offset 128 (after 16×f64).
     #[test]
     fn spike_components_indices_at_offset_128() {
         let s = core::mem::MaybeUninit::<SpikeComponents>::zeroed();
-        let base_addr    = s.as_ptr() as usize;
+        let base_addr = s.as_ptr() as usize;
         let indices_addr = unsafe { core::ptr::addr_of!((*s.as_ptr()).indices) } as usize;
-        assert_eq!(indices_addr - base_addr, 128,
-            "SpikeComponents::indices must be at offset 128");
+        assert_eq!(
+            indices_addr - base_addr,
+            128,
+            "SpikeComponents::indices must be at offset 128"
+        );
     }
     /// Top-K selection must retain the K highest-magnitude coefficients, not the
     /// first K arrivals. This is the core FIX-6 semantic guarantee.
@@ -1600,9 +1609,9 @@ mod tests {
     #[test]
     fn from_pairs_topk_by_magnitude_not_arrival() {
         const K: usize = SPIKE_MAX_COMPONENTS; // 16
-        // Generate K+4 pairs where the 4 highest-magnitude ones arrive LAST.
-        // The first K arrivals are small (0.1..=0.5). The last 4 are large (10.0..=13.0).
-        // Correct result: last 4 are in the spike; 4 smallest first arrivals are dropped.
+                                               // Generate K+4 pairs where the 4 highest-magnitude ones arrive LAST.
+                                               // The first K arrivals are small (0.1..=0.5). The last 4 are large (10.0..=13.0).
+                                               // Correct result: last 4 are in the spike; 4 smallest first arrivals are dropped.
         let mut pairs: Vec<(u16, f64)> = (0u16..K as u16)
             .map(|i| (i, (i as f64 + 1.0) * 0.1)) // magnitudes: 0.1, 0.2, ..., 1.6
             .collect();
@@ -1620,7 +1629,8 @@ mod tests {
             assert!(
                 indices.contains(&blade),
                 "blade {blade} (mag {:.0}) must be in top-K but wasn't found in {:?}",
-                10.0 + j as f64, indices
+                10.0 + j as f64,
+                indices
             );
         }
 
@@ -1646,12 +1656,18 @@ mod tests {
         // Both must contain the same blades (all 4 fit in K=16)
         let idx_a: Vec<u16> = spike_a.active_pairs().map(|(i, _)| i).collect();
         let idx_b: Vec<u16> = spike_b.active_pairs().map(|(i, _)| i).collect();
-        assert_eq!(idx_a, idx_b, "top-K result must not depend on arrival order");
+        assert_eq!(
+            idx_a, idx_b,
+            "top-K result must not depend on arrival order"
+        );
 
         // Coefficients must also match
         let coef_a: Vec<f64> = spike_a.active_pairs().map(|(_, c)| c).collect();
         let coef_b: Vec<f64> = spike_b.active_pairs().map(|(_, c)| c).collect();
-        assert_eq!(coef_a, coef_b, "coefficients must match regardless of arrival order");
+        assert_eq!(
+            coef_a, coef_b,
+            "coefficients must match regardless of arrival order"
+        );
     }
 
     /// Attractor with NaN energy must not corrupt BTreeSet invariants.
@@ -1662,13 +1678,16 @@ mod tests {
         use crate::constants::COGNITIVE_PLANCK_CONSTANT;
         // Exactly at threshold: must be rejected (<= means reject at threshold)
         let at_threshold = SpikeComponents::from_pairs([(0u16, COGNITIVE_PLANCK_CONSTANT)]);
-        assert_eq!(at_threshold.count as usize, 0,
-            "coefficient exactly at Planck threshold must be rejected");
+        assert_eq!(
+            at_threshold.count as usize, 0,
+            "coefficient exactly at Planck threshold must be rejected"
+        );
 
         // Just above threshold: must be accepted
         let just_above = SpikeComponents::from_pairs([(0u16, COGNITIVE_PLANCK_CONSTANT * 1.001)]);
-        assert_eq!(just_above.count as usize, 1,
-            "coefficient just above Planck threshold must be accepted");
+        assert_eq!(
+            just_above.count as usize, 1,
+            "coefficient just above Planck threshold must be accepted"
+        );
     }
-
 }

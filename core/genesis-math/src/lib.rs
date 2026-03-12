@@ -42,9 +42,6 @@
     clippy::semicolon_if_nothing_returned,
     clippy::uninlined_format_args,
 )]
-
-
-
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,

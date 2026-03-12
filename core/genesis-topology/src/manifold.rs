@@ -96,20 +96,20 @@ impl HyperbolicCoord {
 /// Sin límite fijo de nodos — solo la memoria del sistema lo acotat.
 #[derive(Default)]
 struct LambdaWorkspace {
-    degrees:          Vec<f64>,
-    adj_flat:         Vec<usize>,
-    adj_offsets:      Vec<(usize, usize)>,
-    y:                Vec<f64>,
-    q_prev:           Vec<f64>,
-    q_curr:           Vec<f64>,
-    w:                Vec<f64>,
-    basis:            Vec<f64>,
-    alpha:            Vec<f64>,
-    beta:             Vec<f64>,
-    tri_vec:          Vec<f64>,
-    tri_tmp:          Vec<f64>,
-    seen_marks:       Vec<u32>,
-    seen_generation:  u32,
+    degrees: Vec<f64>,
+    adj_flat: Vec<usize>,
+    adj_offsets: Vec<(usize, usize)>,
+    y: Vec<f64>,
+    q_prev: Vec<f64>,
+    q_curr: Vec<f64>,
+    w: Vec<f64>,
+    basis: Vec<f64>,
+    alpha: Vec<f64>,
+    beta: Vec<f64>,
+    tri_vec: Vec<f64>,
+    tri_tmp: Vec<f64>,
+    seen_marks: Vec<u32>,
+    seen_generation: u32,
 }
 
 impl LambdaWorkspace {
@@ -137,8 +137,8 @@ use genesis_types::{GenesisError, NodeId, REDUNDANCY_RADIUS};
 ///
 /// AX-ID: AXIOMA-007, AXIOMA-013, AXIOMA-014, `H_restricción` §3.5
 pub struct ManifoldCollector {
-    graph:             HnswGraph,
-    h1_state:          IncrementalH1State,
+    graph: HnswGraph,
+    h1_state: IncrementalH1State,
     /// Coordenadas hiperbólicas por nodo en el disco de Poincaré.
     ///
     /// **CONTRATO — poblado por CRATE-004 (`DiscreteRicciFlow`).**
@@ -159,8 +159,8 @@ impl ManifoldCollector {
     /// AX-ID: AXIOMA-013
     pub fn new(ef_construction: usize) -> Self {
         Self {
-            graph:             HnswGraph::new(ef_construction),
-            h1_state:          IncrementalH1State::new(),
+            graph: HnswGraph::new(ef_construction),
+            h1_state: IncrementalH1State::new(),
             hyperbolic_coords: Vec::new(),
         }
     }
@@ -222,7 +222,7 @@ impl ManifoldCollector {
             let v = neighbors[i];
             for w in self.graph.neighbors(v) {
                 // Only process each triangle once: w > v, w must also be neighbour of id.
-                if w > v && neighbors[i+1..].binary_search(&w).is_ok() {
+                if w > v && neighbors[i + 1..].binary_search(&w).is_ok() {
                     self.h1_state.add_triangle(id, v, w);
                 }
             }
@@ -260,7 +260,8 @@ impl ManifoldCollector {
         self.graph.remove_node(id)?;
 
         // Step 2: Remove hyperbolic coordinate if present.
-        self.hyperbolic_coords.retain(|&(raw_id, _)| raw_id != id.get());
+        self.hyperbolic_coords
+            .retain(|&(raw_id, _)| raw_id != id.get());
 
         // Step 3: Invalidate H¹ state for this node.
         // IncrementalH1State does not yet have a remove_node API
@@ -500,8 +501,11 @@ impl ManifoldCollector {
     /// AX-ID: AXIOMA-004, LEY_FUNDACIONAL §7.2
     pub fn set_hyperbolic_coord(&mut self, id: NodeId, coord: HyperbolicCoord) {
         let raw = id.get();
-        match self.hyperbolic_coords.binary_search_by_key(&raw, |&(k, _)| k) {
-            Ok(idx)  => self.hyperbolic_coords[idx].1 = coord,
+        match self
+            .hyperbolic_coords
+            .binary_search_by_key(&raw, |&(k, _)| k)
+        {
+            Ok(idx) => self.hyperbolic_coords[idx].1 = coord,
             Err(idx) => self.hyperbolic_coords.insert(idx, (raw, coord)),
         }
     }
@@ -552,7 +556,10 @@ fn prepare_laplacian_data(
     // assert is removed but the behaviour with non-sequential IDs is documented as
     // unsupported — callers must ensure dense IDs (CRATE-002 invariant).
     debug_assert!(
-        graph.nodes().enumerate().all(|(i, id)| id.get() == i as u64),
+        graph
+            .nodes()
+            .enumerate()
+            .all(|(i, id)| id.get() == i as u64),
         "prepare_laplacian_data requires dense NodeIds 0..N. Got non-sequential IDs. \
          Ensure ManifoldCollector assigns sequential IDs starting from 0."
     );
@@ -1120,10 +1127,22 @@ mod tests {
     /// Verifica que HyperbolicCoord::new rechaza puntos fuera del disco unitario.
     #[test]
     fn hyperbolic_coord_rejects_outside_disk() {
-        assert!(HyperbolicCoord::new(1.0, 0.0).is_none(), "punto en el borde debe rechazarse");
-        assert!(HyperbolicCoord::new(0.8, 0.8).is_none(), "0.64+0.64=1.28 fuera del disco");
-        assert!(HyperbolicCoord::new(f64::NAN, 0.0).is_none(), "NaN debe rechazarse");
-        assert!(HyperbolicCoord::new(f64::INFINITY, 0.0).is_none(), "Inf debe rechazarse");
+        assert!(
+            HyperbolicCoord::new(1.0, 0.0).is_none(),
+            "punto en el borde debe rechazarse"
+        );
+        assert!(
+            HyperbolicCoord::new(0.8, 0.8).is_none(),
+            "0.64+0.64=1.28 fuera del disco"
+        );
+        assert!(
+            HyperbolicCoord::new(f64::NAN, 0.0).is_none(),
+            "NaN debe rechazarse"
+        );
+        assert!(
+            HyperbolicCoord::new(f64::INFINITY, 0.0).is_none(),
+            "Inf debe rechazarse"
+        );
     }
 
     /// Verifica que HyperbolicCoord::new acepta puntos válidos dentro del disco.
@@ -1171,9 +1190,15 @@ mod tests {
         m.set_hyperbolic_coord(NodeId::try_new(2).unwrap(), coord2);
 
         assert_eq!(m.hyperbolic_coord_count(), 2);
-        assert_eq!(m.hyperbolic_coord(NodeId::try_new(0).unwrap()), Some(coord0));
+        assert_eq!(
+            m.hyperbolic_coord(NodeId::try_new(0).unwrap()),
+            Some(coord0)
+        );
         assert!(m.hyperbolic_coord(NodeId::try_new(1).unwrap()).is_none());
-        assert_eq!(m.hyperbolic_coord(NodeId::try_new(2).unwrap()), Some(coord2));
+        assert_eq!(
+            m.hyperbolic_coord(NodeId::try_new(2).unwrap()),
+            Some(coord2)
+        );
     }
 
     /// Verifica que set_hyperbolic_coord actualiza en lugar de duplicar.
@@ -1189,7 +1214,11 @@ mod tests {
         assert_eq!(m.hyperbolic_coord_count(), 1);
 
         m.set_hyperbolic_coord(NodeId::try_new(0).unwrap(), c2);
-        assert_eq!(m.hyperbolic_coord_count(), 1, "update no debe crear duplicado");
+        assert_eq!(
+            m.hyperbolic_coord_count(),
+            1,
+            "update no debe crear duplicado"
+        );
         assert_eq!(m.hyperbolic_coord(NodeId::try_new(0).unwrap()), Some(c2));
     }
 

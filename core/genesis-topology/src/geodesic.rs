@@ -5,8 +5,7 @@
 //!
 //! AX-ID: AXIOMA-013, AXIOMA-014, LEY_FUNDACIONAL §3.6
 use genesis_math::{
-    bivector_norm_sq_of_product, fast_metric_distance,
-    BivectorProduct, SparseCliffordVector,
+    bivector_norm_sq_of_product, fast_metric_distance, BivectorProduct, SparseCliffordVector,
 };
 
 /// Distancia geométrica global en G(1,3).
@@ -205,7 +204,7 @@ mod tests {
         let a_dense: [f64; 16] = a.coeffs;
 
         let d_sparse = geometric_distance(&a, &b);
-        let d_dense  = fast_bivector_distance_from_dense(&a_dense, &b);
+        let d_dense = fast_bivector_distance_from_dense(&a_dense, &b);
 
         assert!(
             (d_sparse - d_dense).abs() < 1e-12,

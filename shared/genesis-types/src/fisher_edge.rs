@@ -56,7 +56,10 @@ impl FisherEdgeMetric {
     /// AX-ID: LEY_FUNDACIONAL §3.6, BN-10
     pub fn set(&mut self, i: NodeId, j: NodeId, value: f64) {
         let key = canonical_edge(i, j);
-        match self.edges.binary_search_by(|((a, b), _)| canonical_edge(*a, *b).cmp(&key)) {
+        match self
+            .edges
+            .binary_search_by(|((a, b), _)| canonical_edge(*a, *b).cmp(&key))
+        {
             Ok(pos) => {
                 // Edge exists — update value in-place, no re-sort needed.
                 self.edges[pos].1 = value;
@@ -83,7 +86,10 @@ impl FisherEdgeMetric {
     /// AX-ID: LEY_FUNDACIONAL §3.6, BN-10
     pub fn remove(&mut self, i: NodeId, j: NodeId) {
         let key = canonical_edge(i, j);
-        if let Ok(pos) = self.edges.binary_search_by(|((a, b), _)| canonical_edge(*a, *b).cmp(&key)) {
+        if let Ok(pos) = self
+            .edges
+            .binary_search_by(|((a, b), _)| canonical_edge(*a, *b).cmp(&key))
+        {
             self.edges.remove(pos);
             // Rebuild current_nodes incrementally.
             let (ni, nj) = key;
@@ -115,8 +121,7 @@ impl FisherEdgeMetric {
                 core::mem::swap(i, j);
             }
         }
-        self.edges
-            .sort_unstable_by_key(|(key, _)| *key);
+        self.edges.sort_unstable_by_key(|(key, _)| *key);
         self.edges.dedup_by(|lhs, rhs| lhs.0 == rhs.0);
 
         self.current_nodes.clear();
@@ -132,7 +137,11 @@ impl FisherEdgeMetric {
 }
 
 fn canonical_edge(i: NodeId, j: NodeId) -> (NodeId, NodeId) {
-    if i <= j { (i, j) } else { (j, i) }
+    if i <= j {
+        (i, j)
+    } else {
+        (j, i)
+    }
 }
 
 #[cfg(test)]
@@ -174,7 +183,10 @@ mod tests {
     fn set_updates_existing_edge_in_place() {
         let mut m = FisherEdgeMetric::new(vec![((node(0), node(1)), 0.5)]);
         m.set(node(0), node(1), 0.9);
-        assert!((m.get(node(0), node(1)) - 0.9).abs() < 1e-15, "set must update existing edge");
+        assert!(
+            (m.get(node(0), node(1)) - 0.9).abs() < 1e-15,
+            "set must update existing edge"
+        );
         assert_eq!(m.edges.len(), 1, "no duplicate created");
     }
 
@@ -190,10 +202,8 @@ mod tests {
 
     #[test]
     fn remove_deletes_edge_and_updates_current_nodes() {
-        let mut m = FisherEdgeMetric::new(vec![
-            ((node(0), node(1)), 0.5),
-            ((node(1), node(2)), 0.7),
-        ]);
+        let mut m =
+            FisherEdgeMetric::new(vec![((node(0), node(1)), 0.5), ((node(1), node(2)), 0.7)]);
         m.remove(node(0), node(1));
         assert_eq!(m.get(node(0), node(1)), 0.0, "removed edge returns 0");
         assert!(!m.is_current(node(0)), "node 0 no longer has edges");

@@ -51,13 +51,20 @@ impl DerivedMetadata {
     /// Internal constructor — `_pad` is zero-initialized.
     #[inline]
     pub const fn new(active_mask: u32, max_abs_coeff: f64, clifford_norm_sq: f64) -> Self {
-        Self { active_mask, _pad: 0, max_abs_coeff, clifford_norm_sq }
+        Self {
+            active_mask,
+            _pad: 0,
+            max_abs_coeff,
+            clifford_norm_sq,
+        }
     }
 
     /// Mark blade `i` as active.
     #[inline]
     #[allow(clippy::missing_const_for_fn)] // &mut self not const-stable on MSRV 1.75
     pub fn set_active(&mut self, blade: usize) {
-        if blade < 32 { self.active_mask |= 1u32 << blade; }
+        if blade < 32 {
+            self.active_mask |= 1u32 << blade;
+        }
     }
 }

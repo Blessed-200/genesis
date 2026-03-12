@@ -86,8 +86,8 @@ impl QuantumOscillator {
     #[inline]
     pub fn new(node_id: NodeId, frequencies: [f64; 5]) -> Self {
         Self {
-            phases:      [0.0; 5],
-            amplitudes:  [1.0; 5],
+            phases: [0.0; 5],
+            amplitudes: [1.0; 5],
             frequencies,
             node_id,
             state: OscillatorState::Active,
@@ -99,7 +99,7 @@ impl QuantumOscillator {
     pub fn with_phases(node_id: NodeId, phases: [f64; 5], frequencies: [f64; 5]) -> Self {
         Self {
             phases,
-            amplitudes:  [1.0; 5],
+            amplitudes: [1.0; 5],
             frequencies,
             node_id,
             state: OscillatorState::Active,
@@ -131,7 +131,7 @@ impl QuantumOscillator {
     #[inline]
     pub fn complex_state(&self, g: usize) -> (f64, f64) {
         debug_assert!(g < 5, "grado {g} fuera de rango [0,4]");
-        let a  = self.amplitudes[g];
+        let a = self.amplitudes[g];
         let phi = self.phases[g];
         (a * phi.cos(), a * phi.sin())
     }
@@ -233,28 +233,32 @@ mod tests {
     fn new_initializes_amplitudes_to_one() {
         let id = NodeId::try_new(1).expect("NodeId válido por construcción");
         let osc = QuantumOscillator::new(id, [1.0; 5]);
-        assert_eq!(osc.amplitudes, [1.0; 5],
-            "amplitudes deben inicializar en 1.0 (prior de máxima certeza)");
+        assert_eq!(
+            osc.amplitudes, [1.0; 5],
+            "amplitudes deben inicializar en 1.0 (prior de máxima certeza)"
+        );
     }
 
     #[test]
     fn with_phases_preserves_all_fields() {
         let id = NodeId::try_new(7).expect("NodeId válido por construcción");
         let phases = [0.1, 0.2, 0.3, 0.4, 0.5];
-        let freqs  = [1.0, 1.1, 1.2, 1.3, 1.4];
-        let osc    = QuantumOscillator::with_phases(id, phases, freqs);
-        assert_eq!(osc.phases,      phases);
+        let freqs = [1.0, 1.1, 1.2, 1.3, 1.4];
+        let osc = QuantumOscillator::with_phases(id, phases, freqs);
+        assert_eq!(osc.phases, phases);
         assert_eq!(osc.frequencies, freqs);
         assert_eq!(osc.node_id.get(), 7);
-        assert_eq!(osc.amplitudes, [1.0; 5],
-            "with_phases también inicializa amplitudes en 1.0");
+        assert_eq!(
+            osc.amplitudes, [1.0; 5],
+            "with_phases también inicializa amplitudes en 1.0"
+        );
     }
 
     #[test]
     fn primary_phase_returns_grade0() {
-        let id     = NodeId::try_new(0).expect("NodeId válido por construcción");
+        let id = NodeId::try_new(0).expect("NodeId válido por construcción");
         let phases = [2.5, 0.1, 0.2, 0.3, 0.4];
-        let osc    = QuantumOscillator::with_phases(id, phases, [0.0; 5]);
+        let osc = QuantumOscillator::with_phases(id, phases, [0.0; 5]);
         assert_eq!(osc.primary_phase(), 2.5);
     }
 
@@ -263,17 +267,20 @@ mod tests {
     /// Con amplitud 1.0 y fase 0.0, complex_state debe ser (1.0, 0.0).
     #[test]
     fn complex_state_unit_amplitude_zero_phase() {
-        let id  = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let osc = QuantumOscillator::new(id, [0.0; 5]);
         let (re, im) = osc.complex_state(0);
-        assert!((re - 1.0).abs() < 1e-15, "re debe ser 1.0 con φ=0, got {re}");
+        assert!(
+            (re - 1.0).abs() < 1e-15,
+            "re debe ser 1.0 con φ=0, got {re}"
+        );
         assert!(im.abs() < 1e-15, "im debe ser 0.0 con φ=0, got {im}");
     }
 
     /// Con amplitud 0.0, complex_state debe ser (0.0, 0.0) para cualquier fase.
     #[test]
     fn complex_state_zero_amplitude_gives_zero() {
-        let id  = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let mut osc = QuantumOscillator::new(id, [0.0; 5]);
         osc.amplitudes = [0.0; 5];
         for g in 0..5 {
@@ -286,10 +293,10 @@ mod tests {
     /// Verifica que |complex_state(g)| = amplitude[g].
     #[test]
     fn complex_state_norm_equals_amplitude() {
-        let id   = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let mut osc = QuantumOscillator::new(id, [0.0; 5]);
         let phases = [1.0, 2.0, 3.0, 4.0, 5.0];
-        let amps   = [1.0, 0.8, 0.6, 0.4, 0.2];
+        let amps = [1.0, 0.8, 0.6, 0.4, 0.2];
         osc.amplitudes = amps;
         for g in 0..5 {
             osc.phases[g] = phases[g];
@@ -297,7 +304,8 @@ mod tests {
             let norm = re.hypot(im);
             assert!(
                 (norm - amps[g]).abs() < 1e-14,
-                "grado {g}: |ψ| = {norm}, amplitude = {}", amps[g]
+                "grado {g}: |ψ| = {norm}, amplitude = {}",
+                amps[g]
             );
         }
     }
@@ -307,16 +315,18 @@ mod tests {
     /// Con amplitudes = [1.0; 5], amplitude_norm debe ser 1.0.
     #[test]
     fn amplitude_norm_all_ones_is_one() {
-        let id  = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let osc = QuantumOscillator::new(id, [0.0; 5]);
-        assert!((osc.amplitude_norm() - 1.0).abs() < 1e-14,
-            "amplitude_norm con [1.0;5] debe ser 1.0");
+        assert!(
+            (osc.amplitude_norm() - 1.0).abs() < 1e-14,
+            "amplitude_norm con [1.0;5] debe ser 1.0"
+        );
     }
 
     /// Con amplitudes = [0.0; 5], amplitude_norm debe ser 0.0.
     #[test]
     fn amplitude_norm_all_zeros_is_zero() {
-        let id  = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let mut osc = QuantumOscillator::new(id, [0.0; 5]);
         osc.amplitudes = [0.0; 5];
         assert_eq!(osc.amplitude_norm(), 0.0);
@@ -325,14 +335,16 @@ mod tests {
     /// amplitude_norm está en [0,1] para amplitudes en [0,1].
     #[test]
     fn amplitude_norm_bounded_in_unit_interval() {
-        let id  = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let mut osc = QuantumOscillator::new(id, [0.0; 5]);
         // Probar varios valores intermedios
         for v in [0.0, 0.2, 0.5, 0.7, 1.0] {
             osc.amplitudes = [v; 5];
             let n = osc.amplitude_norm();
-            assert!(n >= 0.0 && n <= 1.0 + 1e-14,
-                "amplitude_norm = {n} fuera de [0,1] para amplitude = {v}");
+            assert!(
+                n >= 0.0 && n <= 1.0 + 1e-14,
+                "amplitude_norm = {n} fuera de [0,1] para amplitude = {v}"
+            );
         }
     }
 
@@ -341,27 +353,31 @@ mod tests {
     /// Con fisher_trace = FISHER_TRACE_INITIAL, amplitudes no cambian de 1.0.
     #[test]
     fn update_amplitude_fisher_prior_stays_one() {
-        let id  = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let mut osc = QuantumOscillator::new(id, [0.0; 5]);
         osc.update_amplitude_from_fisher(QuantumOscillator::FISHER_TRACE_INITIAL);
-        assert_eq!(osc.amplitudes, [1.0; 5],
-            "fisher_trace = INITIAL → amplitudes deben permanecer en 1.0");
+        assert_eq!(
+            osc.amplitudes, [1.0; 5],
+            "fisher_trace = INITIAL → amplitudes deben permanecer en 1.0"
+        );
     }
 
     /// Con fisher_trace = 0.0 (dominio completamente saturado), amplitudes → 0.0.
     #[test]
     fn update_amplitude_fisher_saturated_gives_zero() {
-        let id  = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let mut osc = QuantumOscillator::new(id, [0.0; 5]);
         osc.update_amplitude_from_fisher(0.0);
-        assert_eq!(osc.amplitudes, [0.0; 5],
-            "fisher_trace = 0 → amplitudes deben ser 0.0");
+        assert_eq!(
+            osc.amplitudes, [0.0; 5],
+            "fisher_trace = 0 → amplitudes deben ser 0.0"
+        );
     }
 
     /// La amplitud está clampeada en [0,1] incluso con valores fuera de rango.
     #[test]
     fn update_amplitude_clamps_to_unit_interval() {
-        let id  = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let mut osc = QuantumOscillator::new(id, [0.0; 5]);
 
         osc.update_amplitude_from_fisher(2.0); // > INITIAL
@@ -378,7 +394,7 @@ mod tests {
     /// Verifica comportamiento monotónico: más aprendizaje → menor amplitud.
     #[test]
     fn update_amplitude_monotone_with_fisher_trace() {
-        let id  = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let mut osc = QuantumOscillator::new(id, [0.0; 5]);
 
         // trace alto (aprendizaje inicial) → amplitud alta
@@ -393,11 +409,12 @@ mod tests {
         osc.update_amplitude_from_fisher(0.1);
         let a_low = osc.amplitudes[0];
 
-        assert!(a_high >= a_mid && a_mid >= a_low,
-            "amplitudes deben ser monótonas con fisher_trace: {a_high} ≥ {a_mid} ≥ {a_low}");
+        assert!(
+            a_high >= a_mid && a_mid >= a_low,
+            "amplitudes deben ser monótonas con fisher_trace: {a_high} ≥ {a_mid} ≥ {a_low}"
+        );
     }
 }
-
 
 /// Estado de vida de un oscilador cuántico.
 ///
@@ -415,14 +432,14 @@ pub enum OscillatorState {
     /// `since_ns`: timestamp en nanosegundos del momento de saturación.
     Saturated {
         /// Timestamp in nanoseconds when the oscillator entered the Saturated state.
-        since_ns: u64
+        since_ns: u64,
     },
     /// Podado por la ecuación de calor (AXIOMA-016).
     /// El oscilador es inactivo: sus fases no se actualizan y no contribuye a Ω.
     /// `at_ns`: timestamp del momento de poda.
     Pruned {
         /// Timestamp in nanoseconds when the oscillator was pruned.
-        at_ns: u64
+        at_ns: u64,
     },
 }
 
