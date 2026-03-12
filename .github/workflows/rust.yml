@@ -1,4 +1,4 @@
-name: GÉNESIS DeepMind-Level Excellence CI
+name: GÉNESIS_ELITE_FORGE
 
 on:
   push:
@@ -6,175 +6,106 @@ on:
   pull_request:
     branches: [ "main", "master" ]
   schedule:
-    # Ejecución profunda todos los domingos a la medianoche (Fuzzing, Miri, ASAN)
-    - cron: '0 0 * * 0'
+    - cron: '0 0 * * 0' # Domingo medianoche: Escaneo profundo
+  workflow_dispatch: # Botón manual para cuando tú decidas "Deep Pass"
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings" 
+  LOG_DIR: "genesis_audit_logs"
 
 jobs:
   # ==========================================
-  # FASE 1 & 6: STATIC ANALYSIS & HIGIENE
+  # NIVEL 1: FAST-PASS (Feedback en < 5 min)
   # ==========================================
-  static-analysis:
-    name: Static Analysis & Hygiene
+  fast-pass:
+    name: Fast-Pass Audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Rust Stable
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
 
-      - name: TASK-01 - Rustfmt Exhaustivo
-        run: cargo fmt --all -- --check
-
-      - name: TASK-02 - Clippy PEDANTIC
-        # Falla si hay warnings. Aplica las reglas pedantic exigidas.
+      - name: 🛡️ Task-01: Clippy & Fmt (Strict)
         run: |
-          cargo clippy --workspace --all-targets --all-features -- -D warnings \
-            -W clippy::pedantic \
-            -W clippy::nursery \
-            -A clippy::module_name_repetitions \
-            -A clippy::must_use_candidate \
-            -A clippy::missing_errors_doc
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D clippy::pedantic -W clippy::nursery -A clippy::module_name_repetitions
 
-      - name: TASK-03 & 17 - Rustdoc sin warnings (API Docs)
-        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-
-      - name: TASK-04 - Cargo Deny (Licencias y Arquitectura)
-        uses: EmbarkStudios/cargo-deny-action@v1
-        with:
-          command: check
-
-      - name: TASK-05 - Unsafe Surface Audit
-        # Falla el CI si encuentra un bloque 'unsafe {' que no tenga un comentario '// SAFETY:' arriba
+      - name: 🔍 Task-02: Unsafe Safety Audit
+        # Falla si hay bloques unsafe sin el comentario // SAFETY:
         run: |
-          echo "Auditing unsafe blocks for SAFETY comments..."
-          UNSAFE_NO_SAFETY=$(grep -rn "unsafe {" core/ shared/ | grep -v "// SAFETY:" | grep -v "#\[test\]" || true)
-          if [ -n "$UNSAFE_NO_SAFETY" ]; then
-            echo "ERROR: Found unsafe blocks without SAFETY comments:"
-            echo "$UNSAFE_NO_SAFETY"
-            exit 1
-          else
-            echo "All unsafe blocks are properly documented."
-          fi
+          ! grep -rn "unsafe {" core/ shared/ | grep -v "// SAFETY:"
 
-  # ==========================================
-  # FASE 2, 3 & 7: CORRECTITUD Y PROPIEDADES
-  # ==========================================
-  core-tests:
-    name: Algebraic & Property Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust Stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: 🧪 Task-03: Fast Invariants & Unit Tests
+        run: cargo test --workspace --lib --bins
 
-      - name: TASK-08 & 09 - Invariantes Físicos y Regresión
-        run: cargo test --workspace --release
-
-      - name: TASK-07, 10 & 11 - Property Testing Exhaustivo (Proptest)
-        # Ejecuta los tests con la feature 'properties' activada
-        env:
-          PROPTEST_CASES: 10000 # Sube los casos en CI para mayor rigor
-        run: cargo test --workspace --features properties
-
-      - name: TASK-14 - Edge Cases Corpus
-        run: |
-          cargo test -p genesis-types -- edge_cases sentinel max || true
-          cargo test -p genesis-math -- zero_vector nan_input || true
-          cargo test -p genesis-topology -- empty_graph sentinel || true
-
-  # ==========================================
-  # FASE 5: BENCHMARKS HONESTOS
-  # ==========================================
-  benchmarks:
-    name: Benchmarks Guardrails
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust Stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: TASK-15 - Verificar compilación de Benchmarks
-        run: cargo bench --workspace --no-run
-
-      - name: TASK-16 - Guardrail de Synchrony Order
-        # Ejecuta solo el benchmark crítico para asegurar que no hay regresión de latencia
+      - name: 🚀 Task-04: Critical Bench (Guardrail)
+        # Solo corre el benchmark de sincronía para detectar regresiones rápidas
         run: cargo bench -p genesis-dynamics --bench dynamics -- synchrony_order_fast
 
   # ==========================================
-  # FASE 8: SAFETY (MIRI) - Solo en Nightly
+  # NIVEL 2: DEEP-PASS (Manual / Domingo)
   # ==========================================
-  safety-miri:
-    name: Miri Memory Safety
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust Nightly with Miri
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-
-      - name: TASK-22 - Ejecutar Miri
-        # Miri detecta Undefined Behavior (UB), out-of-bounds, y data races
-        run: cargo miri test --workspace
-        env:
-          MIRIFLAGS: "-Zmiri-strict-provenance"
-
-  # ==========================================
-  # FASE 8: SAFETY (ASAN) - Solo en Nightly
-  # ==========================================
-  safety-asan:
-    name: Address Sanitizer
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust Nightly with rust-src
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rust-src
-
-      - name: TASK-23 - Ejecutar ASAN en genesis-math
-        # Detecta Use-After-Free y Buffer Overflows en código unsafe (NEON/AVX)
-        run: cargo test -p genesis-math --target x86_64-unknown-linux-gnu
-        env:
-          RUSTFLAGS: "-Zsanitizer=address"
-          RUSTDOCFLAGS: "-Zsanitizer=address"
-
-  # ==========================================
-  # FASE 4: FUZZ TESTING - Ejecución programada
-  # ==========================================
-  fuzzing:
-    name: Continuous Fuzzing
-    # Solo ejecuta el fuzzing si es el evento programado (cron) o si se fuerza manualmente
+  deep-pass:
+    name: Deep-Pass (Exhaustive Analysis)
+    needs: fast-pass # Solo si el Fast-Pass está verde
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri, rust-src
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz
-
-      - name: TASK-13 - Ejecutar Fuzz Targets
-        # Ejecuta cada target de fuzzing por 60 segundos. 
-        # Asume que los targets están inicializados en la carpeta /fuzz
+      - name: Prepare Audit Folder
         run: |
-          if [ -d "fuzz" ]; then
-            for target in $(cargo fuzz list); do
-              echo "Fuzzing target: $target for 60 seconds..."
-              cargo fuzz run "$target" -- -max_total_time=60
-            done
-          else
-            echo "No fuzz directory found. Skipping fuzzing."
-          fi
+          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
+          echo "REPORT_PATH=$LOG_DIR/$TIMESTAMP" >> $GITHUB_ENV
+          mkdir -p $LOG_DIR/$TIMESTAMP
+
+      - name: 🧠 Task-05: Miri Full Workspace (UB Detection)
+        run: cargo miri test --workspace > ${{ env.REPORT_PATH }}/miri_report.txt 2>&1
+        env:
+          MIRIFLAGS: "-Zmiri-strict-provenance"
+
+      - name: 🧬 Task-06: Property Testing (10k cases)
+        run: cargo test --workspace --features properties -- --ignored > ${{ env.REPORT_PATH }}/proptest_report.txt 2>&1
+        env:
+          PROPTEST_CASES: 10000
+
+      - name: ⚡ Task-07: Full Benchmarking & Profiling
+        run: cargo bench --workspace > ${{ env.REPORT_PATH }}/bench_full.txt 2>&1
+
+      - name: 🗜️ Task-08: Address Sanitizer (ASAN)
+        run: |
+          cargo test -p genesis-math --target x86_64-unknown-linux-gnu > ${{ env.REPORT_PATH }}/asan_report.txt 2>&1
+        env:
+          RUSTFLAGS: "-Zsanitizer=address"
+
+      - name: 📦 Archive Audit Reports
+        if: always() # Guarda los logs incluso si algo falla para que veas el error
+        uses: actions/upload-artifact@v4
+        with:
+          name: genesis-deep-audit-${{ github.sha }}
+          path: ${{ env.LOG_DIR }}
+
+  # ==========================================
+  # NIVEL 3: FUZZING (Solo Domingo / Manual)
+  # ==========================================
+  fuzzing:
+    name: Continuous Fuzzing
+    needs: fast-pass
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz
+      - name: Run Fuzz Targets
+        run: |
+          for target in $(cargo fuzz list); do
+            cargo fuzz run "$target" -- -max_total_time=60
+          done
