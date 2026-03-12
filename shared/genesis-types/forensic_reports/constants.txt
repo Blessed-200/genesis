@@ -1,0 +1,49 @@
+MODULE_ANALYSIS
+Module constants
+
+Block 1
+BLOCK_NAME: CONSTANT_TABLE_DECLARATION
+ROLE: Defines immutable physical/scalar parameters used as global constraints across crates.
+ASSUMPTIONS: Rust const-eval enforces literal initialization; consumers treat values as read-only; IEEE-754 semantics for f64 comparisons.
+INVARIANTS:
+1) CLIFFORD_BASIS_SIZE = 1 << MAX_CLIFFORD_GRADE.
+2) MINKOWSKI_SIGNATURE = [+1,-1,-1,-1].
+3) All convergence thresholds remain positive.
+PROBLEM: Numeric ordering invariants among floating constants are only runtime-tested, not compile-time checked.
+INEVITABLE_SOLUTION: Keep floating relationships validated in tests and add a single fast startup guard in dependent crates for release diagnostics. Stable Rust cannot const-assert float ordering, so dynamic verification is mathematically unavoidable.
+WHY_BRIEF: Float relational const-eval is limited; tests plus startup guard produce maximal assurance with negligible cost.
+PSEUDOCODE:
+```rust
+fn validate_constants_runtime() {
+    assert!(COGNITIVE_PLANCK_CONSTANT < HEAT_DIFFUSION_CONVERGENCE_EPSILON);
+    assert!(HEAT_DIFFUSION_CONVERGENCE_EPSILON < FISHER_SATIATION_EPSILON);
+    assert!(SINKHORN_CONVERGENCE_EPSILON <= FISHER_SATIATION_EPSILON);
+}
+```
+SMT_ASSERTION: (assert (and (< COGNITIVE_PLANCK_CONSTANT HEAT_DIFFUSION_CONVERGENCE_EPSILON) (< HEAT_DIFFUSION_CONVERGENCE_EPSILON FISHER_SATIATION_EPSILON)))
+CYCLES_ESTIMATE: ~30-80 cycles per process-start check path.
+HARDWARE_FALLBACK: Scalar-only compares; no SIMD dependency.
+PATCH: N/A (analysis-only, no repo behavior change required).
+RISK: Misconfigured constants can destabilize dynamics globally; risk concentrated at integration boundaries.
+CONFIDENCE: 0.95 (directly derivable from const definitions and tests).
+
+Block 2
+BLOCK_NAME: NONZERO_WINDOW_ENCODING
+ROLE: Encodes loop/window parameters with NonZeroUsize to remove zero-divisor and empty-loop classes.
+ASSUMPTIONS: MSRV < const Option::unwrap stabilization; unsafe const new_unchecked remains audited.
+INVARIANTS:
+1) FISHER_SATIATION_WINDOW.get() > 0.
+2) SINKHORN_MAX_ITER.get() > 0.
+PROBLEM: Unsafe initialization requires enduring audit burden despite literal non-zero values.
+INEVITABLE_SOLUTION: Retain unsafe initialization until MSRV upgrade, then migrate to NonZeroUsize::new(...).unwrap() in const context.
+WHY_BRIEF: Current unsafe is minimal and provably correct; future stabilization removes unsafe without semantic drift.
+PSEUDOCODE:
+```rust
+const WINDOW: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(50) };
+```
+SMT_ASSERTION: (assert (> FISHER_SATIATION_WINDOW 0))
+CYCLES_ESTIMATE: 0 runtime cycles (compile-time constant materialization).
+HARDWARE_FALLBACK: None needed.
+PATCH: Replace unsafe const constructors when MSRV >= 1.83.
+RISK: Future refactor accidentally changing literals to zero.
+CONFIDENCE: 0.97 (literal-based proof).

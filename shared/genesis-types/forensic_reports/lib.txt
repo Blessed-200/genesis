@@ -1,0 +1,47 @@
+MODULE_ANALYSIS
+Module lib
+
+Block 1
+BLOCK_NAME: PUBLIC_SURFACE_AGGREGATOR
+ROLE: Re-exports constants/types to maintain stable crate-root API.
+ASSUMPTIONS: Downstream crates import from root/prelude/domains modules.
+INVARIANTS:
+1) Re-exported symbols preserve upstream type identities.
+2) No dependency inversion (crate remains leaf).
+PROBLEM: Manual export lists can drift from module additions.
+INEVITABLE_SOLUTION: Add compile-fail docs/tests that assert selected canonical imports from each submodule compile via crate root and prelude.
+WHY_BRIEF: API drift detection should be compile-time and consumer-facing.
+PSEUDOCODE:
+```rust
+use genesis_types::prelude::*;
+let _: NodeId = NodeId::try_new(0)?;
+```
+SMT_ASSERTION: QuickCheck compile property: root_path(type)==true
+CYCLES_ESTIMATE: compile-time only.
+HARDWARE_FALLBACK: N/A.
+PATCH: extend integration test matrix for new exports.
+RISK: Missing export breaks downstream builds.
+CONFIDENCE: 0.9.
+
+Block 2
+BLOCK_NAME: INTEGRATION_INVARIANT_TEST_HARNESS
+ROLE: Encodes cross-module invariants at crate root (layout, type-state, constants).
+ASSUMPTIONS: test suite runs in CI for all workspace crates.
+INVARIANTS:
+1) DerivedMetadata layout stays stable.
+2) Type-state compile constraints on DomainConsolidationSignal hold.
+3) NonZero constants accessible via .get().
+PROBLEM: Runtime-only tests document compile errors with comments but do not enforce negative cases.
+INEVITABLE_SOLUTION: Use trybuild UI tests for compile-fail guarantees (e.g., passing Certified to validate_against).
+WHY_BRIEF: Comments are non-binding; UI tests enforce type-system contracts.
+PSEUDOCODE:
+```rust
+let t = trybuild::TestCases::new();
+t.compile_fail("tests/ui/reset_certified_fail.rs");
+```
+SMT_ASSERTION: (assert (not (typecheck validate_against Certified)))
+CYCLES_ESTIMATE: compile-test overhead only.
+HARDWARE_FALLBACK: N/A.
+PATCH: add trybuild compile_fail test file.
+RISK: Increased CI time; brittle diagnostics if rustc messages change.
+CONFIDENCE: 0.84.

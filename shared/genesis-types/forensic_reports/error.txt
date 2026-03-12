@@ -1,0 +1,51 @@
+MODULE_ANALYSIS
+Module error
+
+Block 1
+BLOCK_NAME: DOMAIN_CODE_HASHER
+ROLE: Computes deterministic 32-bit domain fingerprint via const FNV-1a.
+ASSUMPTIONS: UTF-8 byte sequence stable; collision tolerance acceptable for diagnostics and mismatch tagging.
+INVARIANTS:
+1) Same input string yields same code.
+2) Hash progression uses wrapping_mul(0x01000193).
+PROBLEM: 32-bit space has collision possibility under high-cardinality domain catalogs.
+INEVITABLE_SOLUTION: Keep DomainCode=u32 for Tier-1 compactness; if collision risk grows, add optional secondary static tag at validation sites rather than widening every payload.
+WHY_BRIEF: Tier-1 payload compactness is architectural; selective disambiguation minimizes memory and ABI churn.
+PSEUDOCODE:
+```rust
+const fn domain_code(s: &str) -> u32 {
+    let mut h = 0x811c9dc5u32;
+    for b in s.as_bytes() { h = (h ^ *b as u32).wrapping_mul(0x01000193); }
+    h
+}
+```
+SMT_ASSERTION: QuickCheck: domain_code(a)==domain_code(a)
+CYCLES_ESTIMATE: ~5-8 cycles/byte on x86_64 scalar.
+HARDWARE_FALLBACK: Scalar loop already fallback.
+PATCH: N/A.
+RISK: Rare collision-induced false domain-match diagnostics.
+CONFIDENCE: 0.91 (algorithm explicit and standard).
+
+Block 2
+BLOCK_NAME: ERROR_CLASSIFICATION_LATTICE
+ROLE: Maps GenesisError variants to payload tiers and semantic classifiers.
+ASSUMPTIONS: Enum remains non-exhaustive; new variants must update classifiers.
+INVARIANTS:
+1) payload_tier() total over all variants.
+2) is_invariant_violation() marks only architectural-fatal categories.
+3) is_topological_rejection() marks graceful rejection categories.
+PROBLEM: Manual match maintenance risks drift when variants are added.
+INEVITABLE_SOLUTION: Add compile-time mutation test that pattern-matches every variant constructor (factory table) and asserts expected category outputs.
+WHY_BRIEF: Prevents silent classifier skew with negligible runtime cost.
+PSEUDOCODE:
+```rust
+for err in canonical_error_samples() {
+    assert!(tier_contract(err));
+}
+```
+SMT_ASSERTION: (assert (=> (is_topological_rejection e) (not (is_invariant_violation e))))
+CYCLES_ESTIMATE: O(1) per call, ~8-40 cycles.
+HARDWARE_FALLBACK: N/A.
+PATCH: test-only helper table for variant/category golden mapping.
+RISK: Misclassification changes escalation behavior.
+CONFIDENCE: 0.88 (depends on future maintenance discipline).

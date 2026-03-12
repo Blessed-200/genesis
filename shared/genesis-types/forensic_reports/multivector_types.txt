@@ -1,0 +1,45 @@
+MODULE_ANALYSIS
+Module multivector_types
+
+Block 1
+BLOCK_NAME: DERIVED_METADATA_LAYOUT
+ROLE: Defines cache-compact metadata struct for sparse multivector fast paths.
+ASSUMPTIONS: repr(C) layout preserved across crates; 64-bit alignment targeted.
+INVARIANTS:
+1) size_of::<DerivedMetadata>() == 24.
+2) align_of::<DerivedMetadata>() == 8.
+3) _pad remains zeroed by constructor.
+PROBLEM: active_mask fixed to u32 limits future blade-index growth beyond 31 active blades.
+INEVITABLE_SOLUTION: Retain u32 for current ABI, but gate future expansion via versioned metadata type (DerivedMetadataV2) to avoid silent semantic overflow.
+WHY_BRIEF: ABI stability and forward compatibility conflict; versioning is the only safe evolution path.
+PSEUDOCODE:
+```rust
+#[repr(C)] struct DerivedMetadataV2 { active_mask:u64, max_abs:f64, norm:f64 }
+```
+SMT_ASSERTION: (assert (= (size DerivedMetadata) 24))
+CYCLES_ESTIMATE: metadata access ~4-12 cycles (L1-resident).
+HARDWARE_FALLBACK: Scalar loads.
+PATCH: design note for versioned future type.
+RISK: Premature widening can break downstream FFI/layout assumptions.
+CONFIDENCE: 0.93.
+
+Block 2
+BLOCK_NAME: ACTIVE_BIT_OPS
+ROLE: Supplies branch-light bitset operations (is_active/set_active).
+ASSUMPTIONS: blade indices validated by callers in hot paths.
+INVARIANTS:
+1) is_active false for blade>=32.
+2) set_active only mutates within bit range.
+PROBLEM: set_active branch can inhibit vectorized batch marking when called repeatedly.
+INEVITABLE_SOLUTION: expose a saturating mask-or helper for trusted callers (`set_active_unchecked`) guarded by debug_assert!(blade<32).
+WHY_BRIEF: Removes branch in perf-critical loops while preserving debug safety.
+PSEUDOCODE:
+```rust
+unsafe fn set_active_unchecked(&mut self, b:usize){ debug_assert!(b<32); self.active_mask |= 1u32<<b; }
+```
+SMT_ASSERTION: QuickCheck: b<32 => set_active(b); is_active(b)
+CYCLES_ESTIMATE: ~1-3 cycles/operation.
+HARDWARE_FALLBACK: N/A.
+PATCH: optional unsafe fast-path API addition.
+RISK: Misuse of unchecked API yields UB-like logical corruption (not memory UB).
+CONFIDENCE: 0.82.

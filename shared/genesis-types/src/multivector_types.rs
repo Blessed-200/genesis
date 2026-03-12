@@ -67,4 +67,29 @@ impl DerivedMetadata {
             self.active_mask |= 1u32 << blade;
         }
     }
+
+    /// Mark blade `i` as active without bounds checks.
+    ///
+    /// # Safety
+    /// Caller must guarantee `blade < 32`.
+    ///
+    /// AX-ID: AXIOMA-001
+    #[inline]
+    pub unsafe fn set_active_unchecked(&mut self, blade: usize) {
+        debug_assert!(blade < 32);
+        self.active_mask |= 1u32 << blade;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DerivedMetadata;
+
+    #[test]
+    fn set_active_unchecked_sets_bit_when_precondition_holds() {
+        let mut md = DerivedMetadata::new(0, 0.0, 0.0);
+        // SAFETY: blade 7 is within [0, 31].
+        unsafe { md.set_active_unchecked(7) };
+        assert!(md.is_active(7));
+    }
 }
