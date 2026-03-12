@@ -1,0 +1,52 @@
+MODULE_ANALYSIS
+Module grade
+Block 1
+BLOCK_NAME: CliffordNormWeightSynthesis
+ROLE: Build Lorentz-invariant norm weights from grade reverse-sign and basis signature.
+ASSUMPTIONS: SIGNATURE_TABLE and GRADE_TABLE are canonical.
+INVARIANTS:
+1) CLIFFORD_NORM_WEIGHTS[i]=REVERSE_SIGN[grade(i)]*SIGNATURE_TABLE[i].
+2) Weight domain is ±1 only.
+PROBLEM: compute_clifford_norm_sq always scans 16 lanes even for sparse vectors.
+INEVITABLE_SOLUTION: Add active-mask aware norm routine for SparseCliffordVector and keep dense version for SIMD-friendly dense contexts.
+WHY_BRIEF: Reduces unnecessary loads/mults when sparsity is high.
+PSEUDOCODE:
+```rust
+fn norm_sq_sparse(v:&SparseCliffordVector)->f64{
+  let mut s=0.0; let mut m=v.active_mask;
+  while m!=0 { let i=m.trailing_zeros() as usize; s+=v.coeffs[i]*v.coeffs[i]*W[i]; m&=m-1; }
+  s
+}
+```
+SMT_ASSERTION: prop_dense_sparse_equiv(v): norm_sq_sparse(v)==norm_sq_dense(&v.coeffs)
+CYCLES_ESTIMATE: sparse k-active => ~8k cycles; dense fixed ~40-60 cycles.
+HARDWARE_FALLBACK: Dense scalar loop when no BMI1.
+PATCH: Add compute_clifford_norm_sq_sparse and call in sparse-only sites.
+RISK: Floating-order differences vs dense scan.
+CONFIDENCE: 0.86.
+
+Block 2
+BLOCK_NAME: GradeProjectionFamily
+ROLE: Extract subspaces (grade k, parity, reverse) from active-mask traversal.
+ASSUMPTIONS: from_dense_buf re-derives metadata and Planck filtering.
+INVARIANTS:
+1) Projection never introduces new active blades.
+2) grade_project_ct valid only for G in 0..=4.
+3) reverse(reverse(v)) == v modulo Planck thresholding.
+PROBLEM: Multiple projection functions duplicate mask traversal logic.
+INEVITABLE_SOLUTION: Factor a private branchless projection kernel parameterized by predicate/sign transform.
+WHY_BRIEF: Eliminates duplicate loops and keeps optimization opportunities centralized.
+PSEUDOCODE:
+```rust
+fn project(v,pred,xf)->SparseCliffordVector{
+ let mut b=[0.0;16]; let mut m=v.active_mask;
+ while m!=0 { let i=tz(m); let x=xf(i,v.coeffs[i]); if pred(i){b[i]=x}; m&=m-1; }
+ from_dense_buf(&b)
+}
+```
+SMT_ASSERTION: prop_idempotent_grade(v,g): P_g(P_g(v))=P_g(v)
+CYCLES_ESTIMATE: ~5-7 cycles per active blade.
+HARDWARE_FALLBACK: Same scalar algorithm.
+PATCH: Introduce internal `project_masked` helper and rewrite public projections.
+RISK: Refactor can affect inlining shape.
+CONFIDENCE: 0.89.

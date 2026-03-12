@@ -72,9 +72,11 @@ impl BladeIndex {
     /// Caller must ensure `idx ≤ 15`. Violating this causes UB only if
     /// the result is used to index `CAYLEY_SIGN` — which is `[_; 16]`,
     /// so the actual UB is an out-of-bounds slice read.
+    #[allow(dead_code)]
     #[inline]
     // SAFETY: caller guarantees `idx < 16` (blade count in G(1,3) = 2^4 = 16).
-    pub const unsafe fn new_unchecked(idx: u8) -> Self {
+    pub(crate) const unsafe fn new_unchecked(idx: u8) -> Self {
+        debug_assert!(idx <= 15, "BladeIndex::new_unchecked requires idx <= 15");
         Self(idx)
     }
 

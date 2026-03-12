@@ -118,7 +118,12 @@ pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetad
     let mut clifford_norm_sq = 0.0f64;
 
     for k in 0..TOTAL_BLADES {
-        let coeff = buf[k];
+        let mut coeff = buf[k];
+        if coeff == 0.0 {
+            // Canonicalize signed zero in the same pass that derives metadata.
+            coeff = 0.0;
+            buf[k] = 0.0;
+        }
         let abs = coeff.abs();
         if abs > COGNITIVE_PLANCK_CONSTANT {
             active_mask |= 1u32 << k;
@@ -613,9 +618,20 @@ pub fn fast_metric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) 
     }
 
     let mut sum = 0.0f64;
-    for i in 0..TOTAL_BLADES {
-        let d = a.coeffs[i] - b.coeffs[i];
-        sum += d * d * METRIC_WEIGHTS[i];
+    let union_mask = a.active_mask | b.active_mask;
+    if union_mask.count_ones() <= 8 {
+        let mut mask = union_mask;
+        while mask != 0 {
+            let i = mask.trailing_zeros() as usize;
+            let d = a.coeffs[i] - b.coeffs[i];
+            sum += d * d * METRIC_WEIGHTS[i];
+            mask &= mask - 1;
+        }
+    } else {
+        for i in 0..TOTAL_BLADES {
+            let d = a.coeffs[i] - b.coeffs[i];
+            sum += d * d * METRIC_WEIGHTS[i];
+        }
     }
     sum.sqrt()
 }

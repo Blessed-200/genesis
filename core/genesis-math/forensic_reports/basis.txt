@@ -1,0 +1,49 @@
+MODULE_ANALYSIS
+Module basis
+Block 1
+BLOCK_NAME: ConstBasisBuilder_G13
+ROLE: Build canonical grade/signature/Fenwick tables at compile time.
+ASSUMPTIONS: TOTAL_BLADES=16 fixed; const-eval loops optimized into .rodata.
+INVARIANTS:
+1) grade[i]=popcount(i).
+2) signature[i]=e_I^2 in signature (+---).
+3) Fenwick tree stores odd-grade prefix counts.
+PROBLEM: Fenwick table is only cfg(test) precomputed, reducing runtime cross-check visibility.
+INEVITABLE_SOLUTION: Expose a debug-only self-check function validating build_g13 output against direct formulas at startup in debug builds.
+WHY_BRIEF: Preserves zero-cost release while guarding const-table corruption assumptions.
+PSEUDOCODE:
+```rust
+#[cfg(debug_assertions)]
+fn verify_basis(b:&CliffordBasis){
+  for i in 0..16 { assert_eq!(b.grade[i], i.count_ones() as u8); }
+}
+```
+SMT_ASSERTION: (assert (forall ((i Int)) (=> (and (<= 0 i) (< i 16)) (= grade[i] (popcount i)))))
+CYCLES_ESTIMATE: ~200 cycles debug-only.
+HARDWARE_FALLBACK: N/A.
+PATCH: Add #[cfg(debug_assertions)] verifier invoked from g13().
+RISK: Debug panic if invariants violated (desired fail-fast).
+CONFIDENCE: 0.93.
+
+Block 2
+BLOCK_NAME: FenwickPrefixParityQuery
+ROLE: O(log n) odd-grade prefix query over fixed 16-blade domain.
+ASSUMPTIONS: Signed i32 arithmetic remains within tiny bounds.
+INVARIANTS:
+1) Query index in [0,15].
+2) Loop decreases strictly by i&-i.
+3) Output in [0,8].
+PROBLEM: For n=16, logarithmic BIT overhead can exceed direct LUT latency.
+INEVITABLE_SOLUTION: Add direct precomputed prefix LUT for hot contexts; retain Fenwick API for conceptual consistency.
+WHY_BRIEF: At n=16, table lookup is provably latency-minimal and branch-light.
+PSEUDOCODE:
+```rust
+const ODD_PREFIX:[i8;16]=...;
+#[inline] fn prefix(k:usize)->i8{ ODD_PREFIX[k] }
+```
+SMT_ASSERTION: prop_prefix_equiv(k): fenwick_prefix_parity(k)==odd_prefix_lut[k]
+CYCLES_ESTIMATE: Fenwick ~12-20 cycles; LUT ~3-4 cycles.
+HARDWARE_FALLBACK: Scalar LUT path already fallback.
+PATCH: Add ODD_PREFIX LUT + optional fast accessor.
+RISK: Dual sources must stay synchronized.
+CONFIDENCE: 0.84.

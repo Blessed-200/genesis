@@ -1,0 +1,45 @@
+MODULE_ANALYSIS
+Module dual
+Block 1
+BLOCK_NAME: DualMetadataConstructor
+ROLE: Build dual-valued multivector metadata from dense dual coefficients.
+ASSUMPTIONS: Dual gradients finite where primal finite.
+INVARIANTS:
+1) active_mask derived from primal value magnitude only.
+2) clifford_norm_sq.grad = Σ 2*v*g*w.
+3) max_abs_coeff.grad currently fixed to 0.
+PROBLEM: max_abs_coeff derivative is discarded, limiting differentiability of gate-adjacent objectives.
+INEVITABLE_SOLUTION: Track subgradient for max_abs_coeff using argmax index with tie-stable rule.
+WHY_BRIEF: Enables gradient-aware analyses without changing primal semantics.
+PSEUDOCODE:
+```rust
+if abs>max {max=abs; max_grad=sign(v)*g;}
+```
+SMT_ASSERTION: prop_norm_grad(v,g): d/dε norm_sq(v+εg)|0 == stored_grad
+CYCLES_ESTIMATE: +16 compares/adds per constructor.
+HARDWARE_FALLBACK: Scalar.
+PATCH: Populate max_abs_coeff.grad in from_dense_buf.
+RISK: Non-differentiability at ties; requires documented subgradient policy.
+CONFIDENCE: 0.74.
+
+Block 2
+BLOCK_NAME: DualGeometricProductLeibniz
+ROLE: Propagate primal and gradient through geometric product using Leibniz rule.
+ASSUMPTIONS: Sign table exact; active masks valid.
+INVARIANTS:
+1) value accumulation equals primal product.
+2) grad accumulation equals dA*B + A*dB.
+3) None returned if gate or zero activity triggers.
+PROBLEM: CS gate uses max_abs products without TOTAL_BLADES safety factor unlike updated primal path rationale.
+INEVITABLE_SOLUTION: Align dual gate condition with primal conservative bound (×TOTAL_BLADES) to avoid false suppression mismatch.
+WHY_BRIEF: Keeps AD path behavior consistent with primal algebraic semantics.
+PSEUDOCODE:
+```rust
+if max_a*max_b*(TOTAL_BLADES as f64) < PLANCK { return None; }
+```
+SMT_ASSERTION: prop_dual_primal_consistency(a,b): dual(a,b).value == primal(a,b)
+CYCLES_ESTIMATE: negligible (+1 multiply).
+HARDWARE_FALLBACK: same.
+PATCH: Update gate expression in geometric_product_dual.
+RISK: Slightly more non-None outputs near threshold.
+CONFIDENCE: 0.92.

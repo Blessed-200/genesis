@@ -1,0 +1,45 @@
+MODULE_ANALYSIS
+Module kernel_dense_g13
+Block 1
+BLOCK_NAME: BranchlessSignApplication
+ROLE: Apply ± sign via XOR on IEEE-754 sign bit.
+ASSUMPTIONS: sign input restricted to {+1,-1}; IEEE-754 binary64.
+INVARIANTS:
+1) apply_sign(x,+1)=x.
+2) apply_sign(x,-1)=-x including ±0 behavior.
+3) No NaN payload mutation except sign flip.
+PROBLEM: debug_assert enforces sign domain only in debug; release misuse would silently produce wrong values.
+INEVITABLE_SOLUTION: Replace i8 sign input with Sign enum to eliminate invalid state at type level.
+WHY_BRIEF: Type-level constraint removes latent UB-adjacent arithmetic misuse.
+PSEUDOCODE:
+```rust
+fn apply_sign(x:f64,s:Sign)->f64{ if matches!(s,Sign::Neg){-x}else{x} }
+```
+SMT_ASSERTION: prop_apply_sign(x): apply_sign(x,Pos)==x && apply_sign(x,Neg)==-x
+CYCLES_ESTIMATE: XOR path ~1-2 cycles.
+HARDWARE_FALLBACK: scalar negation.
+PATCH: `fn apply_sign(x: f64, sign: Sign) -> f64` and adapt call sites.
+RISK: Minor conversion overhead from CAYLEY_SIGN i8.
+CONFIDENCE: 0.89.
+
+Block 2
+BLOCK_NAME: DenseGeometricProduct16x16
+ROLE: Compute full dense geometric product with fixed 256 bilinear terms.
+ASSUMPTIONS: Dense semantics regardless of zero coefficients.
+INVARIANTS:
+1) For each k, accumulates all i with j=i xor k.
+2) Exactly 16 products per output blade.
+3) Algebraic equivalence to sparse reference.
+PROBLEM: Scalar accumulation is deterministic but misses SIMD FMA throughput on modern x86.
+INEVITABLE_SOLUTION: Add optional AVX2/AVX-512 vector kernel using permute indices and sign masks with runtime feature detection.
+WHY_BRIEF: Dense fixed-size structure is ideal for vectorized gather/permute pipelines.
+PSEUDOCODE:
+```rust
+for k in 0..16 { acc=vec0; for chunk in lanes { acc=fma(load(a[i]), permute(b,j), sign); } out[k]=hadd(acc); }
+```
+SMT_ASSERTION: prop_dense_equals_sparse(a,b): dense(a,b)==sparse(a,b).coeffs
+CYCLES_ESTIMATE: scalar ~350-550 cycles; AVX2 target ~140-220 cycles.
+HARDWARE_FALLBACK: existing scalar kernel.
+PATCH: Add `#[cfg(target_arch="x86_64")]` SIMD fast path plus scalar fallback.
+RISK: Increased maintenance and architecture-specific testing burden.
+CONFIDENCE: 0.81.

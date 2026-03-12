@@ -1,0 +1,52 @@
+MODULE_ANALYSIS
+Module lib
+Block 1
+BLOCK_NAME: PublicAPI_ReExportGraph
+ROLE: Define stable crate boundary and re-exported operator surface for G(1,3).
+ASSUMPTIONS: Rust 2021 module resolution; monomorphization preserves zero-cost reexports.
+INVARIANTS:
+1) Re-exported symbols map 1:1 to internal module definitions.
+2) GeometricProduct trait remains basis-independent at call site.
+3) Missing docs denied at crate level.
+PROBLEM: Duplicate crate-level allow-lists increase lint drift and hide regression provenance.
+INEVITABLE_SOLUTION: Collapse duplicated #![allow(...)] groups into a single canonical list and annotate each remaining waiver with rationale category (compatibility/perf/style). This minimizes accidental suppression while preserving intended exceptions.
+WHY_BRIEF: Single lint policy source reduces false negatives and simplifies formal quality gates.
+PSEUDOCODE:
+```rust
+#![deny(missing_docs, clippy::undocumented_unsafe_blocks)]
+#![warn(clippy::pedantic)]
+#![allow(
+    clippy::cast_possible_truncation,
+    // ...single curated list...
+)]
+```
+SMT_ASSERTION: (assert (= exported_symbol_set internal_public_symbol_set))
+CYCLES_ESTIMATE: ~0 runtime cycles (compile-time only).
+HARDWARE_FALLBACK: N/A.
+PATCH: Replace duplicated crate-level allow block with one normalized block near file top.
+RISK: Minor CI churn if previously masked lints surface.
+CONFIDENCE: 0.95 (pure structural refactor, no semantic runtime effect).
+
+Block 2
+BLOCK_NAME: TraitContract_GeometricProduct
+ROLE: Specify algebraic contract for product, metric contraction, and grade projection.
+ASSUMPTIONS: Implementors preserve closure over G(1,3) and return Option gate semantics.
+INVARIANTS:
+1) geo_product output is either None or valid multivector.
+2) metric_scalar_product computes metric contraction, not Clifford norm.
+3) grade_project(k) is idempotent.
+PROBLEM: Contract text is strong but lacks machine-checkable law tests at trait level.
+INEVITABLE_SOLUTION: Add generic law tests via a sealed internal harness for SparseCliffordVector implementing idempotence, symmetry/antisymmetry constraints, and zero-element behavior.
+WHY_BRIEF: Trait laws prevent drift when adding future implementors.
+PSEUDOCODE:
+```rust
+fn law_grade_idempotent<V: GeometricProduct>(v: &V, k: usize) {
+    assert_eq!(v.grade_project(k).grade_project(k), v.grade_project(k));
+}
+```
+SMT_ASSERTION: prop_grade_idempotent(v,k): grade(grade(v,k),k)==grade(v,k)
+CYCLES_ESTIMATE: Test-only.
+HARDWARE_FALLBACK: N/A.
+PATCH: Add trait-law test module under cfg(test) in lib.rs.
+RISK: Requires deterministic equality semantics for floating paths.
+CONFIDENCE: 0.88 (contract-level improvement is straightforward).

@@ -1,0 +1,23 @@
+MODULE_ANALYSIS
+Module experimental
+Block 1
+BLOCK_NAME: ExperimentalNamespaceBoundary
+ROLE: Isolate unstable kernels from stable CRATE-001 API.
+ASSUMPTIONS: Users opt-in explicitly via module path.
+INVARIANTS:
+1) No experimental symbol re-exported at crate root as stable contract.
+2) Benchmark/oracle code remains segregated.
+PROBLEM: Module contains only passthrough declaration and no compile-time guardrails.
+INEVITABLE_SOLUTION: Add explicit `#[doc(cfg(feature = "experimental"))]` gating policy and feature flag around module export.
+WHY_BRIEF: Prevents accidental production dependency on unstable kernels.
+PSEUDOCODE:
+```rust
+#[cfg(feature="experimental")]
+pub mod kernel_dense_g13;
+```
+SMT_ASSERTION: (assert (=> (not feature_experimental) (not (exists ((s Symbol)) (exported_experimental s)))))
+CYCLES_ESTIMATE: N/A.
+HARDWARE_FALLBACK: N/A.
+PATCH: Gate module with feature flag and docs.
+RISK: Downstream tests must enable feature.
+CONFIDENCE: 0.88.

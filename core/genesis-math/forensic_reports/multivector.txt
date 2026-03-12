@@ -1,0 +1,74 @@
+MODULE_ANALYSIS
+Module multivector
+Block 1
+BLOCK_NAME: MetadataDerivationKernel
+ROLE: Canonicalize coefficients and derive active_mask/max_abs/clifford_norm in one pass.
+ASSUMPTIONS: Input buffer finite; TOTAL_BLADES fixed 16.
+INVARIANTS:
+1) Active bit i iff |coeff_i|>PLANCK.
+2) Inactive coeffs forced to +0.0.
+3) max_abs_coeff is max over active set or 0.
+4) clifford_norm_sq matches weighted sum over retained coeffs.
+PROBLEM: canonicalize_signed_zero is separate from derive pass, creating extra memory pass in some call paths.
+INEVITABLE_SOLUTION: Fuse signed-zero normalization into derive_all_metadata loop with branchless bitmask clearing for ±0.
+WHY_BRIEF: One-pass normalization lowers cache traffic and improves constructor throughput.
+PSEUDOCODE:
+```rust
+for i in 0..16 {
+  let mut c=buf[i]; if c==0.0 { c=0.0; }
+  let a=c.abs(); let active=(a>PLANCK) as u32;
+  mask |= active<<i; buf[i]=if active==1 {c} else {0.0};
+}
+```
+SMT_ASSERTION: prop_metadata_consistent(buf): metadata(mask,max,norm) == recompute(buf')
+CYCLES_ESTIMATE: ~80-120 cycles per constructor call.
+HARDWARE_FALLBACK: Scalar loop.
+PATCH: Merge canonicalize_signed_zero behavior into derive_all_metadata.
+RISK: Must preserve exact handling of -0.0 for Pod/hash determinism.
+CONFIDENCE: 0.87.
+
+Block 2
+BLOCK_NAME: ConstructorValidationBoundary
+ROLE: Convert external sparse/dense inputs into validated canonical multivectors.
+ASSUMPTIONS: Error signaling via GenesisError only.
+INVARIANTS:
+1) NaN/Inf always rejected in public constructors.
+2) Out-of-range blade index rejected.
+3) Duplicate sparse indices summed before Planck gate.
+PROBLEM: from_iter accumulates blindly then canonicalizes, potentially magnifying cancellation error.
+INEVITABLE_SOLUTION: Use compensated summation per blade for sparse constructor when duplicate count>1.
+WHY_BRIEF: Improves numerical stability for adversarial alternating inputs with negligible overhead at 16 lanes.
+PSEUDOCODE:
+```rust
+let mut sum=[0.0;16]; let mut c=[0.0;16];
+for (i,x) in iter { let y=x-c[i]; let t=sum[i]+y; c[i]=(t-sum[i])-y; sum[i]=t; }
+```
+SMT_ASSERTION: prop_finite_inputs_no_error(xs): all_finite(xs) -> from_iter(xs).is_ok()
+CYCLES_ESTIMATE: +1.5-2x add ops in constructor only.
+HARDWARE_FALLBACK: Standard summation toggleable via cfg(feature="fast-construct").
+PATCH: Replace `buf[idx] += coef` with Kahan-Neumaier per-lane accumulation.
+RISK: Slight constructor slowdown for trivial inputs.
+CONFIDENCE: 0.78.
+
+Block 3
+BLOCK_NAME: MetricDistanceKernel
+ROLE: Compute grade-weighted Euclidean metric for HNSW semantics.
+ASSUMPTIONS: METRIC_WEIGHTS strictly positive.
+INVARIANTS:
+1) d(a,b)>=0.
+2) d(a,b)=0 iff coefficients equal.
+3) Symmetry holds.
+PROBLEM: Current loop does not exploit active-mask sparsity for near-zero vectors.
+INEVITABLE_SOLUTION: Add sparse difference path over union_mask when union population <= threshold, else keep dense 16-lane loop.
+WHY_BRIEF: Hybrid strategy minimizes work for sparse states while preserving dense SIMD efficiency.
+PSEUDOCODE:
+```rust
+let u=a.active_mask|b.active_mask;
+if u.count_ones()<=8 { iterate bits(u) } else { for i in 0..16 }
+```
+SMT_ASSERTION: prop_metric_symmetry(a,b): d(a,b)==d(b,a)
+CYCLES_ESTIMATE: sparse path ~6k cycles; dense path ~35-50 cycles.
+HARDWARE_FALLBACK: Scalar both paths.
+PATCH: Introduce union-mask branch in fast_metric_distance and dense variant parity tests.
+RISK: Branch predictor sensitivity around threshold.
+CONFIDENCE: 0.85.
