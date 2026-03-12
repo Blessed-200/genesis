@@ -1,0 +1,67 @@
+MODULE_ANALYSIS
+Module product
+Block 1
+BLOCK_NAME: StrictModeValidationGate
+ROLE: Enforce deterministic error semantics and metadata sanity before multiplication.
+ASSUMPTIONS: Strict mode used in reproducibility-sensitive paths.
+INVARIANTS:
+1) Non-finite metadata/coefficients map to SignatureViolation.
+2) Signed zero canonicalization occurs before strict return.
+3) Empty or sub-Planck inputs short-circuit.
+PROBLEM: Validation and finalization are separated, causing repeated scans in strict flow.
+INEVITABLE_SOLUTION: Fuse strict validation with first traversal by accumulating validity flags during multiplication prelude.
+WHY_BRIEF: Reduces redundant memory passes while keeping deterministic failure conditions.
+PSEUDOCODE:
+```rust
+scan(a,b)->(ok,gate); if !ok return Err(...); if gate return Ok(None);
+```
+SMT_ASSERTION: prop_strict_rejects_nonfinite(a,b): has_nonfinite(a)||has_nonfinite(b) => is_err(strict(a,b))
+CYCLES_ESTIMATE: save ~30-60 cycles/call in strict mode.
+HARDWARE_FALLBACK: Same scalar flow.
+PATCH: Integrate strict_validate_inputs into dispatch prelude with shared scan helper.
+RISK: Error code mapping must remain identical.
+CONFIDENCE: 0.82.
+
+Block 2
+BLOCK_NAME: SparseXorAccumulationCore
+ROLE: Compute geometric product with active-mask bit iteration and Cayley sign rows.
+ASSUMPTIONS: BMI1 `trailing_zeros`/`x&=x-1` fast on target CPUs.
+INVARIANTS:
+1) Output blade index k=i xor j.
+2) Contribution sign from CAYLEY_SIGN[i][j].
+3) Time complexity O(|A_active|*|B_active|).
+PROBLEM: Scalar inner accumulation underuses precomputed SIGN_FLIP_MASKS/XOR_PERMUTE_INDICES for vector paths on moderate density.
+INEVITABLE_SOLUTION: Add explicit SIMD micro-kernel for dense or near-dense masks using precomputed permute/sign tables; keep scalar sparse kernel for low density.
+WHY_BRIEF: Hybrid dispatch gives lower latency across sparsity regimes.
+PSEUDOCODE:
+```rust
+if dense_like(mask_a,mask_b){ simd_kernel(a,b) } else { scalar_sparse(a,b) }
+```
+SMT_ASSERTION: prop_kernel_equiv(a,b): simd(a,b)==scalar(a,b)
+CYCLES_ESTIMATE: scalar sparse k*l; SIMD dense ~120-220 cycles total.
+HARDWARE_FALLBACK: Existing scalar_sparse path.
+PATCH: Implement unsafe #[target_feature] AVX2 kernel behind cfg(target_arch="x86_64").
+RISK: FP reassociation may break strict determinism; gate under Fast mode only.
+CONFIDENCE: 0.76.
+
+Block 3
+BLOCK_NAME: BivectorNormProjection
+ROLE: Compute Lorentz-weighted bivector norm of product without materializing full object.
+ASSUMPTIONS: BIVECTOR_MASK constant matches grade-2 blades.
+INVARIANTS:
+1) Only indices {3,5,6,9,10,12} contribute.
+2) SubPlanck returned on gating failures.
+PROBLEM: Full 16-lane result buffer is built before reducing to 6 bivector lanes.
+INEVITABLE_SOLUTION: Accumulate directly into six-lane packed bivector buffer via index remap table.
+WHY_BRIEF: Eliminates unnecessary writes and improves cache/register locality.
+PSEUDOCODE:
+```rust
+const MAP:[i8;16]=...; let mut b=[0.0;6];
+for active i,j { k=i^j; m=MAP[k]; if m>=0 { b[m]+=... } }
+```
+SMT_ASSERTION: prop_bivector_direct_equiv(a,b): direct_norm(a,b)==buffered_norm(a,b)
+CYCLES_ESTIMATE: ~25-35% fewer stores in bivector-only queries.
+HARDWARE_FALLBACK: Scalar mapped accumulation.
+PATCH: Replace result_buf[16] in bivector functions with packed bivector accumulator.
+RISK: Mapping-table maintenance errors.
+CONFIDENCE: 0.91.

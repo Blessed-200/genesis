@@ -40,17 +40,8 @@
     clippy::module_name_repetitions,
     clippy::must_use_candidate,
     clippy::semicolon_if_nothing_returned,
+    clippy::unreadable_literal,
     clippy::uninlined_format_args,
-)]
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    clippy::doc_markdown,
-    clippy::float_cmp,
-    clippy::items_after_statements,
-    clippy::must_use_candidate,
-    clippy::unreadable_literal
 )]
 
 pub mod basis;

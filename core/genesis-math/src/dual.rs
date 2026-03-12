@@ -140,7 +140,10 @@ pub fn geometric_product_dual(
     if !(lhs.max_abs_coeff.value.is_finite() && rhs.max_abs_coeff.value.is_finite()) {
         return None;
     }
-    if lhs.max_abs_coeff.value * rhs.max_abs_coeff.value < COGNITIVE_PLANCK_CONSTANT {
+    #[allow(clippy::cast_precision_loss)]
+    if lhs.max_abs_coeff.value * rhs.max_abs_coeff.value * (TOTAL_BLADES as f64)
+        < COGNITIVE_PLANCK_CONSTANT
+    {
         return None;
     }
 

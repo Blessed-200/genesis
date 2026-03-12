@@ -623,23 +623,12 @@ pub enum BivectorProduct {
 
 // FIX-B: Module-level constants — eliminate duplicate definitions in both
 // bivector_norm_sq_of_product and bivector_norm_sq_of_product_lhs_dense.
-/// Bitmask of the 6 grade-2 blades in G(1,3): e₀₁, e₀₂, e₁₂, e₀₃, e₁₃, e₂₃
-/// Blade indices: 3, 5, 6, 9, 10, 12 → bits set = 0x1668
-const BIVECTOR_MASK: u16 = 0x1668;
+/// Dense-to-packed mapping for grade-2 blades in G(1,3).
+/// -1 means non-bivector blade.
+const BIVECTOR_LANE_MAP: [i8; 16] = [-1, -1, -1, 0, -1, 1, 2, -1, -1, 3, 4, -1, 5, -1, -1, -1];
 
-/// Lorentz weights for grade-2 blades.
-/// REVERSE_SIGN[grade=2] = −1; blades with e₀ (spacelike) → weight=−1;
-/// blades without e₀ (timelike) → weight=+1. Zero for all other grades.
-const BIVECTOR_LORENTZ_WEIGHTS: [f64; 16] = {
-    let mut w = [0.0f64; 16];
-    w[3] = -1.0; // e₀₁ (spacelike)
-    w[5] = -1.0; // e₀₂ (spacelike)
-    w[6] = 1.0; // e₁₂ (timelike)
-    w[9] = -1.0; // e₀₃ (spacelike)
-    w[10] = 1.0; // e₁₃ (timelike)
-    w[12] = 1.0; // e₂₃ (timelike)
-    w
-};
+/// Packed Lorentz weights aligned with lane order [3, 5, 6, 9, 10, 12].
+const BIVECTOR_LANE_WEIGHTS: [f64; 6] = [-1.0, -1.0, 1.0, -1.0, 1.0, 1.0];
 
 /// Computes the Lorentz-invariant bivector norm squared of the geometric product `A*B`.
 ///
@@ -657,28 +646,6 @@ pub fn bivector_norm_sq_of_product(
     a: &SparseCliffordVector,
     b: &SparseCliffordVector,
 ) -> BivectorProduct {
-    // Bitmask de los 6 blades de grado 2 en G(1,3).
-    // BIVECTOR_MASK = (1<<3)|(1<<5)|(1<<6)|(1<<9)|(1<<10)|(1<<12) = 0x1668
-    // FIX-B: Using module-level BIVECTOR_MASK and BIVECTOR_LORENTZ_WEIGHTS.
-    // See module-level constants defined above for derivation.
-    // grade 2: REVERSE_SIGN = −1
-    // blade  3: sig=+1 → weight=−1
-    // blade  5: sig=+1 → weight=−1
-    // blade  6: sig=−1 → weight=+1
-    // blade  9: sig=+1 → weight=−1
-    // blade 10: sig=−1 → weight=+1
-    // blade 12: sig=−1 → weight=+1
-    const BIVECTOR_LORENTZ_WEIGHTS: [f64; TOTAL_BLADES] = {
-        let mut w = [0.0f64; TOTAL_BLADES];
-        w[3] = -1.0;
-        w[5] = -1.0;
-        w[6] = 1.0;
-        w[9] = -1.0;
-        w[10] = 1.0;
-        w[12] = 1.0;
-        w
-    };
-
     // CS gate — mismo criterio que sparse_geometric_product.
     if !a.max_abs_coeff.is_finite() || !b.max_abs_coeff.is_finite() {
         return BivectorProduct::SubPlanck;
@@ -693,8 +660,8 @@ pub fn bivector_norm_sq_of_product(
         return BivectorProduct::SubPlanck;
     }
 
-    // Stack buffer — 128 bytes, zero heap.
-    let mut result_buf = [0.0f64; TOTAL_BLADES];
+    // Packed bivector buffer (6 lanes) instead of full dense 16-lane output.
+    let mut bivector_buf = [0.0f64; 6];
 
     // Inner loop idéntico al path general de sparse_geometric_product.
     // El compilador vectoriza este loop con VFMADD cuando active_mask = 0xFFFF.
@@ -707,40 +674,26 @@ pub fn bivector_norm_sq_of_product(
         while mask_b != 0 {
             let j = mask_b.trailing_zeros() as usize;
             let k = i ^ j;
-            result_buf[k] += coef_a * b.coeffs[j] * f64::from(row[j]);
+            let lane = BIVECTOR_LANE_MAP[k];
+            if lane >= 0 {
+                bivector_buf[lane as usize] += coef_a * b.coeffs[j] * f64::from(row[j]);
+            }
             mask_b &= mask_b - 1;
         }
         mask_a &= mask_a - 1;
     }
 
-    // Acumulación sobre los 6 blades de grado 2.
-    // Loop de 6 iteraciones: el compilador emite 6 VFMADD231PD con target-cpu=native.
     let mut norm_sq = 0.0f64;
-    let mut biv_mask = BIVECTOR_MASK & {
-        // Solo acumular blades que realmente tienen contribución no nula.
-        let mut active = 0u16;
-        let mut m = BIVECTOR_MASK;
-        while m != 0 {
-            let k = m.trailing_zeros() as usize;
-            if result_buf[k].abs() > COGNITIVE_PLANCK_CONSTANT {
-                active |= 1u16 << k;
-            }
-            m &= m - 1;
+    let mut has_signal = false;
+    for lane in 0..6 {
+        let v = bivector_buf[lane];
+        if v.abs() > COGNITIVE_PLANCK_CONSTANT {
+            norm_sq += v * v * BIVECTOR_LANE_WEIGHTS[lane];
+            has_signal = true;
         }
-        active
-    };
-
-    if biv_mask == 0 {
-        return BivectorProduct::Computed(0.0);
     }
 
-    while biv_mask != 0 {
-        let k = biv_mask.trailing_zeros() as usize;
-        norm_sq += result_buf[k] * result_buf[k] * BIVECTOR_LORENTZ_WEIGHTS[k];
-        biv_mask &= biv_mask - 1;
-    }
-
-    BivectorProduct::Computed(norm_sq)
+    BivectorProduct::Computed(if has_signal { norm_sq } else { 0.0 })
 }
 
 /// Bivector norm squared of `A*B` where `A` is provided as a dense `[f64; 16]` buffer.
@@ -756,8 +709,6 @@ pub fn bivector_norm_sq_of_product_lhs_dense(
     a_dense: &[f64; TOTAL_BLADES],
     b: &SparseCliffordVector,
 ) -> BivectorProduct {
-    // FIX-B: Using module-level BIVECTOR_MASK and BIVECTOR_LORENTZ_WEIGHTS.
-
     let mut a_mask = 0u16;
     let mut a_max = 0.0f64;
     for (i, &coef) in a_dense.iter().enumerate() {
@@ -784,7 +735,7 @@ pub fn bivector_norm_sq_of_product_lhs_dense(
         return BivectorProduct::SubPlanck;
     }
 
-    let mut result_buf = [0.0f64; TOTAL_BLADES];
+    let mut bivector_buf = [0.0f64; 6];
 
     let mut mask_a = a_mask;
     while mask_a != 0 {
@@ -795,37 +746,26 @@ pub fn bivector_norm_sq_of_product_lhs_dense(
         while mask_b != 0 {
             let j = mask_b.trailing_zeros() as usize;
             let k = i ^ j;
-            result_buf[k] += coef_a * b.coeffs[j] * f64::from(row[j]);
+            let lane = BIVECTOR_LANE_MAP[k];
+            if lane >= 0 {
+                bivector_buf[lane as usize] += coef_a * b.coeffs[j] * f64::from(row[j]);
+            }
             mask_b &= mask_b - 1;
         }
         mask_a &= mask_a - 1;
     }
 
     let mut norm_sq = 0.0f64;
-    let mut biv_mask = BIVECTOR_MASK & {
-        let mut active = 0u16;
-        let mut m = BIVECTOR_MASK;
-        while m != 0 {
-            let k = m.trailing_zeros() as usize;
-            if result_buf[k].abs() > COGNITIVE_PLANCK_CONSTANT {
-                active |= 1u16 << k;
-            }
-            m &= m - 1;
+    let mut has_signal = false;
+    for lane in 0..6 {
+        let v = bivector_buf[lane];
+        if v.abs() > COGNITIVE_PLANCK_CONSTANT {
+            norm_sq += v * v * BIVECTOR_LANE_WEIGHTS[lane];
+            has_signal = true;
         }
-        active
-    };
-
-    if biv_mask == 0 {
-        return BivectorProduct::Computed(0.0);
     }
 
-    while biv_mask != 0 {
-        let k = biv_mask.trailing_zeros() as usize;
-        norm_sq += result_buf[k] * result_buf[k] * BIVECTOR_LORENTZ_WEIGHTS[k];
-        biv_mask &= biv_mask - 1;
-    }
-
-    BivectorProduct::Computed(norm_sq)
+    BivectorProduct::Computed(if has_signal { norm_sq } else { 0.0 })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

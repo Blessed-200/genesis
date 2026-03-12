@@ -58,6 +58,22 @@ pub(crate) const SIGNATURE_TABLE: [i8; TOTAL_BLADES] =
 pub(crate) const FENWICK_TABLE: [i32; TOTAL_BLADES + 1] =
     [0, 0, 1, 1, 2, 1, 1, 0, 4, 1, 1, 0, 2, 0, 1, 1, 8];
 
+/// Prefix LUT: `ODD_GRADE_PREFIX_TABLE[k]` = odd-grade blade count in [0, k].
+///
+/// For fixed `TOTAL_BLADES = 16`, direct lookup is strictly lower latency than
+/// Fenwick traversal and remains fully deterministic.
+pub(crate) const ODD_GRADE_PREFIX_TABLE: [i32; TOTAL_BLADES] = {
+    let mut out = [0i32; TOTAL_BLADES];
+    let mut i = 0usize;
+    let mut acc = 0i32;
+    while i < TOTAL_BLADES {
+        acc += (GRADE_TABLE[i] % 2) as i32;
+        out[i] = acc;
+        i += 1;
+    }
+    out
+};
+
 // ── CliffordBasis struct ──────────────────────────────────────────────────────
 
 /// Canonical G(1,3) basis descriptor.
@@ -155,26 +171,13 @@ impl CliffordBasis {
     }
 
     /// O(log 16) prefix odd-grade-blade count for blades [0, blade_idx].
+    ///
+    /// Uses a direct LUT for `TOTAL_BLADES = 16` to minimize branch and ALU
+    /// pressure on hot paths while preserving exact Fenwick semantics.
     #[inline]
     pub fn fenwick_prefix_parity(&self, blade_idx: usize) -> i32 {
         debug_assert!(blade_idx < TOTAL_BLADES);
-        let mut sum = 0i32;
-        // TOTAL_BLADES = 16 — índices de Fenwick en 1..=16, siempre positivos.
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            clippy::cast_possible_wrap
-        )]
-        // Fenwick tree arithmetic: i & (-i) requiere i32 con signo;
-        // el invariante garantiza i > 0 al indexar como usize.
-        {
-            let mut i: i32 = blade_idx as i32 + 1;
-            while i > 0 {
-                sum += self.fenwick_parity_tree[i as usize];
-                i -= i & (-i);
-            }
-        }
-        sum
+        ODD_GRADE_PREFIX_TABLE[blade_idx]
     }
 
     /// Computes e_I² as `i8` — `const fn` used during compile-time table build.
