@@ -562,12 +562,12 @@ mod tests {
         }
 
         // SAFETY: delegates directly to GlobalAlloc::dealloc with matching ptr and layout.
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
             std::alloc::System.dealloc(ptr, layout)
         }
 
         // SAFETY: delegates directly to GlobalAlloc::realloc; ptr was allocated by this allocator.
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
             ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
             std::alloc::System.realloc(ptr, layout, new_size)
         }

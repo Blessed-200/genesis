@@ -37,7 +37,7 @@ use std::collections::{BTreeSet, HashMap};
 /// physical meaning in the energy landscape.
 #[derive(Debug, Clone, Copy)]
 struct AttractorEntry {
-    id:     NodeId,
+    id: NodeId,
     energy: f64,
 }
 
@@ -55,7 +55,8 @@ impl Eq for AttractorEntry {}
 impl Ord for AttractorEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // total_cmp: deterministic even for NaN (NaN > all finite, consistent with IEEE 754 total order)
-        self.energy.total_cmp(&other.energy)
+        self.energy
+            .total_cmp(&other.energy)
             .then_with(|| self.id.cmp(&other.id))
     }
 }
@@ -77,16 +78,16 @@ impl PartialOrd for AttractorEntry {
 /// AX-ID: AXIOMA-004
 pub struct AttractorLandscape {
     /// O(1) energy lookup by NodeId.
-    id_to_energy:       HashMap<NodeId, f64>,
+    id_to_energy: HashMap<NodeId, f64>,
     /// Energy-ordered set for deterministic iteration.
-    ordered_landscape:  BTreeSet<AttractorEntry>,
+    ordered_landscape: BTreeSet<AttractorEntry>,
 }
 
 impl AttractorLandscape {
     /// Creates an empty attractor landscape with no registered attractors.
     pub fn new() -> Self {
         Self {
-            id_to_energy:      HashMap::new(),
+            id_to_energy: HashMap::new(),
             ordered_landscape: BTreeSet::new(),
         }
     }
@@ -100,7 +101,10 @@ impl AttractorLandscape {
             if old_energy.to_bits() == energy.to_bits() {
                 return; // Exact same value — idempotent, no work needed.
             }
-            self.ordered_landscape.remove(&AttractorEntry { id, energy: old_energy });
+            self.ordered_landscape.remove(&AttractorEntry {
+                id,
+                energy: old_energy,
+            });
         }
         self.id_to_energy.insert(id, energy);
         self.ordered_landscape.insert(AttractorEntry { id, energy });
@@ -158,7 +162,9 @@ impl Default for AttractorLandscape {
 mod tests {
     use super::*;
 
-    fn id(n: u64) -> NodeId { NodeId::try_new(n).expect("NodeId válido") }
+    fn id(n: u64) -> NodeId {
+        NodeId::try_new(n).expect("NodeId válido")
+    }
 
     #[test]
     fn attractor_register_and_count() {
@@ -188,7 +194,7 @@ mod tests {
 
     #[test]
     fn attractor_descend_returns_nearest_minimum() {
-        let mut l   = AttractorLandscape::new();
+        let mut l = AttractorLandscape::new();
         let mut vfe = VFEMinimizer::new();
 
         let a = id(0); // mean=[0,0,0,0] → VFE=0
@@ -209,7 +215,7 @@ mod tests {
 
     #[test]
     fn attractor_descend_empty_landscape_returns_none() {
-        let l   = AttractorLandscape::new();
+        let l = AttractorLandscape::new();
         let vfe = VFEMinimizer::new();
         assert_eq!(l.descend(id(0), &vfe), None);
     }
@@ -237,6 +243,10 @@ mod tests {
         for i in 0..10_000u64 {
             l.register(id(i), i as f64 + 1.0);
         }
-        assert_eq!(l.attractor_count(), 10_000, "no duplicates after bulk update");
+        assert_eq!(
+            l.attractor_count(),
+            10_000,
+            "no duplicates after bulk update"
+        );
     }
 }

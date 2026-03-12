@@ -29,14 +29,12 @@ const TRACE_MAX: f64 = 1.0e12;
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.3
 pub(crate) const VFE_BLADE_WEIGHTS: [f64; 16] = [
     // blade 0 (grado 0: escalar)
-    2.0,
-    // blades 1,2,4,8 (grado 1: vectores — semántica primaria)
-    1.5, 1.5, 1.0,  // 1(e0), 2(e1), 3(e01)
-    1.5, 1.0, 1.0,  // 4(e2), 5(e02), 6(e12)
-    0.5, 1.5,       // 7(e012), 8(e3)
+    2.0, // blades 1,2,4,8 (grado 1: vectores — semántica primaria)
+    1.5, 1.5, 1.0, // 1(e0), 2(e1), 3(e01)
+    1.5, 1.0, 1.0, // 4(e2), 5(e02), 6(e12)
+    0.5, 1.5, // 7(e012), 8(e3)
     // blades 9..14 (grados 2 y 3)
-    1.0, 1.0, 0.5, 1.0, 0.5, 0.5,
-    // blade 15 (grado 4: pseudoescalar)
+    1.0, 1.0, 0.5, 1.0, 0.5, 0.5, // blade 15 (grado 4: pseudoescalar)
     0.3,
 ];
 
@@ -182,7 +180,10 @@ impl Belief {
 
 impl FisherInfo {
     fn new() -> Self {
-        Self { trace: 1.0, delta_g: 0.0 }
+        Self {
+            trace: 1.0,
+            delta_g: 0.0,
+        }
     }
 }
 
@@ -195,7 +196,11 @@ pub use genesis_types::FisherEdgeMetric;
 /// Función auxiliar canónica de arista — mantenida internamente para compatibilidad
 /// con tests que la referencian directamente dentro de este módulo.
 fn canonical_edge(i: NodeId, j: NodeId) -> (NodeId, NodeId) {
-    if i <= j { (i, j) } else { (j, i) }
+    if i <= j {
+        (i, j)
+    } else {
+        (j, i)
+    }
 }
 
 // ── VFEMinimizer ──────────────────────────────────────────────────────────────
@@ -255,14 +260,17 @@ impl VFEMinimizer {
         if !is_finite_vec4(&prior_mean) {
             return;
         }
-        let raw = usize::try_from(id.get()).expect("NodeId must fit into usize on supported targets");
+        let raw =
+            usize::try_from(id.get()).expect("NodeId must fit into usize on supported targets");
 
         // Defensive maximum: 100× production target. Prevents OOM from buggy callers.
         const MAX_ALLOWED_NODE_ID: usize = 100_000_000;
         if raw > MAX_ALLOWED_NODE_ID {
             // In release: log and return. In debug: panic for early detection.
-            debug_assert!(false,
-                "NodeId {raw} exceeds MAX_ALLOWED_NODE_ID={MAX_ALLOWED_NODE_ID} — potential bug");
+            debug_assert!(
+                false,
+                "NodeId {raw} exceeds MAX_ALLOWED_NODE_ID={MAX_ALLOWED_NODE_ID} — potential bug"
+            );
             return;
         }
 
@@ -287,9 +295,14 @@ impl VFEMinimizer {
     ///
     /// O(1) direct-index access. Returns None for unregistered IDs without panic.
     fn lookup(&self, id: NodeId) -> Option<usize> {
-        let raw = usize::try_from(id.get()).expect("NodeId must fit into usize on supported targets");
+        let raw =
+            usize::try_from(id.get()).expect("NodeId must fit into usize on supported targets");
         self.id_to_idx.get(raw).and_then(|&idx| {
-            if idx == u32::MAX { None } else { Some(idx as usize) }
+            if idx == u32::MAX {
+                None
+            } else {
+                Some(idx as usize)
+            }
         })
     }
 
@@ -315,12 +328,12 @@ impl VFEMinimizer {
         let target: [f64; 4] = obs.map_or([0.0; 4], |o| *o);
         // VFE sobre los 4 blades de grado 1 — Kahan summation.
         // Applies VFE_BLADE_WEIGHTS for consistency with compute_vfe_with_grad (FIX-3).
-        let mut sum  = 0.0f64;
+        let mut sum = 0.0f64;
         let mut comp = 0.0f64;
         for (k, &blade_idx) in GRADE1_BLADE_INDICES.iter().enumerate() {
             let delta = belief.mean_full[blade_idx] - target[k];
-            let w     = VFE_BLADE_WEIGHTS[blade_idx];
-            let term  = w * belief.precision_full[blade_idx] * delta * delta;
+            let w = VFE_BLADE_WEIGHTS[blade_idx];
+            let term = w * belief.precision_full[blade_idx] * delta * delta;
             let y = term - comp;
             let t = sum + y;
             comp = (t - sum) - y;
@@ -363,7 +376,7 @@ impl VFEMinimizer {
         };
 
         let belief = &self.beliefs[idx];
-        let mut vfe  = 0.0f64;
+        let mut vfe = 0.0f64;
         let mut grad = [0.0f64; 16];
 
         // FIX-3: Apply VFE_BLADE_WEIGHTS for gradient/loss consistency with internal_drive.
@@ -372,9 +385,9 @@ impl VFEMinimizer {
         // Now both use the same weighted metric: F_i = w_i · Π_i · δ_i²
         for i in 0..16 {
             let delta = belief.mean_full[i] - target[i];
-            let prec  = belief.precision_full[i];
-            let w     = VFE_BLADE_WEIGHTS[i];
-            vfe    += w * prec * delta * delta;
+            let prec = belief.precision_full[i];
+            let w = VFE_BLADE_WEIGHTS[i];
+            vfe += w * prec * delta * delta;
             grad[i] = 2.0 * w * prec * delta;
         }
         (vfe, grad)
@@ -408,7 +421,7 @@ impl VFEMinimizer {
             return None;
         }
         let mut max_vfe = f64::NEG_INFINITY;
-        let mut max_id  = None;
+        let mut max_id = None;
         for (idx, belief) in self.beliefs.iter().enumerate() {
             if !is_finite_vec16(&belief.mean_full) {
                 continue;
@@ -416,7 +429,7 @@ impl VFEMinimizer {
             let trace = sanitize_trace(self.fisher[idx].trace);
             // F interna 16D: Tr(𝒢) · Σ_i w_i · μ_i² (target = 0)
             let error_sq: f64 = {
-                let mut sum  = 0.0f64;
+                let mut sum = 0.0f64;
                 let mut comp = 0.0f64;
                 for (i, &m) in belief.mean_full.iter().enumerate() {
                     let term = VFE_BLADE_WEIGHTS[i] * m * m;
@@ -430,7 +443,7 @@ impl VFEMinimizer {
             let vfe = trace * error_sq;
             if vfe > max_vfe {
                 max_vfe = vfe;
-                max_id  = Some(belief.node_id);
+                max_id = Some(belief.node_id);
             }
         }
         max_id
@@ -453,14 +466,17 @@ impl VFEMinimizer {
         fisher.trace = sanitize_trace(fisher.trace);
 
         let step = (dt / (1.0 + dt * fisher.trace)).min(0.9);
-        if !step.is_finite() { return; }
+        if !step.is_finite() {
+            return;
+        }
 
         // Actualizar solo los 4 blades de grado 1
         let mut error_sq = 0.0f64;
         for (k, &blade_idx) in GRADE1_BLADE_INDICES.iter().enumerate() {
             let err = observation[k] - belief.mean_full[blade_idx];
-            belief.mean_full[blade_idx]     += step * err;
-            belief.precision_full[blade_idx] = (belief.precision_full[blade_idx] + step).clamp(0.0, 1.0e6);
+            belief.mean_full[blade_idx] += step * err;
+            belief.precision_full[blade_idx] =
+                (belief.precision_full[blade_idx] + step).clamp(0.0, 1.0e6);
             error_sq += err * err;
         }
 
@@ -485,21 +501,27 @@ impl VFEMinimizer {
     /// AX-ID: AXIOMA-003, AXIOMA-008
     pub fn update_full(&mut self, id: NodeId, obs: &SparseCliffordVector, dt: f64) {
         let Some(idx) = self.lookup(id) else { return };
-        if !dt.is_finite() { return; }
+        if !dt.is_finite() {
+            return;
+        }
 
         let belief = &mut self.beliefs[idx];
         let fisher = &mut self.fisher[idx];
         fisher.trace = sanitize_trace(fisher.trace);
 
         let step = (dt / (1.0 + dt * fisher.trace)).min(0.9);
-        if !step.is_finite() { return; }
+        if !step.is_finite() {
+            return;
+        }
 
         let mut error_sq = 0.0f64;
         for i in 0..16usize {
             let target = obs.coeffs[i];
-            if !target.is_finite() { continue; }
+            if !target.is_finite() {
+                continue;
+            }
             let err = target - belief.mean_full[i];
-            belief.mean_full[i]     += step * err;
+            belief.mean_full[i] += step * err;
             belief.precision_full[i] = (belief.precision_full[i] + step).clamp(0.0, 1.0e6);
             error_sq += err * err;
         }
@@ -749,7 +771,10 @@ mod tests {
         vfe.add_node(formerly_rejected, [1.5, 0.0, 0.0, 0.0]);
         // Must now work — node registered, VFE computable.
         let vfe_val = vfe.compute_vfe(formerly_rejected, Some(&[1.5, 0.0, 0.0, 0.0]));
-        assert_eq!(vfe_val, 0.0, "node at id=2_000_000 must be fully functional");
+        assert_eq!(
+            vfe_val, 0.0,
+            "node at id=2_000_000 must be fully functional"
+        );
 
         // Verify that a normal node still works alongside it.
         let valid_id = NodeId::try_new(999_999).expect("valor válido en test");
@@ -952,14 +977,14 @@ mod tests {
         // GRADE1_BLADE_INDICES[0] = 1 → blade e₀.
         // La diferencia finita perturba mean[0] → blade 1, y debemos comparar
         // con grad[GRADE1_BLADE_INDICES[0]] = grad[1].
-        let id   = NodeId::try_new(0).expect("NodeId válido por construcción");
+        let id = NodeId::try_new(0).expect("NodeId válido por construcción");
         let mean = [1.3, -0.2, 0.4, 0.1];
 
         // obs con coeficientes en todos los blades incluyendo los de grado 1
         // (blades 1,2,4,8 según GRADE1_BLADE_INDICES)
         let obs = SparseCliffordVector::from_iter([
-            (1usize, 0.1),   // blade e₀ (grado 1, índice 0 de mean)
-            (2, -0.4),       // blade e₁ (grado 1, índice 1 de mean)
+            (1usize, 0.1), // blade e₀ (grado 1, índice 0 de mean)
+            (2, -0.4),     // blade e₁ (grado 1, índice 1 de mean)
         ])
         .expect("observación finita válida");
 
@@ -1003,9 +1028,9 @@ mod tests {
     /// Los componentes de grado 1 son los más semánticamente relevantes.
     #[test]
     fn vfe_grad_16d_grade1_components_consistent() {
-        let id    = NodeId::try_new(0).expect("NodeId válido");
-        let mean  = [2.0, 0.0, 0.0, 0.0];
-        let obs   = SparseCliffordVector::from_iter([(1usize, 1.0)]).expect("obs válida");
+        let id = NodeId::try_new(0).expect("NodeId válido");
+        let mean = [2.0, 0.0, 0.0, 0.0];
+        let obs = SparseCliffordVector::from_iter([(1usize, 1.0)]).expect("obs válida");
 
         let mut vfe = VFEMinimizer::new();
         vfe.add_node(id, mean);
@@ -1015,7 +1040,10 @@ mod tests {
         // target[1]   = 1.0 (obs.coeffs[1])
         // VFE = w * precision_full[1] * (2.0 - 1.0)² = 1.5 * 1.0 * 1.0 = 1.5 (FIX-3: VFE_BLADE_WEIGHTS[1]=1.5)
         // grad[1] = 2 * w * prec * delta = 2 * 1.5 * 1.0 * 1.0 = 3.0
-        assert!((val - 1.5).abs() < 1e-12, "VFE debe ser 1.5 (w=1.5 for grade-1), got {val}");
+        assert!(
+            (val - 1.5).abs() < 1e-12,
+            "VFE debe ser 1.5 (w=1.5 for grade-1), got {val}"
+        );
         assert!(
             (grad[GRADE1_BLADE_INDICES[0]] - 3.0).abs() < 1e-12,
             "grad[blade e₀] debe ser 3.0 (2*w*prec*delta), got {}",
@@ -1023,22 +1051,25 @@ mod tests {
         );
         // Gradientes en blades no activados por obs o mean deben ser 0
         assert_eq!(grad[0], 0.0, "blade escalar no activado, grad debe ser 0");
-        assert_eq!(grad[15], 0.0, "blade pseudoescalar no activado, grad debe ser 0");
+        assert_eq!(
+            grad[15], 0.0,
+            "blade pseudoescalar no activado, grad debe ser 0"
+        );
     }
 
     /// Verifica que compute_vfe_with_grad_grade1 retorna exactamente los 4
     /// componentes de grado 1 del gradiente 16D.
     #[test]
     fn vfe_grad_grade1_convenience_matches_full_grad() {
-        let id   = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let mean = [1.0, -0.5, 0.3, 0.2];
-        let obs  = SparseCliffordVector::from_iter([(1usize, 0.5), (2, 0.0), (4, 0.1)]).unwrap();
+        let obs = SparseCliffordVector::from_iter([(1usize, 0.5), (2, 0.0), (4, 0.1)]).unwrap();
 
         let mut vfe = VFEMinimizer::new();
         vfe.add_node(id, mean);
 
-        let (v16, g16)  = vfe.compute_vfe_with_grad(id, Some(&obs));
-        let (v4,  g4)   = vfe.compute_vfe_with_grad_grade1(id, Some(&obs));
+        let (v16, g16) = vfe.compute_vfe_with_grad(id, Some(&obs));
+        let (v4, g4) = vfe.compute_vfe_with_grad_grade1(id, Some(&obs));
 
         assert_eq!(v16, v4, "VFE debe ser igual en ambas variantes");
         for k in 0..4 {
@@ -1053,13 +1084,14 @@ mod tests {
     /// Verifica que update_full actualiza todos los 16 blades activos en obs.
     #[test]
     fn update_full_updates_all_active_blades() {
-        let id  = NodeId::try_new(0).expect("NodeId válido");
+        let id = NodeId::try_new(0).expect("NodeId válido");
         let obs = SparseCliffordVector::from_iter([
             (0usize, 0.5), // escalar (grado 0)
             (1, 1.0),      // e₀ (grado 1)
             (3, 0.8),      // e₀₁ (grado 2)
             (15, 0.2),     // pseudoescalar (grado 4)
-        ]).expect("obs válida");
+        ])
+        .expect("obs válida");
 
         let mut vfe = VFEMinimizer::new();
         vfe.add_node(id, [0.0; 4]); // mean_full parte en 0

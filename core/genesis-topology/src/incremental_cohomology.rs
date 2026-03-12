@@ -17,15 +17,20 @@ use smallvec::SmallVec;
 
 /// Union-Find con compresión de caminos y unión por rango para rank_d1 = N - c.
 pub(crate) struct PersistentUnionFind {
-    parent:     Vec<u32>,
-    rank:       Vec<u8>,
+    parent: Vec<u32>,
+    rank: Vec<u8>,
     components: usize,
-    num_nodes:  usize,
+    num_nodes: usize,
 }
 
 impl PersistentUnionFind {
     pub fn new() -> Self {
-        Self { parent: Vec::new(), rank: Vec::new(), components: 0, num_nodes: 0 }
+        Self {
+            parent: Vec::new(),
+            rank: Vec::new(),
+            components: 0,
+            num_nodes: 0,
+        }
     }
 
     pub fn add_node(&mut self) {
@@ -62,11 +67,13 @@ impl PersistentUnionFind {
     pub fn union(&mut self, u: usize, v: usize) -> bool {
         let ru = self.find(u);
         let rv = self.find(v);
-        if ru == rv { return false; }
+        if ru == rv {
+            return false;
+        }
         match self.rank[ru].cmp(&self.rank[rv]) {
-            std::cmp::Ordering::Less    => self.parent[ru] = rv as u32,
+            std::cmp::Ordering::Less => self.parent[ru] = rv as u32,
             std::cmp::Ordering::Greater => self.parent[rv] = ru as u32,
-            std::cmp::Ordering::Equal   => {
+            std::cmp::Ordering::Equal => {
                 self.parent[rv] = ru as u32;
                 self.rank[ru] = self.rank[ru].saturating_add(1);
             }
@@ -113,7 +120,7 @@ pub(crate) struct IncrementalD2 {
     /// Number of edges registered (= dimension of the C₁ chain group).
     num_edges: usize,
     /// Rank of `im(∂₂)` = number of independent triangle boundaries found.
-    rank:      usize,
+    rank: usize,
 }
 
 impl IncrementalD2 {
@@ -123,7 +130,7 @@ impl IncrementalD2 {
             base_cols: Vec::new(),
             pivot_row: Vec::new(),
             num_edges: 0,
-            rank:      0,
+            rank: 0,
         }
     }
 
@@ -161,9 +168,15 @@ impl IncrementalD2 {
     pub fn add_triangle(&mut self, mut e1: u32, mut e2: u32, mut e3: u32) -> bool {
         // Canonical sort: e1 ≤ e2 ≤ e3 (ascending edge indices).
         // This ensures a deterministic `low()` element for pivot matching.
-        if e1 > e2 { std::mem::swap(&mut e1, &mut e2); }
-        if e2 > e3 { std::mem::swap(&mut e2, &mut e3); }
-        if e1 > e2 { std::mem::swap(&mut e1, &mut e2); }
+        if e1 > e2 {
+            std::mem::swap(&mut e1, &mut e2);
+        }
+        if e2 > e3 {
+            std::mem::swap(&mut e2, &mut e3);
+        }
+        if e1 > e2 {
+            std::mem::swap(&mut e1, &mut e2);
+        }
 
         // Initial boundary column of this triangle: exactly the three edges.
         let mut col = Column::Sparse({
@@ -181,7 +194,7 @@ impl IncrementalD2 {
         for _step in 0..=max_steps {
             // low(col) = minimum set bit = leading edge index under boundary ordering.
             let p = match low_col(&col) {
-                None    => return false, // col = 0 → boundary, no new cycle
+                None => return false, // col = 0 → boundary, no new cycle
                 Some(p) => p as usize,
             };
 
@@ -206,7 +219,10 @@ impl IncrementalD2 {
 
         // Unreachable in correct operation.
         // If we somehow reach here, treat as boundary (conservative: no false H¹).
-        debug_assert!(false, "add_triangle: reduction did not terminate — topology state corrupt");
+        debug_assert!(
+            false,
+            "add_triangle: reduction did not terminate — topology state corrupt"
+        );
         false
     }
 
@@ -237,10 +253,7 @@ fn xor_columns_opt(a: Column, b: &Column, num_edges: usize) -> Column {
                 while i + 8 <= len {
                     // Prefetch the next 512-bit chunk of source into L1.
                     if i + 16 < len {
-                        _mm_prefetch(
-                            db.as_ptr().add(i + 8) as *const i8,
-                            _MM_HINT_T0,
-                        );
+                        _mm_prefetch(db.as_ptr().add(i + 8) as *const i8, _MM_HINT_T0);
                     }
                     let t = da.as_mut_ptr().add(i) as *mut __m512i;
                     let s = db.as_ptr().add(i) as *const __m512i;
@@ -249,15 +262,22 @@ fn xor_columns_opt(a: Column, b: &Column, num_edges: usize) -> Column {
                     i += 8;
                 }
                 // Scalar tail for remainder
-                for j in i..len { da[j] ^= db[j]; }
+                for j in i..len {
+                    da[j] ^= db[j];
+                }
             }
             // Scalar fallback (also used when AVX-512 is not available)
             #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
             {
-                for (aw, &bw) in da.iter_mut().zip(db.iter()) { *aw ^= bw; }
+                for (aw, &bw) in da.iter_mut().zip(db.iter()) {
+                    *aw ^= bw;
+                }
             }
-            if da.iter().all(|&w| w == 0) { Column::Sparse(SmallVec::new()) }
-            else { Column::Dense(da) }
+            if da.iter().all(|&w| w == 0) {
+                Column::Sparse(SmallVec::new())
+            } else {
+                Column::Dense(da)
+            }
         }
         // All other combinations delegate to the existing scalar path.
         other => xor_columns(other.0, other.1, num_edges),
@@ -271,9 +291,18 @@ fn xor_columns(a: Column, b: &Column, num_edges: usize) -> Column {
             let (mut ia, mut ib) = (0, 0);
             while ia < sa.len() && ib < sb.len() {
                 match sa[ia].cmp(&sb[ib]) {
-                    std::cmp::Ordering::Less    => { result.push(sa[ia]); ia += 1; }
-                    std::cmp::Ordering::Greater => { result.push(sb[ib]); ib += 1; }
-                    std::cmp::Ordering::Equal   => { ia += 1; ib += 1; }
+                    std::cmp::Ordering::Less => {
+                        result.push(sa[ia]);
+                        ia += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        result.push(sb[ib]);
+                        ib += 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        ia += 1;
+                        ib += 1;
+                    }
                 }
             }
             result.extend_from_slice(&sa[ia..]);
@@ -288,25 +317,40 @@ fn xor_columns(a: Column, b: &Column, num_edges: usize) -> Column {
             let mut bm = db.to_vec().into_boxed_slice();
             for &idx in &sa {
                 let word = idx as usize / 64;
-                let bit  = idx as usize % 64;
-                if word < bm.len() { bm[word] ^= 1u64 << bit; }
+                let bit = idx as usize % 64;
+                if word < bm.len() {
+                    bm[word] ^= 1u64 << bit;
+                }
             }
-            if bm.iter().all(|&w| w == 0) { Column::Sparse(SmallVec::new()) }
-            else { Column::Dense(bm) }
+            if bm.iter().all(|&w| w == 0) {
+                Column::Sparse(SmallVec::new())
+            } else {
+                Column::Dense(bm)
+            }
         }
         (Column::Dense(mut da), Column::Sparse(sb)) => {
             for &idx in sb.iter() {
                 let word = idx as usize / 64;
-                let bit  = idx as usize % 64;
-                if word < da.len() { da[word] ^= 1u64 << bit; }
+                let bit = idx as usize % 64;
+                if word < da.len() {
+                    da[word] ^= 1u64 << bit;
+                }
             }
-            if da.iter().all(|&w| w == 0) { Column::Sparse(SmallVec::new()) }
-            else { Column::Dense(da) }
+            if da.iter().all(|&w| w == 0) {
+                Column::Sparse(SmallVec::new())
+            } else {
+                Column::Dense(da)
+            }
         }
         (Column::Dense(mut da), Column::Dense(db)) => {
-            for (aw, &bw) in da.iter_mut().zip(db.iter()) { *aw ^= bw; }
-            if da.iter().all(|&w| w == 0) { Column::Sparse(SmallVec::new()) }
-            else { Column::Dense(da) }
+            for (aw, &bw) in da.iter_mut().zip(db.iter()) {
+                *aw ^= bw;
+            }
+            if da.iter().all(|&w| w == 0) {
+                Column::Sparse(SmallVec::new())
+            } else {
+                Column::Dense(da)
+            }
         }
     }
 }
@@ -316,8 +360,10 @@ fn sparse_to_dense(sv: &[u32], num_edges: usize) -> Box<[u64]> {
     let mut bm = vec![0u64; n_words.max(1)].into_boxed_slice();
     for &idx in sv {
         let word = idx as usize / 64;
-        let bit  = idx as usize % 64;
-        if word < bm.len() { bm[word] |= 1u64 << bit; }
+        let bit = idx as usize % 64;
+        if word < bm.len() {
+            bm[word] |= 1u64 << bit;
+        }
     }
     bm
 }
@@ -331,7 +377,7 @@ fn sparse_to_dense(sv: &[u32], num_edges: usize) -> Box<[u64]> {
 fn low_col(col: &Column) -> Option<u32> {
     match col {
         Column::Sparse(sv) => sv.first().copied(),
-        Column::Dense(bm)  => first_set_bit(bm),
+        Column::Dense(bm) => first_set_bit(bm),
     }
 }
 
@@ -350,7 +396,11 @@ type EdgeKey = u128;
 
 #[inline]
 fn edge_key(u: NodeId, v: NodeId) -> EdgeKey {
-    let (a, b) = if u <= v { (u.get(), v.get()) } else { (v.get(), u.get()) };
+    let (a, b) = if u <= v {
+        (u.get(), v.get())
+    } else {
+        (v.get(), u.get())
+    };
     (a as u128) << 64 | b as u128
 }
 
@@ -374,11 +424,11 @@ fn edge_key(u: NodeId, v: NodeId) -> EdgeKey {
 /// `insert` is O(E) shift in the worst case, but HNSW insertions are mostly sequential
 /// (IDs are assigned in order) so new keys land near the end → amortised O(1) shift.
 pub struct IncrementalH1State {
-    uf:                   PersistentUnionFind,
-    d2:                   IncrementalD2,
+    uf: PersistentUnionFind,
+    d2: IncrementalD2,
     /// Sorted (EdgeKey, edge_id) pairs. Binary search for O(log E) lookup.
-    edge_map:             Vec<(EdgeKey, u32)>,
-    num_edges:            usize,
+    edge_map: Vec<(EdgeKey, u32)>,
+    num_edges: usize,
     ops_since_checkpoint: usize,
 }
 
@@ -388,10 +438,10 @@ impl IncrementalH1State {
     /// Creates an empty H¹ state with no nodes or edges.
     pub fn new() -> Self {
         Self {
-            uf:                   PersistentUnionFind::new(),
-            d2:                   IncrementalD2::new(),
-            edge_map:             Vec::new(),
-            num_edges:            0,
+            uf: PersistentUnionFind::new(),
+            d2: IncrementalD2::new(),
+            edge_map: Vec::new(),
+            num_edges: 0,
             ops_since_checkpoint: 0,
         }
     }
@@ -444,7 +494,8 @@ impl IncrementalH1State {
 
     fn lookup_edge(&self, u: NodeId, v: NodeId) -> Option<u32> {
         let key = edge_key(u, v);
-        self.edge_map.binary_search_by_key(&key, |&(k, _)| k)
+        self.edge_map
+            .binary_search_by_key(&key, |&(k, _)| k)
             .ok()
             .map(|pos| self.edge_map[pos].1)
     }
@@ -475,7 +526,9 @@ impl IncrementalH1State {
 }
 
 impl Default for IncrementalH1State {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -483,13 +536,17 @@ impl Default for IncrementalH1State {
 mod tests {
     use super::*;
 
-    fn node(n: u64) -> NodeId { NodeId::try_new(n).expect("NodeId válido") }
+    fn node(n: u64) -> NodeId {
+        NodeId::try_new(n).expect("NodeId válido")
+    }
 
     #[test]
     fn single_triangle_h1_zero() {
         let mut s = IncrementalH1State::new();
         let (a, b, c) = (node(0), node(1), node(2));
-        for _ in 0..3 { s.add_node(); }
+        for _ in 0..3 {
+            s.add_node();
+        }
         s.add_edge(a, b);
         s.add_edge(b, c);
         s.add_edge(a, c);
@@ -501,7 +558,9 @@ mod tests {
     fn cycle_without_fill_h1_nonzero() {
         let mut s = IncrementalH1State::new();
         let (a, b, c) = (node(0), node(1), node(2));
-        for _ in 0..3 { s.add_node(); }
+        for _ in 0..3 {
+            s.add_node();
+        }
         s.add_edge(a, b);
         s.add_edge(b, c);
         s.add_edge(a, c);
@@ -520,7 +579,8 @@ mod tests {
     fn add_edge_idempotent() {
         let mut s = IncrementalH1State::new();
         let (a, b) = (node(0), node(1));
-        s.add_node(); s.add_node();
+        s.add_node();
+        s.add_node();
         let id1 = s.add_edge(a, b);
         let id2 = s.add_edge(a, b);
         assert_eq!(id1, id2, "add_edge debe ser idempotente");
@@ -530,13 +590,21 @@ mod tests {
     #[test]
     fn two_triangles_sharing_edge_h1_zero() {
         let mut s = IncrementalH1State::new();
-        let nodes: Vec<NodeId> = (0..4).map(|i| { s.add_node(); node(i) }).collect();
+        let nodes: Vec<NodeId> = (0..4)
+            .map(|i| {
+                s.add_node();
+                node(i)
+            })
+            .collect();
         let (a, b, c, d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
         // Triángulo 1: a-b-c
-        s.add_edge(a, b); s.add_edge(b, c); s.add_edge(a, c);
+        s.add_edge(a, b);
+        s.add_edge(b, c);
+        s.add_edge(a, c);
         s.add_triangle(a, b, c);
         // Triángulo 2: a-b-d
-        s.add_edge(a, d); s.add_edge(b, d);
+        s.add_edge(a, d);
+        s.add_edge(b, d);
         s.add_triangle(a, b, d);
         assert!(s.h1_is_zero());
     }

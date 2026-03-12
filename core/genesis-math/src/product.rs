@@ -632,12 +632,12 @@ const BIVECTOR_MASK: u16 = 0x1668;
 /// blades without e₀ (timelike) → weight=+1. Zero for all other grades.
 const BIVECTOR_LORENTZ_WEIGHTS: [f64; 16] = {
     let mut w = [0.0f64; 16];
-    w[3]  = -1.0; // e₀₁ (spacelike)
-    w[5]  = -1.0; // e₀₂ (spacelike)
-    w[6]  =  1.0; // e₁₂ (timelike)
-    w[9]  = -1.0; // e₀₃ (spacelike)
-    w[10] =  1.0; // e₁₃ (timelike)
-    w[12] =  1.0; // e₂₃ (timelike)
+    w[3] = -1.0; // e₀₁ (spacelike)
+    w[5] = -1.0; // e₀₂ (spacelike)
+    w[6] = 1.0; // e₁₂ (timelike)
+    w[9] = -1.0; // e₀₃ (spacelike)
+    w[10] = 1.0; // e₁₃ (timelike)
+    w[12] = 1.0; // e₂₃ (timelike)
     w
 };
 

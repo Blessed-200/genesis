@@ -37,7 +37,6 @@
 )]
 #![allow(dead_code)] // internal utility fns used by tests
 
-
 /// Kuramoto attractor energy landscape — concept recognition via gradient descent.
 ///
 /// AX-ID: AXIOMA-004, `H_información`
@@ -65,7 +64,8 @@ pub mod synchrony;
 
 pub use attractor::AttractorLandscape;
 pub use criticality::{
-    kuramoto_critical_coupling, CriticalityMonitor, CriticalityReport, SOC_R_SYNC_MAX, SOC_R_SYNC_MIN,
+    kuramoto_critical_coupling, CriticalityMonitor, CriticalityReport, SOC_R_SYNC_MAX,
+    SOC_R_SYNC_MIN,
 };
 pub use free_energy::{Belief, FisherEdgeMetric, FisherInfo, VFEMinimizer};
 pub use kuramoto::QuantumKuramotoNetwork;

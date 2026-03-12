@@ -183,11 +183,7 @@ impl CliffordBasis {
         let reorder_sign: i8 = if ((k * (k - 1) / 2) % 2) == 0 { 1 } else { -1 };
         let spatial_bits = (blade >> 1) & 0b111;
         let spatial_count = spatial_bits.count_ones();
-        let metric_sign: i8 = if (spatial_count % 2) == 0 {
-            1
-        } else {
-            -1
-        };
+        let metric_sign: i8 = if (spatial_count % 2) == 0 { 1 } else { -1 };
         reorder_sign * metric_sign
     }
 
@@ -400,23 +396,43 @@ mod tests {
         let b = &CANONICAL_G13;
 
         // Grade table must match
-        assert_eq!(a.grade, b.grade, "grade table must be invariant across borrows");
+        assert_eq!(
+            a.grade, b.grade,
+            "grade table must be invariant across borrows"
+        );
         // Signature (Minkowski +---) must match
-        assert_eq!(a.signature, b.signature, "signature must be invariant across borrows");
+        assert_eq!(
+            a.signature, b.signature,
+            "signature must be invariant across borrows"
+        );
         // Fenwick tree must match
         assert_eq!(
-            a.fenwick_parity_tree,
-            b.fenwick_parity_tree,
+            a.fenwick_parity_tree, b.fenwick_parity_tree,
             "fenwick parity tree must be invariant across borrows"
         );
 
         // Verify Minkowski signature (+,-,-,-):
         // Blade indices are bitmasks: 1=e0 (bit0), 2=e1 (bit1), 4=e2 (bit2), 8=e3 (bit3).
         // Blade 3 = 0b0011 = e₀₁ (bivector), NOT a basis vector.
-        assert_eq!(a.signature[0], 1i8, "scalar blade (0b0000) must have signature +1");
-        assert_eq!(a.signature[1], 1i8, "e0 blade (0b0001, timelike) must have signature +1");
-        assert_eq!(a.signature[2], -1i8, "e1 blade (0b0010, spacelike) must have signature -1");
-        assert_eq!(a.signature[4], -1i8, "e2 blade (0b0100, spacelike) must have signature -1");
-        assert_eq!(a.signature[8], -1i8, "e3 blade (0b1000, spacelike) must have signature -1");
+        assert_eq!(
+            a.signature[0], 1i8,
+            "scalar blade (0b0000) must have signature +1"
+        );
+        assert_eq!(
+            a.signature[1], 1i8,
+            "e0 blade (0b0001, timelike) must have signature +1"
+        );
+        assert_eq!(
+            a.signature[2], -1i8,
+            "e1 blade (0b0010, spacelike) must have signature -1"
+        );
+        assert_eq!(
+            a.signature[4], -1i8,
+            "e2 blade (0b0100, spacelike) must have signature -1"
+        );
+        assert_eq!(
+            a.signature[8], -1i8,
+            "e3 blade (0b1000, spacelike) must have signature -1"
+        );
     }
 }

@@ -699,7 +699,10 @@ mod tests {
             memoffset::offset_of!(SparseCliffordVector, max_abs_coeff),
             136
         );
-        assert_eq!(memoffset::offset_of!(SparseCliffordVector, active_mask), 144);
+        assert_eq!(
+            memoffset::offset_of!(SparseCliffordVector, active_mask),
+            144
+        );
         assert_eq!(memoffset::offset_of!(SparseCliffordVector, _pad), 146);
         #[cfg(feature = "cacheline64")]
         assert_eq!(memoffset::offset_of!(SparseCliffordVector, _tail_pad), 160);
@@ -1157,9 +1160,13 @@ mod tests {
     /// Verifica que fast_metric_distance preserva d(v,v)=0 con nuevos pesos.
     #[test]
     fn metric_distance_self_is_zero_with_grade_weights() {
-        let v = SparseCliffordVector::from_iter([(0b0001, 1.0), (0b0011, 0.5), (0b1111, 0.2)]).unwrap();
+        let v =
+            SparseCliffordVector::from_iter([(0b0001, 1.0), (0b0011, 0.5), (0b1111, 0.2)]).unwrap();
         let d = fast_metric_distance(&v, &v);
-        assert_eq!(d, 0.0, "d(v,v) debe ser 0 con cualquier conjunto de pesos positivos");
+        assert_eq!(
+            d, 0.0,
+            "d(v,v) debe ser 0 con cualquier conjunto de pesos positivos"
+        );
     }
 
     /// Verifica que fast_metric_distance preserva simetría con nuevos pesos.
@@ -1189,7 +1196,9 @@ mod tests {
             assert!(
                 (METRIC_WEIGHTS[i] - expected).abs() < f64::EPSILON,
                 "METRIC_WEIGHTS[{i}] = {} but GRADE_TABLE[{i}]={} requires weight {}",
-                METRIC_WEIGHTS[i], GRADE_TABLE[i], expected
+                METRIC_WEIGHTS[i],
+                GRADE_TABLE[i],
+                expected
             );
         }
     }

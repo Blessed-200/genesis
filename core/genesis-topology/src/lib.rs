@@ -33,10 +33,6 @@
 ///
 /// AX-ID: AXIOMA-007, AXIOMA-009
 pub mod cohomology;
-/// Incremental H¹ computation via union-find + incremental boundary matrix.
-///
-/// Near-O(α(N)) amortised for streaming edge insertions. AX-ID: AXIOMA-007
-pub mod incremental_cohomology;
 /// genesis-topology — The Cognitive Manifold
 ///
 /// CRATE-002 — The Cognitive Manifold
@@ -53,6 +49,10 @@ pub mod geodesic;
 ///
 /// AX-ID: AXIOMA-013
 pub mod hnsw;
+/// Incremental H¹ computation via union-find + incremental boundary matrix.
+///
+/// Near-O(α(N)) amortised for streaming edge insertions. AX-ID: AXIOMA-007
+pub mod incremental_cohomology;
 /// Locality-Sensitive Hashing over Clifford vectors for O(log N) lookup.
 ///
 /// AX-ID: AXIOMA-013

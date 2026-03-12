@@ -582,10 +582,7 @@ impl GenesisError {
     /// Topological rejections do not indicate bugs — they indicate that an
     /// input or generated state failed the H¹ consistency gate (AXIOMA-007).
     pub const fn is_topological_rejection(&self) -> bool {
-        matches!(
-            self,
-            Self::CohomologyNonTrivial | Self::FirewallBlocked
-        )
+        matches!(self, Self::CohomologyNonTrivial | Self::FirewallBlocked)
     }
 }
 

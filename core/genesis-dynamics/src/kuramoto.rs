@@ -294,8 +294,8 @@ impl QuantumKuramotoNetwork {
                 // Habituation: settled pairs withdraw coupling (AXIOMA-008 coupling).
                 let habituate = 1.0 - sat_i * sat_j;
 
-                let adaptive_gamma = (gamma_0 * amp_factor * orient_factor * habituate)
-                    .max(KURAMOTO_COUPLING_FLOOR);
+                let adaptive_gamma =
+                    (gamma_0 * amp_factor * orient_factor * habituate).max(KURAMOTO_COUPLING_FLOOR);
 
                 for g in 0..5usize {
                     coupling_sums[g] += adaptive_gamma * (phi_j[g] - phi_i[g]).sin();
@@ -496,7 +496,9 @@ impl QuantumKuramotoNetwork {
             // for self access more predictable.
             let noise_buf = {
                 let mut buf = [0.0f64; 5];
-                for n in buf.iter_mut() { *n = self.next_gaussian(); }
+                for n in buf.iter_mut() {
+                    *n = self.next_gaussian();
+                }
                 buf
             };
             for (g, coupling_sum) in coupling_sums.iter().enumerate() {
@@ -535,15 +537,17 @@ impl QuantumKuramotoNetwork {
         const EPS: f64 = 1e-30;
         let mut r_total = 0.0f64;
         for g in 0..N_GRADES {
-            let (sc, ss, sa) = self
-                .oscillators
-                .iter()
-                .fold((0.0f64, 0.0f64, 0.0f64), |(sc, ss, sa), osc| {
-                    let a = osc.amplitudes[g];
-                    (sc + a * osc.phases[g].cos(),
-                     ss + a * osc.phases[g].sin(),
-                     sa + a)
-                });
+            let (sc, ss, sa) =
+                self.oscillators
+                    .iter()
+                    .fold((0.0f64, 0.0f64, 0.0f64), |(sc, ss, sa), osc| {
+                        let a = osc.amplitudes[g];
+                        (
+                            sc + a * osc.phases[g].cos(),
+                            ss + a * osc.phases[g].sin(),
+                            sa + a,
+                        )
+                    });
             // |Σ A·e^{iφ}| / (Σ A) — idéntico al clásico cuando A_i = 1.0 ∀i
             r_total += sc.hypot(ss) / (sa + EPS);
         }
@@ -613,7 +617,7 @@ impl QuantumKuramotoNetwork {
         self.coupling.len()
     }
 
-        // ─── CRATE-004 prerequisite APIs (FIX-H) ────────────────────────────────
+    // ─── CRATE-004 prerequisite APIs (FIX-H) ────────────────────────────────
 
     /// Amplitude norm of the oscillator for `id`. O(1) via direct-index lookup.
     ///
@@ -624,7 +628,8 @@ impl QuantumKuramotoNetwork {
     /// AX-ID: LEY_FUNDACIONAL §3.7, CRATE-004 prerequisite
     pub fn amplitude_norm(&self, id: NodeId) -> f64 {
         let raw = id.get() as usize;
-        let idx = self.id_to_idx
+        let idx = self
+            .id_to_idx
             .get(raw)
             .copied()
             .filter(|&i| i != u32::MAX)
@@ -644,7 +649,8 @@ impl QuantumKuramotoNetwork {
     /// AX-ID: LEY_FUNDACIONAL §3.7, CRATE-004 prerequisite
     pub fn set_amplitude_all_grades(&mut self, id: NodeId, amplitude: f64) {
         let raw = id.get() as usize;
-        let idx = self.id_to_idx
+        let idx = self
+            .id_to_idx
             .get(raw)
             .copied()
             .filter(|&i| i != u32::MAX)
@@ -671,7 +677,8 @@ impl QuantumKuramotoNetwork {
     /// AX-ID: LEY_FUNDACIONAL §3.7 (WormholeCollapse), CRATE-004 prerequisite
     pub fn remove_oscillator(&mut self, id: NodeId) -> Result<(), GenesisError> {
         let raw = id.get() as usize;
-        let idx = self.id_to_idx
+        let idx = self
+            .id_to_idx
             .get(raw)
             .copied()
             .filter(|&i| i != u32::MAX)
@@ -1196,10 +1203,12 @@ mod tests {
 #[cfg(test)]
 mod prerequisite_api_tests {
     use super::*;
-    use genesis_types::NodeId;
     use crate::oscillator::{OscillatorState, QuantumOscillator};
+    use genesis_types::NodeId;
 
-    fn node(raw: u64) -> NodeId { NodeId::try_new(raw).unwrap() }
+    fn node(raw: u64) -> NodeId {
+        NodeId::try_new(raw).unwrap()
+    }
 
     fn make_osc(id: NodeId) -> QuantumOscillator {
         QuantumOscillator::new(id, [0.1_f64; 5])
