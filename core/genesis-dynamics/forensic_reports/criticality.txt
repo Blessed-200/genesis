@@ -1,0 +1,68 @@
+MODULE_ANALYSIS
+Module criticality
+Block 1
+BLOCK_NAME: RingBufferAvalancheRecorder
+ROLE: Maintain bounded chronological avalanche history without reallocations.
+ASSUMPTIONS: capacity>=1 via NonZeroUsize promotion.
+INVARIANTS:
+1. write_pos wraps modulo capacity.
+2. count()==min(total_recorded,capacity).
+3. ActiveSizes iterates in chronological order.
+PROBLEM: `tau_exponent` uses fixed 4096 stack buffer and truncates larger histories silently.
+INEVITABLE_SOLUTION: Replace fixed array with two-pass iterator MLE (first pass for min/count, second for sum_log) to use full data without heap or truncation.
+WHY_BRIEF: Preserves O(N) and exactness for any ring capacity.
+PSEUDOCODE:
+```rust
+n=count_nonzero(); s_min=min_nonzero();
+sum_ln = active.filter>0.map(|s| ln(s/(s_min-0.5))).sum();
+```
+SMT_ASSERTION: (assert (<= used_samples capacity))
+CYCLES_ESTIMATE: ~2N scalar ops, cache-friendly linear scan.
+HARDWARE_FALLBACK: same.
+PATCH: rewrite tau_exponent data collection loop.
+RISK: two-pass iteration slightly increases constant factor.
+CONFIDENCE: 0.94.
+
+Block 2
+BLOCK_NAME: ClausetTauEstimator
+ROLE: Estimate power-law exponent τ using MLE on discrete avalanche sizes.
+ASSUMPTIONS: s_min>0; n>=10.
+INVARIANTS:
+1. Returns None for insufficient samples.
+2. Denominator sum_ln > 0 for valid output.
+3. τ = 1 + n/sum_ln.
+PROBLEM: No robust outlier handling; rare huge avalanches can dominate sum_ln and flatten τ.
+INEVITABLE_SOLUTION: Add optional xmin fitting sweep (Clauset KS-minimization) before final τ estimation.
+WHY_BRIEF: Standard method for stable power-law inference under finite-size effects.
+PSEUDOCODE:
+```rust
+for candidate_xmin in unique_sizes { fit_tau; compute_ks; keep_best }
+```
+SMT_ASSERTION: QuickCheck: synthetic powerlaw(τ=2) => estimated τ in [1.5,2.5]
+CYCLES_ESTIMATE: O(N*M) where M unique xmin candidates.
+HARDWARE_FALLBACK: reduce M by quantile sampling.
+PATCH: extend tau_exponent_report with xmin optimization mode.
+RISK: increased compute may be too heavy for per-step invocation.
+CONFIDENCE: 0.79.
+
+Block 3
+BLOCK_NAME: KSAndCriticalityDecision
+ROLE: Quantify goodness-of-fit and classify critical regime.
+ASSUMPTIONS: Marsaglia truncation at 20 terms acceptable for target z-range.
+INVARIANTS:
+1. p_value in [0,1].
+2. is_critical iff tau in [1.5,2.5] and p>0.05.
+3. KS statistic is max absolute CDF deviation.
+PROBLEM: p-value approximation can be biased for small n.
+INEVITABLE_SOLUTION: Use exact/Monte Carlo KS calibration for n<80, keep Marsaglia for large n.
+WHY_BRIEF: Small-sample correctness dominates decision reliability.
+PSEUDOCODE:
+```rust
+if n<80 { p=mc_ks_pvalue(tau,n,seeded_rng) } else { p=ks_p_value(z) }
+```
+SMT_ASSERTION: (assert (and (>= p 0.0) (<= p 1.0)))
+CYCLES_ESTIMATE: current O(N)+O(20); proposed MC adds O(R*N).
+HARDWARE_FALLBACK: keep analytic approximation only.
+PATCH: conditional branch in tau_exponent_report.
+RISK: Monte Carlo randomness requires deterministic seeding for reproducibility.
+CONFIDENCE: 0.81.

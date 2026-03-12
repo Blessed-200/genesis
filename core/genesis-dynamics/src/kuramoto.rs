@@ -113,6 +113,12 @@ pub struct QuantumKuramotoNetwork {
     /// Offsets por nodo origen en `coupling_idx`: `(start, end)` para acceso O(1).
     coupling_offsets: Vec<(usize, usize)>,
 
+    /// Scratch amplitudes per node for adaptive coupling (reused each step).
+    amp_scratch: Vec<f64>,
+
+    /// Scratch saturations per node for adaptive coupling (reused each step).
+    sat_scratch: Vec<f64>,
+
     /// Flag: `coupling_idx` necesita rebuild.
     dirty: bool,
 
@@ -137,6 +143,8 @@ impl QuantumKuramotoNetwork {
             spare_gaussian: None,
             phase_scratch: Vec::new(),
             coupling_offsets: Vec::new(),
+            amp_scratch: Vec::new(),
+            sat_scratch: Vec::new(),
             dirty: false,
             sync_cache: 0.0,
             sync_dirty: true,
@@ -171,6 +179,8 @@ impl QuantumKuramotoNetwork {
         self.oscillators.push(osc);
         self.phase_scratch.push([0.0; 5]);
         self.coupling_offsets.push((0, 0));
+        self.amp_scratch.push(1.0);
+        self.sat_scratch.push(0.0);
         self.dirty = true;
 
         Ok(node_id)
@@ -260,6 +270,14 @@ impl QuantumKuramotoNetwork {
             (mean * mean).max(f64::MIN_POSITIVE)
         };
 
+        self.amp_scratch.resize(n, 0.0);
+        self.sat_scratch.resize(n, 0.0);
+        for (i, osc) in self.oscillators.iter().enumerate() {
+            let amp = osc.amplitude_norm();
+            self.amp_scratch[i] = amp;
+            self.sat_scratch[i] = 1.0 - amp;
+        }
+
         let sqrt_2k_t_dt = (2.0 * self.temperature * dt).sqrt();
 
         for i in 0..n {
@@ -269,16 +287,16 @@ impl QuantumKuramotoNetwork {
             let (start, end) = self.coupling_offsets[i];
             let edges = &self.coupling_idx[start..end];
             let phi_i = &self.phase_scratch[i];
-            let amp_i = self.oscillators[i].amplitude_norm();
-            let sat_i = self.oscillators[i].saturation_factor();
+            let amp_i = self.amp_scratch[i];
+            let sat_i = self.sat_scratch[i];
             let mut coupling_sums = [0.0f64; 5];
 
             for &(_, j_u32, gamma_0) in edges {
                 #[allow(clippy::cast_possible_truncation)]
                 let j = j_u32 as usize;
                 let phi_j = &self.phase_scratch[j];
-                let amp_j = self.oscillators[j].amplitude_norm();
-                let sat_j = self.oscillators[j].saturation_factor();
+                let amp_j = self.amp_scratch[j];
+                let sat_j = self.sat_scratch[j];
 
                 // Bivector frustration: dot product of grade-2 components.
                 // Positive → aligned orientation → attractive coupling.
@@ -635,8 +653,7 @@ impl QuantumKuramotoNetwork {
             .filter(|&i| i != u32::MAX)
             .map(|i| i as usize);
         idx.and_then(|i| self.oscillators.get(i))
-            .map(|osc| osc.amplitude_norm())
-            .unwrap_or(0.0)
+            .map_or(0.0, crate::oscillator::QuantumOscillator::amplitude_norm)
     }
 
     /// Set the same amplitude for all 5 grades of oscillator `id`.

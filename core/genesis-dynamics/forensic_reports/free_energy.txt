@@ -1,0 +1,92 @@
+MODULE_ANALYSIS
+Module free_energy
+Block 1
+BLOCK_NAME: BeliefEmbedding16D
+ROLE: Embed grade-1 priors into full 16-blade belief state with diagonal precision.
+ASSUMPTIONS: blade index mapping [1,2,4,8] remains canonical.
+INVARIANTS:
+1. add_node initializes only grade-1 blades from prior.
+2. precision_full starts at 1.0 per blade.
+3. tombstone uses NodeId::INVALID and zero precision.
+PROBLEM: Direct-index map can allocate huge sparse vectors for large NodeIds.
+INEVITABLE_SOLUTION: Add sparse-chunk index (paged vector) to bound worst-case allocation while keeping O(1) expected lookup.
+WHY_BRIEF: Preserves cache locality without catastrophic sparse-ID memory blowups.
+PSEUDOCODE:
+```rust
+page = raw >> PAGE_BITS; off = raw & MASK;
+idx = pages[page][off];
+```
+SMT_ASSERTION: (assert (=> registered(id) (not (= lookup(id) None))))
+CYCLES_ESTIMATE: +1-2 loads vs monolithic vector.
+HARDWARE_FALLBACK: keep current direct vec for dense IDs.
+PATCH: replace id_to_idx with paged structure.
+RISK: higher implementation complexity.
+CONFIDENCE: 0.78.
+
+Block 2
+BLOCK_NAME: WeightedVFEAndGradient
+ROLE: Compute weighted quadratic VFE and analytic gradient in G(1,3) 16D.
+ASSUMPTIONS: target coefficients finite; diagonal precision model valid.
+INVARIANTS:
+1. VFE>=0 for nonnegative precision/weights.
+2. grad[i]=2*w_i*prec_i*delta_i.
+3. grade1 projection matches convenience API.
+PROBLEM: Summation in compute_vfe_with_grad uses naive accumulation (potential cancellation for high dynamic range).
+INEVITABLE_SOLUTION: Use pairwise/Kahan accumulation for vfe in 16D path as already done in other functions.
+WHY_BRIEF: Improves numerical stability near light-cone cancellation regimes.
+PSEUDOCODE:
+```rust
+sum=0; c=0;
+for i in 0..16 { term=...; y=term-c; t=sum+y; c=(t-sum)-y; sum=t; }
+```
+SMT_ASSERTION: QuickCheck: finite inputs => finite(vfe) and finite(grad[i])
+CYCLES_ESTIMATE: + few flops, negligible vs memory/trig workloads.
+HARDWARE_FALLBACK: naive sum if strict speed mode needed.
+PATCH: replace `vfe += term` with compensated summation.
+RISK: none significant.
+CONFIDENCE: 0.96.
+
+Block 3
+BLOCK_NAME: FisherGatedOnlineUpdate
+ROLE: Perform bounded stochastic update on beliefs and Fisher trace.
+ASSUMPTIONS: dt finite; sanitize_trace bounds enforced.
+INVARIANTS:
+1. step <=0.9 via bounded_step form.
+2. precision_full clamped [0,1e6].
+3. trace clamped [TRACE_MIN,TRACE_MAX].
+PROBLEM: duplicate logic between `update` and `update_full` invites divergence.
+INEVITABLE_SOLUTION: Factor shared update kernel parameterized by blade iterator/target accessor.
+WHY_BRIEF: Single mathematical update equation, less maintenance drift.
+PSEUDOCODE:
+```rust
+fn update_kernel(idx, iter_blades, target_fn, dt){...}
+```
+SMT_ASSERTION: (assert (<= step 0.9))
+CYCLES_ESTIMATE: unchanged; slight code-size reduction may improve i-cache.
+HARDWARE_FALLBACK: current dual functions.
+PATCH: introduce private generic kernel and call from both APIs.
+RISK: generic abstractions may obscure readability if over-abstracted.
+CONFIDENCE: 0.9.
+
+Block 4
+BLOCK_NAME: InternalDriveArgmax
+ROLE: Select belief with maximal internal weighted free energy.
+ASSUMPTIONS: fisher and beliefs vectors index-aligned.
+INVARIANTS:
+1. Empty system => None.
+2. Non-finite beliefs skipped.
+3. Returned id corresponds to maximal computed score.
+PROBLEM: O(N*16) recomputation each call despite sparse node changes.
+INEVITABLE_SOLUTION: Maintain dirty-set and incremental max-heap of VFE scores updated on node mutation.
+WHY_BRIEF: Converts repeated global scans to O(logN) update and O(1) query.
+PSEUDOCODE:
+```rust
+on_update(id){score[id]=recompute(id); heap.push((score,id));}
+internal_drive(){while top stale pop; return top.id}
+```
+SMT_ASSERTION: (assert (forall ((i Int)) (<= score[i] score[argmax])))
+CYCLES_ESTIMATE: from O(N) per query to amortized O(logN) per mutation.
+HARDWARE_FALLBACK: fallback full scan for small N.
+PATCH: add score cache + heap + stale-version counter.
+RISK: stale-heap correctness bugs if versioning wrong.
+CONFIDENCE: 0.82.

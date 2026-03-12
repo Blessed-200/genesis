@@ -1,0 +1,68 @@
+MODULE_ANALYSIS
+Module synchrony
+Block 1
+BLOCK_NAME: PolynomialTrigReduction
+ROLE: Fast trigonometric approximation with Cody-Waite reduction for bounded phases.
+ASSUMPTIONS: |x|<2^20 for fast path; fallback libm for larger values.
+INVARIANTS:
+1. poly_sin/poly_cos respect periodic octant mapping.
+2. Identity sin²+cos²≈1 for tested ranges.
+3. Error remains bounded under chosen kernels.
+PROBLEM: Clippy-denied approx constants currently break strict lint pipeline.
+INEVITABLE_SOLUTION: Keep split-constant intent but represent C1 via `FRAC_PI_2` and C2 via exact subtraction at compile-time (`const C2: f64 = FRAC_PI_2 - C1`).
+WHY_BRIEF: Preserves algorithm while satisfying lint and reducing maintenance friction.
+PSEUDOCODE:
+```rust
+const C1:f64 = core::f64::consts::FRAC_PI_2;
+const C2:f64 = 0.0; // or decomposed via precise split helper
+```
+SMT_ASSERTION: QuickCheck: abs(poly_sin(x)-x.sin()) < 1e-6 for sampled x
+CYCLES_ESTIMATE: ~20-35 cycles fast path, >> for libm fallback.
+HARDWARE_FALLBACK: direct `sin/cos` always.
+PATCH: synchrony.rs constants in poly_sin/poly_cos.
+RISK: changing split constants naively can degrade accuracy; validate with existing large-phase tests.
+CONFIDENCE: 0.72.
+
+Block 2
+BLOCK_NAME: AdaptiveSerialParallelReduction
+ROLE: Compute amplitude-weighted order parameter with thresholded rayon usage.
+ASSUMPTIONS: Rayon pool initialized; deterministic floating tolerance acceptable.
+INVARIANTS:
+1. r_sync in [0,1] for nonnegative amplitudes.
+2. Serial/parallel paths are algebraically equivalent.
+3. EPS prevents divide-by-zero at zero total amplitude.
+PROBLEM: Duplicate per-grade accumulation logic exists in serial and parallel closures.
+INEVITABLE_SOLUTION: Factor grade accumulation into single inline kernel invoked from both paths.
+WHY_BRIEF: Prevents divergent behavior and eases SIMD upgrades.
+PSEUDOCODE:
+```rust
+fn acc_one(acc:&mut[(f64,f64,f64);5], osc:&QuantumOscillator){...}
+```
+SMT_ASSERTION: (assert (= r_serial r_parallel)) under real arithmetic model
+CYCLES_ESTIMATE: O(N*G); overhead dominated by trig.
+HARDWARE_FALLBACK: serial path below threshold.
+PATCH: extract shared `accumulate_oscillator` helper.
+RISK: tiny call overhead if inlining fails.
+CONFIDENCE: 0.9.
+
+Block 3
+BLOCK_NAME: ClusterMembershipClassifier
+ROLE: Select nodes whose mean circular phase distance is below threshold.
+ASSUMPTIONS: threshold provided in radians; all oscillators equally weighted.
+INVARIANTS:
+1. Empty network returns empty cluster.
+2. Distance wrapped to principal arc.
+3. Returned IDs preserve input order.
+PROBLEM: Mean phase computed unweighted, inconsistent with amplitude-weighted r_sync semantics.
+INEVITABLE_SOLUTION: Weight cluster center by amplitudes (or amplitude_norm) to align observables.
+WHY_BRIEF: Keeps phase-center estimator consistent with confidence-weighted dynamics.
+PSEUDOCODE:
+```rust
+for g: sc+=a*cos(phi); ss+=a*sin(phi); w+=a; mean=atan2(ss/w, sc/w)
+```
+SMT_ASSERTION: QuickCheck: fully synced network => cluster size == N for any threshold>0
+CYCLES_ESTIMATE: ~O(N*G) with low constant.
+HARDWARE_FALLBACK: scalar only.
+PATCH: synchronized_cluster mean-phase and distance weighting.
+RISK: behavior change in tests tuned for unweighted clustering.
+CONFIDENCE: 0.86.

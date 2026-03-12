@@ -1,0 +1,93 @@
+MODULE_ANALYSIS
+Module kuramoto
+Block 1
+BLOCK_NAME: DeterministicGaussianSource
+ROLE: Produce N(0,1) noise via LCG + Box-Muller for Euler-Maruyama.
+ASSUMPTIONS: 64-bit wraparound arithmetic; stable libm behavior.
+INVARIANTS:
+1. u1 is clamped to MIN_POSITIVE to avoid ln(0).
+2. Noise mean≈0 variance≈1 empirically.
+3. RNG state evolution is deterministic.
+PROBLEM: Duplicate Gaussian generators (`gaussian_noise` and `next_gaussian`) increase maintenance drift risk.
+INEVITABLE_SOLUTION: Remove free function and unify all noise production through cached-pair `next_gaussian` path.
+WHY_BRIEF: Single source guarantees statistical and maintenance consistency.
+PSEUDOCODE:
+```rust
+fn next_gaussian(&mut self)->f64 { if spare.take().is_some(){...} else {box_muller_pair()} }
+```
+SMT_ASSERTION: QuickCheck: sample_mean(|N|=1e5) within ±0.02 and variance within [0.95,1.05]
+CYCLES_ESTIMATE: ~60-120 cycles/sample amortized with spare caching.
+HARDWARE_FALLBACK: scalar Box-Muller.
+PATCH: delete `gaussian_noise`, route tests to `next_gaussian`.
+RISK: Test baselines tied to old symbol name.
+CONFIDENCE: 0.92.
+
+Block 2
+BLOCK_NAME: SparseCouplingIndex
+ROLE: Maintain edge set with O(logE) update and O(1) per-node edge span lookup.
+ASSUMPTIONS: NodeId dense enough for direct index vec; u32 index capacity sufficient.
+INVARIANTS:
+1. coupling sorted by (id_i,id_j).
+2. coupling_idx rebuilt when dirty.
+3. offsets partition coupling_idx by source node.
+PROBLEM: `set_coupling_batch` currently O(k logE) incremental updates; misses linear-time merge opportunity.
+INEVITABLE_SOLUTION: Sort incoming batch once and perform linear merge with existing sorted coupling vector.
+WHY_BRIEF: Reduces batch insert/update churn and memory moves.
+PSEUDOCODE:
+```rust
+sort(batch);
+merged = merge(coupling, batch, resolve_duplicate);
+coupling = merged; dirty=true;
+```
+SMT_ASSERTION: (assert (forall ((e Edge)) (sorted coupling)))
+CYCLES_ESTIMATE: current O(k logE + shifts), proposed O(E+k).
+HARDWARE_FALLBACK: same scalar algorithm.
+PATCH: rewrite `set_coupling_batch` as merge pipeline.
+RISK: duplicate-resolution semantics must match single-edge API.
+CONFIDENCE: 0.89.
+
+Block 3
+BLOCK_NAME: EulerMaruyamaIntegrator
+ROLE: Advance phases using coupling sums plus thermal noise.
+ASSUMPTIONS: dt finite and non-negative; phase_scratch sized to oscillator count.
+INVARIANTS:
+1. Snapshot semantics uses φ(t), not in-place φ(t+dt), for all pair interactions.
+2. Pruned oscillators do not update.
+3. sync cache invalidated after state mutation.
+PROBLEM: `sin` called per edge×grade; transcendental hotspot dominates runtime.
+INEVITABLE_SOLUTION: Add optional phase-difference cache per source node for repeated target interactions inside same step when graph has high reuse.
+WHY_BRIEF: Reuses expensive transcendental evaluations under dense connectivity.
+PSEUDOCODE:
+```rust
+for i: clear local cache
+for (j,gamma) in edges_i { d = phi_j-phi_i; s = cache.get_or_insert(d,d.sin()); ... }
+```
+SMT_ASSERTION: QuickCheck: dt=0 => phases unchanged.
+CYCLES_ESTIMATE: Dense graph baseline >300 cycles/edge; cached reuse reduces sin calls proportionally.
+HARDWARE_FALLBACK: direct sin when cache disabled.
+PATCH: introduce small fixed-size LRU cache in step kernels.
+RISK: cache overhead can regress sparse graphs; needs density threshold.
+CONFIDENCE: 0.77.
+
+Block 4
+BLOCK_NAME: AdaptiveCouplingModulator
+ROLE: Compute geometry-aware effective gamma using amplitude, bivector alignment, saturation.
+ASSUMPTIONS: vecs aligned with oscillator indexing; constants calibrated.
+INVARIANTS:
+1. adaptive_gamma >= KURAMOTO_COUPLING_FLOOR.
+2. Saturation multiplicatively attenuates coupling.
+3. Anti-aligned bivectors reduce orient_factor.
+PROBLEM: `amplitude_norm`/`saturation_factor` recomputed repeatedly per edge.
+INEVITABLE_SOLUTION: Precompute per-node (amp,sat) vectors once per step.
+WHY_BRIEF: Eliminates redundant sqrt and arithmetic in hot inner loop.
+PSEUDOCODE:
+```rust
+amp[i]=osc[i].amplitude_norm(); sat[i]=1.0-amp[i];
+for edge(i,j){ amp_factor=(amp[i]*amp[j])/avg_amp_sq; ... }
+```
+SMT_ASSERTION: (assert (>= adaptive_gamma KURAMOTO_COUPLING_FLOOR))
+CYCLES_ESTIMATE: saves ~20-40 cycles/edge for dense graphs.
+HARDWARE_FALLBACK: scalar precompute arrays.
+PATCH: precompute vectors before edge loop in adaptive_step.
+RISK: extra O(N) memory traffic negligible unless N very small.
+CONFIDENCE: 0.93.
