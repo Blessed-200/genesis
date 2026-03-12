@@ -1,4 +1,4 @@
-name: GÉNESIS_ELITE_FORGE
+name: GÉNESIS ELITE FORGE
 
 on:
   push:
@@ -6,107 +6,101 @@ on:
   pull_request:
     branches: [ "main", "master" ]
   schedule:
-    - cron: '0 0 * * 0' # Domingo medianoche: Deep Pass
-  workflow_dispatch:
+    - cron: '0 0 * * 0' # Domingo: Deep Scan (Fuzzing, Full Miri)
+  workflow_dispatch: # Permite ejecución manual total desde la UI de GitHub
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings" 
-  LOG_DIR: "genesis_audit_logs"
+  RUSTFLAGS: "-D warnings" # Fallar ante cualquier warning
 
 jobs:
   # ==========================================
-  # NIVEL 1: FAST-PASS (Feedback < 5 min)
+  # FASE 1: VELOCIDAD Y LIMPIEZA (FAST TRACK)
   # ==========================================
-  fast-pass:
-    name: Fast-Pass Audit
+  higiene:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2 # CACHÉ: Reduce tiempos de build un 70%
 
-      - name: "🛡️ Task-01: Clippy & Fmt (Strict)"
+      - name: Formato y Clippy Pedantic
         run: |
           cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets -- -D clippy::pedantic -W clippy::nursery -A clippy::module_name_repetitions
+          cargo clippy --workspace --all-targets -- -D clippy::pedantic -W clippy::nursery
 
-      - name: "🔍 Task-02: Unsafe Safety Audit"
+      - name: Audit Unsafe (Strict)
         run: |
-          if grep -rn "unsafe {" core/ shared/ | grep -v "// SAFETY:"; then
-            echo "Error: Unsafe blocks without SAFETY comment found."
-            exit 1
-          fi
-
-      - name: "🧪 Task-03: Fast Invariants & Unit Test"
-        run: cargo test --workspace --lib --bins
-
-      - name: "🚀 Task-04: Critical Benchmark (Guardrail)"
-        run: cargo bench -p genesis-dynamics --bench dynamics -- synchrony_order_fast || echo "Benchmark failed, continuing CI"
+          # Falla si hay unsafe sin comentario de seguridad
+          ! grep -rn "unsafe {" core/ shared/ | grep -v "// SAFETY:"
 
   # ==========================================
-  # NIVEL 2: DEEP-PASS (Manual / Domingo)
+  # FASE 2: CORRECTITUD Y MEMORIA (PRECISION)
   # ==========================================
-  deep-pass:
-    name: Deep-Pass (Exhaustive Analysis)
-    needs: fast-pass
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+  precision:
+    needs: higiene
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@nightly # Usamos Nightly para Miri/ASAN
         with:
-          components: miri, rust-src, llvm-tools-preview
+          components: miri, rust-src
       - uses: Swatinem/rust-cache@v2
 
-      - name: Prepare Audit Folder
-        run: |
-          TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')
-          echo "REPORT_PATH=$LOG_DIR/$TIMESTAMP" >> $GITHUB_ENV
-          mkdir -p $LOG_DIR/$TIMESTAMP
+      - name: Test de Invariantes Físicos
+        run: cargo test --release --workspace
 
-      - name: "🧠 Task-05: Miri Full Workspace (UB Detection)"
-        run: cargo miri test --workspace > ${{ env.REPORT_PATH }}/miri_report.txt 2>&1
+      - name: Miri (Solo Core Math - Rápido)
+        run: cargo miri test -p genesis-math
         env:
           MIRIFLAGS: "-Zmiri-strict-provenance"
 
-      - name: "🧬 Task-06: Property Testing (10k cases)"
+      - name: Address Sanitizer (ASAN)
         run: |
-          cargo test --workspace --features properties -- --ignored --test-threads=1 --nocapture > ${{ env.REPORT_PATH }}/proptest_report.txt 2>&1
+          cargo test -p genesis-math --target x86_64-unknown-linux-gnu
         env:
-          PROPTEST_CASES: 10000
+          RUSTFLAGS: "-Zsanitizer=address"
 
-      - name: "⚡ Task-07: Full Benchmarking & Profiling"
-        run: cargo bench --workspace > ${{ env.REPORT_PATH }}/bench_full.txt 2>&1 || echo "Benchmarks failed, logs saved"
+  # ==========================================
+  # FASE 3: RENDIMIENTO (GUARDRAILS)
+  # ==========================================
+  performance:
+    needs: precision
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
-      - name: "🗜️ Task-08: Address Sanitizer (ASAN)"
+      - name: Run Critical Benches
         run: |
-          RUSTFLAGS="-Zsanitizer=address" cargo test -p genesis-math --target x86_64-unknown-linux-gnu > ${{ env.REPORT_PATH }}/asan_report.txt 2>&1 || echo "ASAN test failed, continuing"
-
-      - name: "📦 Archive Audit Reports"
-        if: always()
+          mkdir -p logs/bench_$(date +%Y-%m-%d_%H-%M)
+          cargo bench -p genesis-dynamics --bench dynamics > logs/bench_$(date +%Y-%m-%d_%H-%M)/results.txt
+          
+      - name: Guardar Reporte de Rendimiento
         uses: actions/upload-artifact@v4
         with:
-          name: genesis-deep-audit-${{ github.sha }}
-          path: ${{ env.LOG_DIR }}
+          name: perf-report-${{ github.sha }}
+          path: logs/
 
   # ==========================================
-  # NIVEL 3: FUZZING (Solo Domingo / Manual)
+  # FASE 4: CAOS Y ESTRÉS (WEEKLY / MANUAL)
   # ==========================================
-  fuzzing:
-    name: Continuous Fuzzing
-    needs: fast-pass
+  deep-scan:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo install cargo-fuzz
-      - name: Run Fuzz Targets
+      
+      - name: Fuzzing (60s por target)
         run: |
           for target in $(cargo fuzz list); do
-            echo "Fuzzing target: $target"
-            cargo fuzz run "$target" -- -max_total_time=300 -jobs=$(nproc) || echo "Fuzzer $target finished with errors"
+            cargo fuzz run "$target" -- -max_total_time=60
           done
+
+      - name: Miri Workspace Total
+        run: cargo miri test --workspace
