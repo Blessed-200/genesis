@@ -1,0 +1,75 @@
+MODULE_ANALYSIS
+Module oscillator
+Block 1
+BLOCK_NAME: OscillatorStateVectorConstruction
+ROLE: Construct 5-grade oscillator state with deterministic defaults.
+ASSUMPTIONS: Fixed grade count G=5; NodeId already validated upstream.
+INVARIANTS:
+1. new()/with_phases always set amplitudes=[1.0;5].
+2. state starts Active.
+3. phases/frequencies are contiguous stack arrays.
+PROBLEM: No type-level guard enforces grade count coupling across methods.
+INEVITABLE_SOLUTION: Introduce `const N_GRADES: usize = 5` and replace literal 5 across all loops/arrays in this module.
+WHY_BRIEF: Eliminates silent divergence when extending grade dimension.
+PSEUDOCODE:
+```rust
+const N_GRADES: usize = 5;
+struct QuantumOscillator { phases:[f64;N_GRADES], ... }
+for g in 0..N_GRADES { ... }
+```
+SMT_ASSERTION: QuickCheck: for_all osc => osc.phases.len()==N_GRADES && osc.amplitudes.len()==N_GRADES
+CYCLES_ESTIMATE: 0 runtime delta (const propagation).
+HARDWARE_FALLBACK: N/A.
+PATCH: replace all `[f64; 5]`/`0..5` literals with `N_GRADES` aliases.
+RISK: Broad textual change can touch tests heavily.
+CONFIDENCE: 0.95 (mechanical refactor).
+
+Block 2
+BLOCK_NAME: ComplexProjection
+ROLE: Map amplitude-phase pair to complex plane per grade.
+ASSUMPTIONS: g < 5 in release builds; IEEE-754 sin/cos.
+INVARIANTS:
+1. |complex_state(g)| == amplitudes[g] within floating error.
+2. amplitude=0 implies (0,0).
+3. Output is deterministic for fixed phase/amplitude.
+PROBLEM: Debug-only bound check; release out-of-range indexing may panic at runtime.
+INEVITABLE_SOLUTION: Change signature to `Option<(f64,f64)>` or enforce `g: GradeIndex` newtype validated on construction.
+WHY_BRIEF: Makes contract explicit and removes latent panic edge.
+PSEUDOCODE:
+```rust
+pub fn complex_state(&self, g: GradeIndex)->(f64,f64){
+  let i = g.get();
+  let a=self.amplitudes[i]; let p=self.phases[i];
+  (a*p.cos(), a*p.sin())
+}
+```
+SMT_ASSERTION: (assert (>= (+ (* re re) (* im im)) 0.0))
+CYCLES_ESTIMATE: ~40-70 cycles (sin+cos dominated).
+HARDWARE_FALLBACK: scalar libm sin/cos.
+PATCH: add GradeIndex type and migrate call sites.
+RISK: API-breaking change for external callers.
+CONFIDENCE: 0.84 (design tradeoff between ergonomics and safety).
+
+Block 3
+BLOCK_NAME: FisherAmplitudeGate
+ROLE: Convert scalar Fisher trace into bounded all-grade amplitude.
+ASSUMPTIONS: Fisher trace is non-negative meaningful signal.
+INVARIANTS:
+1. amplitudes[g] in [0,1].
+2. Monotone with trace/FISHER_TRACE_INITIAL.
+3. saturation_factor = 1 - amplitude_norm.
+PROBLEM: Isotropic update discards per-grade uncertainty information.
+INEVITABLE_SOLUTION: Extend API to accept optional per-grade trace vector; keep scalar overload for backward compatibility.
+WHY_BRIEF: Preserves current behavior while enabling anisotropic inference.
+PSEUDOCODE:
+```rust
+pub fn update_amplitude_from_fisher_vec(&mut self, t:[f64;N_GRADES]){
+  for g in 0..N_GRADES { self.amplitudes[g]=(t[g]/INIT).clamp(0.0,1.0); }
+}
+```
+SMT_ASSERTION: QuickCheck: for_all trace>=0 => a(trace2)>=a(trace1) when trace2>=trace1
+CYCLES_ESTIMATE: ~10 cycles scalar per grade.
+HARDWARE_FALLBACK: N/A.
+PATCH: add new method + tests; retain existing scalar method.
+RISK: Caller may misinterpret vector semantics without docs.
+CONFIDENCE: 0.88 (mathematically direct extension).

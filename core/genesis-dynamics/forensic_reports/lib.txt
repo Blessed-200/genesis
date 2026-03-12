@@ -1,0 +1,31 @@
+MODULE_ANALYSIS
+Module lib
+Block 1
+BLOCK_NAME: CrateBoundaryAndLintContract
+ROLE: Define module graph, public exports, and compile-time quality gates.
+ASSUMPTIONS: Rust 2021; clippy::pedantic warning-level policy; no cyclic dependencies.
+INVARIANTS:
+1. Public API surface is exactly re-exports from six submodules.
+2. missing_docs and undocumented_unsafe_blocks remain denied.
+3. Dynamics semantics map to AXIOMA-003/004/005/006 and H_dinámica/H_información.
+PROBLEM: Re-export layer is flat and manually synchronized; drift risk appears when submodule APIs evolve.
+INEVITABLE_SOLUTION: Add a compile-fail contract test that asserts all intended public symbols are exported from crate root. This keeps boundary stability mechanically verified without runtime cost.
+WHY_BRIEF: Public-surface regressions are best prevented at compile time, not discovered downstream.
+PSEUDOCODE:
+```rust
+#[test]
+fn public_api_contract_compiles() {
+    use genesis_dynamics::{
+        AttractorLandscape, CriticalityMonitor, CriticalityReport,
+        VFEMinimizer, QuantumKuramotoNetwork, QuantumOscillator,
+        synchrony_order, synchrony_order_fast, synchronized_cluster,
+    };
+    let _ = core::mem::size_of::<AttractorLandscape>();
+}
+```
+SMT_ASSERTION: (assert (= exported_symbol_count expected_symbol_count))
+CYCLES_ESTIMATE: ~0 cycles runtime (compile-time only).
+HARDWARE_FALLBACK: N/A.
+PATCH: tests/api_contract.rs adding compile-surface assertions.
+RISK: Contract test can require updates on intentional API expansion.
+CONFIDENCE: 0.91 (module is declarative and low algorithmic ambiguity).

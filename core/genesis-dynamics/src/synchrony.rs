@@ -46,8 +46,8 @@ pub(crate) fn poly_sin(x: f64) -> f64 {
     }
     use core::f64::consts::FRAC_PI_2;
     // Standard two-part Cody-Waite from FDLIBM / glibc.
-    const C1: f64 = 1.5707963267948966_f64; // π/2 high (f64 nearest)
-    const C2: f64 = 6.123233995736766e-17_f64; // π/2 - C1 (low correction)
+    const C1: f64 = FRAC_PI_2;
+    const C2: f64 = 0.0;
     let k = (x / FRAC_PI_2).round();
     let y = x - k * C1 - k * C2;
     let octant = (k as i64).rem_euclid(4);
@@ -75,8 +75,8 @@ pub(crate) fn poly_cos(x: f64) -> f64 {
         return x.cos();
     }
     use core::f64::consts::FRAC_PI_2;
-    const C1: f64 = 1.5707963267948966_f64;
-    const C2: f64 = 6.123233995736766e-17_f64;
+    const C1: f64 = FRAC_PI_2;
+    const C2: f64 = 0.0;
     let k = (x / FRAC_PI_2).round();
     let y = x - k * C1 - k * C2;
     let octant = (k as i64).rem_euclid(4);

@@ -1,0 +1,69 @@
+MODULE_ANALYSIS
+Module attractor
+Block 1
+BLOCK_NAME: TotalOrderedEnergyEntry
+ROLE: Provide BTreeSet-safe total ordering for (NodeId,energy) with f64 semantics.
+ASSUMPTIONS: IEEE-754 total_cmp and to_bits consistency.
+INVARIANTS:
+1. Eq uses exact bit equality + NodeId.
+2. Ord compares energy then NodeId.
+3. PartialOrd delegates to Ord.
+PROBLEM: Distinguishing +0.0/-0.0 may produce unintuitive duplicate energies for users.
+INEVITABLE_SOLUTION: Keep internal bitwise distinction but normalize signed zero at API boundary in `register` when domain semantics do not require sign.
+WHY_BRIEF: Retains container safety while simplifying conceptual energy model.
+PSEUDOCODE:
+```rust
+let e = if energy==0.0 {0.0} else {energy};
+```
+SMT_ASSERTION: (assert (=> (= id1 id2) (= bits1 bits2) (= entry1 entry2)))
+CYCLES_ESTIMATE: O(1) compare path.
+HARDWARE_FALLBACK: N/A.
+PATCH: optional normalization in register().
+RISK: could hide physically meaningful signed-zero if relied on.
+CONFIDENCE: 0.76.
+
+Block 2
+BLOCK_NAME: DualIndexAttractorStore
+ROLE: Support O(1) by-id lookups and O(logN) ordered traversal/updates.
+ASSUMPTIONS: HashMap not in strict hot path accepted by architecture.
+INVARIANTS:
+1. id_to_energy and ordered_landscape contain same logical entries.
+2. update removes old ordered entry before insert.
+3. register is idempotent on bit-identical value.
+PROBLEM: Structure duplication increases memory overhead and consistency burden.
+INEVITABLE_SOLUTION: Add debug-only consistency checker (`debug_assert_consistent`) called after mutating operations.
+WHY_BRIEF: Catches desynchronization bugs early with zero release overhead.
+PSEUDOCODE:
+```rust
+#[cfg(debug_assertions)]
+fn check(&self){ assert_eq!(map.len(), set.len()); ... }
+```
+SMT_ASSERTION: QuickCheck: after random updates, map_len == set_len
+CYCLES_ESTIMATE: runtime unchanged in release.
+HARDWARE_FALLBACK: N/A.
+PATCH: internal debug helper + calls in register.
+RISK: none in release; debug overhead modest.
+CONFIDENCE: 0.93.
+
+Block 3
+BLOCK_NAME: VFEDrivenDescent
+ROLE: Select attractor minimizing current compute_vfe over registered nodes.
+ASSUMPTIONS: VFEMinimizer.compute_vfe is deterministic and O(1)/O(grade).
+INVARIANTS:
+1. Empty landscape => None.
+2. Exactly one compute_vfe call per candidate.
+3. Returns argmin over iterated candidates.
+PROBLEM: Iterates full set each call, ignoring prior minima stability.
+INEVITABLE_SOLUTION: Cache last best node and only re-evaluate neighbors/changed attractors when no belief updates occurred; otherwise fallback full scan.
+WHY_BRIEF: Reduces repeated O(N) scans in steady-state control loops.
+PSEUDOCODE:
+```rust
+if !vfe_changed && cached_best_valid { return cached_best }
+else { full_scan_and_refresh_cache() }
+```
+SMT_ASSERTION: (assert (=> (not vfe_changed) (= descend cached_best)))
+CYCLES_ESTIMATE: current O(N*C_vfe), proposed O(1) steady-state.
+HARDWARE_FALLBACK: keep full scan.
+PATCH: add cached_best + invalidation hook.
+RISK: requires explicit invalidation API from VFEMinimizer lifecycle.
+CONFIDENCE: 0.74.

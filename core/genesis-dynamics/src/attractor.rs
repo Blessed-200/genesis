@@ -84,6 +84,27 @@ pub struct AttractorLandscape {
 }
 
 impl AttractorLandscape {
+    #[inline]
+    #[cfg(debug_assertions)]
+    fn debug_assert_consistent(&self) {
+        debug_assert_eq!(
+            self.id_to_energy.len(),
+            self.ordered_landscape.len(),
+            "attractor indices out of sync: map={} set={}",
+            self.id_to_energy.len(),
+            self.ordered_landscape.len()
+        );
+        for entry in &self.ordered_landscape {
+            let mapped = self.id_to_energy.get(&entry.id).copied();
+            debug_assert_eq!(
+                mapped.map(f64::to_bits),
+                Some(entry.energy.to_bits()),
+                "attractor energy mismatch for node {}",
+                entry.id.get()
+            );
+        }
+    }
+
     /// Creates an empty attractor landscape with no registered attractors.
     pub fn new() -> Self {
         Self {
@@ -108,6 +129,8 @@ impl AttractorLandscape {
         }
         self.id_to_energy.insert(id, energy);
         self.ordered_landscape.insert(AttractorEntry { id, energy });
+        #[cfg(debug_assertions)]
+        self.debug_assert_consistent();
     }
 
     /// Descend to the minimum-VFE attractor (global minimum, v1.0).

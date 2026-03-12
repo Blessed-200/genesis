@@ -377,6 +377,7 @@ impl VFEMinimizer {
 
         let belief = &self.beliefs[idx];
         let mut vfe = 0.0f64;
+        let mut comp = 0.0f64;
         let mut grad = [0.0f64; 16];
 
         // FIX-3: Apply VFE_BLADE_WEIGHTS for gradient/loss consistency with internal_drive.
@@ -387,7 +388,11 @@ impl VFEMinimizer {
             let delta = belief.mean_full[i] - target[i];
             let prec = belief.precision_full[i];
             let w = VFE_BLADE_WEIGHTS[i];
-            vfe += w * prec * delta * delta;
+            let term = w * prec * delta * delta;
+            let y = term - comp;
+            let t = vfe + y;
+            comp = (t - vfe) - y;
+            vfe = t;
             grad[i] = 2.0 * w * prec * delta;
         }
         (vfe, grad)
@@ -465,7 +470,7 @@ impl VFEMinimizer {
         let fisher = &mut self.fisher[idx];
         fisher.trace = sanitize_trace(fisher.trace);
 
-        let step = (dt / (1.0 + dt * fisher.trace)).min(0.9);
+        let step = Self::bounded_step(dt, fisher.trace);
         if !step.is_finite() {
             return;
         }
@@ -509,7 +514,7 @@ impl VFEMinimizer {
         let fisher = &mut self.fisher[idx];
         fisher.trace = sanitize_trace(fisher.trace);
 
-        let step = (dt / (1.0 + dt * fisher.trace)).min(0.9);
+        let step = Self::bounded_step(dt, fisher.trace);
         if !step.is_finite() {
             return;
         }
