@@ -28,22 +28,22 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
 
-      - name: 🛡️ Task-01: Clippy & Fmt (Strict)
+      - name: "🛡️ Task-01: Clippy & Fmt (Strict)"
         run: |
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D clippy::pedantic -W clippy::nursery -A clippy::module_name_repetitions
 
-      - name: 🔍 Task-02: Unsafe Safety Audit
+      - name: "🔍 Task-02: Unsafe Safety Audit"
         run: |
           if grep -rn "unsafe {" core/ shared/ | grep -v "// SAFETY:"; then
             echo "Error: Unsafe blocks without SAFETY comment found."
             exit 1
           fi
 
-      - name: 🧪 Task-03: Fast Invariants & Unit Tests
+      - name: "🧪 Task-03: Fast Invariants & Unit Test"
         run: cargo test --workspace --lib --bins
 
-      - name: 🚀 Task-04: Critical Benchmark (Guardrail)
+      - name: "🚀 Task-04: Critical Benchmark (Guardrail)"
         run: cargo bench -p genesis-dynamics --bench dynamics -- synchrony_order_fast || echo "Benchmark failed, continuing CI"
 
   # ==========================================
@@ -67,25 +67,25 @@ jobs:
           echo "REPORT_PATH=$LOG_DIR/$TIMESTAMP" >> $GITHUB_ENV
           mkdir -p $LOG_DIR/$TIMESTAMP
 
-      - name: 🧠 Task-05: Miri Full Workspace (UB Detection)
+      - name: "🧠 Task-05: Miri Full Workspace (UB Detection)"
         run: cargo miri test --workspace > ${{ env.REPORT_PATH }}/miri_report.txt 2>&1
         env:
           MIRIFLAGS: "-Zmiri-strict-provenance"
 
-      - name: 🧬 Task-06: Property Testing (10k cases)
+      - name: "🧬 Task-06: Property Testing (10k cases)"
         run: |
           cargo test --workspace --features properties -- --ignored --test-threads=1 --nocapture > ${{ env.REPORT_PATH }}/proptest_report.txt 2>&1
         env:
           PROPTEST_CASES: 10000
 
-      - name: ⚡ Task-07: Full Benchmarking & Profiling
+      - name: "⚡ Task-07: Full Benchmarking & Profiling"
         run: cargo bench --workspace > ${{ env.REPORT_PATH }}/bench_full.txt 2>&1 || echo "Benchmarks failed, logs saved"
 
-      - name: 🗜️ Task-08: Address Sanitizer (ASAN)
+      - name: "🗜️ Task-08: Address Sanitizer (ASAN)"
         run: |
           RUSTFLAGS="-Zsanitizer=address" cargo test -p genesis-math --target x86_64-unknown-linux-gnu > ${{ env.REPORT_PATH }}/asan_report.txt 2>&1 || echo "ASAN test failed, continuing"
 
-      - name: 📦 Archive Audit Reports
+      - name: "📦 Archive Audit Reports"
         if: always()
         uses: actions/upload-artifact@v4
         with:
