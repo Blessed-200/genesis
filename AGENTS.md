@@ -219,5 +219,17 @@ core/genesis-dynamics/src/
 5. Ask before proposing changes to `METRIC_WEIGHTS`, `BLAKE3`, or any `AX-ID` annotation
 
 ---
+## Current kernel state (updated after AVX2 optimization)
+
+The AVX2/FMA geometric product kernel was recently optimized:
+- `permute_src<J,KBASE>` replaces old `load_xor_lanes_const` — DO NOT revert
+- Dual-rail accumulators (ea*/oa* even/odd interleaving) — DO NOT restructure
+- Benchmark: 259ns (was 270ns), spills: 19, frame: 296B
+- 1M correctness test: PASSING
+
+If working on genesis-math/src/product.rs:
+- Phase 1 of any optimization prompt is ALREADY DONE
+- Start at Phase 2 or later
+- The scalar oracle `geometric_product_scalar_dense` is ground truth — never change its logic
 
 *GÉNESIS Cognitive Core | AGENTS.md v4.0.0 | 384 tests, 0 failures*
