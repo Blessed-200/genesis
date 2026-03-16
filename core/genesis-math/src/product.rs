@@ -356,32 +356,104 @@ const fn lane_sign_mask_bits<const J: usize, const KBASE: usize>() -> [u64; 4] {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn load_xor_lanes_const<const J: usize, const KBASE: usize>(
-    a_coeffs: &[f64; TOTAL_BLADES],
+unsafe fn broadcast_lane(
+    reg: std::arch::x86_64::__m256d,
+    lane: usize,
 ) -> std::arch::x86_64::__m256d {
-    use std::arch::x86_64::_mm256_set_pd;
+    use std::arch::x86_64::_mm256_permute4x64_pd;
 
-    _mm256_set_pd(
-        a_coeffs[blade_mul_index_const(KBASE + 3, J)],
-        a_coeffs[blade_mul_index_const(KBASE + 2, J)],
-        a_coeffs[blade_mul_index_const(KBASE + 1, J)],
-        a_coeffs[blade_mul_index_const(KBASE, J)],
-    )
+    match lane {
+        0 => _mm256_permute4x64_pd(reg, 0x00),
+        1 => _mm256_permute4x64_pd(reg, 0x55),
+        2 => _mm256_permute4x64_pd(reg, 0xAA),
+        _ => _mm256_permute4x64_pd(reg, 0xFF),
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn place_lane(src: std::arch::x86_64::__m256d, lane: usize) -> std::arch::x86_64::__m256d {
+    use std::arch::x86_64::{_mm256_blend_pd, _mm256_setzero_pd};
+
+    match lane {
+        0 => _mm256_blend_pd(_mm256_setzero_pd(), src, 0x1),
+        1 => _mm256_blend_pd(_mm256_setzero_pd(), src, 0x2),
+        2 => _mm256_blend_pd(_mm256_setzero_pd(), src, 0x4),
+        _ => _mm256_blend_pd(_mm256_setzero_pd(), src, 0x8),
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn select_lane_by_index(
+    a0: std::arch::x86_64::__m256d,
+    a1: std::arch::x86_64::__m256d,
+    a2: std::arch::x86_64::__m256d,
+    a3: std::arch::x86_64::__m256d,
+    idx: usize,
+) -> std::arch::x86_64::__m256d {
+    match idx {
+        0..=3 => unsafe { broadcast_lane(a0, idx) },
+        4..=7 => unsafe { broadcast_lane(a1, idx - 4) },
+        8..=11 => unsafe { broadcast_lane(a2, idx - 8) },
+        _ => unsafe { broadcast_lane(a3, idx - 12) },
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn load_xor_lanes_const<const J: usize, const KBASE: usize>(
+    a0: std::arch::x86_64::__m256d,
+    a1: std::arch::x86_64::__m256d,
+    a2: std::arch::x86_64::__m256d,
+    a3: std::arch::x86_64::__m256d,
+) -> std::arch::x86_64::__m256d {
+    use std::arch::x86_64::{_mm256_add_pd, _mm256_setzero_pd};
+
+    let idx0 = blade_mul_index_const(KBASE, J);
+    let idx1 = blade_mul_index_const(KBASE + 1, J);
+    let idx2 = blade_mul_index_const(KBASE + 2, J);
+    let idx3 = blade_mul_index_const(KBASE + 3, J);
+
+    let mut lanes = _mm256_setzero_pd();
+    lanes = _mm256_add_pd(lanes, unsafe {
+        place_lane(select_lane_by_index(a0, a1, a2, a3, idx0), 0)
+    });
+    lanes = _mm256_add_pd(lanes, unsafe {
+        place_lane(select_lane_by_index(a0, a1, a2, a3, idx1), 1)
+    });
+    lanes = _mm256_add_pd(lanes, unsafe {
+        place_lane(select_lane_by_index(a0, a1, a2, a3, idx2), 2)
+    });
+    _mm256_add_pd(lanes, unsafe {
+        place_lane(select_lane_by_index(a0, a1, a2, a3, idx3), 3)
+    })
+}
+
+#[cfg(target_arch = "x86_64")]
+struct SignMaskData<const J: usize, const KBASE: usize>;
+
+#[cfg(target_arch = "x86_64")]
+impl<const J: usize, const KBASE: usize> SignMaskData<J, KBASE> {
+    const DATA: [u64; 4] = lane_sign_mask_bits::<J, KBASE>();
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn fmadd_with_sign_pattern<const J: usize, const KBASE: usize>(
-    a_coeffs: &[f64; TOTAL_BLADES],
+    a0: std::arch::x86_64::__m256d,
+    a1: std::arch::x86_64::__m256d,
+    a2: std::arch::x86_64::__m256d,
+    a3: std::arch::x86_64::__m256d,
     b_ptr: *const f64,
     acc: std::arch::x86_64::__m256d,
 ) -> std::arch::x86_64::__m256d {
     use std::arch::x86_64::{
-        __m256i, _mm256_broadcast_sd, _mm256_castsi256_pd, _mm256_fmadd_pd, _mm256_fnmadd_pd,
-        _mm256_set_epi64x, _mm256_xor_pd,
+        _mm256_broadcast_sd, _mm256_castsi256_pd, _mm256_fmadd_pd, _mm256_fnmadd_pd,
+        _mm256_loadu_si256, _mm256_xor_pd,
     };
 
-    let lanes = load_xor_lanes_const::<J, KBASE>(a_coeffs);
+    let lanes = load_xor_lanes_const::<J, KBASE>(a0, a1, a2, a3);
     // SAFETY: `J` is a const generic in 0..16 at call sites; `b_ptr` points to `b_coeffs` with 16 lanes.
     let b_vec = _mm256_broadcast_sd(unsafe { &*b_ptr.add(J) });
     let signs = lane_sign_pattern::<J, KBASE>();
@@ -393,13 +465,7 @@ unsafe fn fmadd_with_sign_pattern<const J: usize, const KBASE: usize>(
         return _mm256_fnmadd_pd(lanes, b_vec, acc);
     }
 
-    let mask = lane_sign_mask_bits::<J, KBASE>();
-    let sign_mask: __m256i = _mm256_set_epi64x(
-        i64::from_ne_bytes(mask[3].to_ne_bytes()),
-        i64::from_ne_bytes(mask[2].to_ne_bytes()),
-        i64::from_ne_bytes(mask[1].to_ne_bytes()),
-        i64::from_ne_bytes(mask[0].to_ne_bytes()),
-    );
+    let sign_mask = _mm256_loadu_si256(SignMaskData::<J, KBASE>::DATA.as_ptr().cast());
     let signed_lanes = _mm256_xor_pd(lanes, _mm256_castsi256_pd(sign_mask));
     _mm256_fmadd_pd(signed_lanes, b_vec, acc)
 }
@@ -411,7 +477,14 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    use std::arch::x86_64::{_mm256_add_pd, _mm256_set1_pd, _mm256_storeu_pd};
+    use std::arch::x86_64::{_mm256_add_pd, _mm256_loadu_pd, _mm256_set1_pd, _mm256_storeu_pd};
+
+    // Public API currently provides only f64 alignment, therefore unaligned loads are required.
+    // AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+    let a0 = unsafe { _mm256_loadu_pd(a_coeffs[0..4].as_ptr()) };
+    let a1 = unsafe { _mm256_loadu_pd(a_coeffs[4..8].as_ptr()) };
+    let a2 = unsafe { _mm256_loadu_pd(a_coeffs[8..12].as_ptr()) };
+    let a3 = unsafe { _mm256_loadu_pd(a_coeffs[12..16].as_ptr()) };
 
     let mut acc_even0 = _mm256_set1_pd(0.0);
     let mut acc_even1 = _mm256_set1_pd(0.0);
@@ -427,10 +500,10 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
 
     macro_rules! apply_j {
         ($j:expr, $x0:ident, $x1:ident, $x2:ident, $x3:ident) => {
-            $x0 = fmadd_with_sign_pattern::<$j, 0>(a_coeffs, b_ptr, $x0);
-            $x1 = fmadd_with_sign_pattern::<$j, 4>(a_coeffs, b_ptr, $x1);
-            $x2 = fmadd_with_sign_pattern::<$j, 8>(a_coeffs, b_ptr, $x2);
-            $x3 = fmadd_with_sign_pattern::<$j, 12>(a_coeffs, b_ptr, $x3);
+            $x0 = fmadd_with_sign_pattern::<$j, 0>(a0, a1, a2, a3, b_ptr, $x0);
+            $x1 = fmadd_with_sign_pattern::<$j, 4>(a0, a1, a2, a3, b_ptr, $x1);
+            $x2 = fmadd_with_sign_pattern::<$j, 8>(a0, a1, a2, a3, b_ptr, $x2);
+            $x3 = fmadd_with_sign_pattern::<$j, 12>(a0, a1, a2, a3, b_ptr, $x3);
         };
     }
 
