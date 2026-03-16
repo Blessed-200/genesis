@@ -356,33 +356,102 @@ const fn lane_sign_mask_bits<const J: usize, const KBASE: usize>() -> [u64; 4] {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn load_xor_lanes_const<const J: usize, const KBASE: usize>(
-    a_coeffs: &[f64; TOTAL_BLADES],
+unsafe fn broadcast_lane(
+    reg: std::arch::x86_64::__m256d,
+    lane: usize,
 ) -> std::arch::x86_64::__m256d {
-    use std::arch::x86_64::_mm256_set_pd;
+    use std::arch::x86_64::_mm256_permute4x64_pd;
 
-    _mm256_set_pd(
-        a_coeffs[blade_mul_index_const(KBASE + 3, J)],
-        a_coeffs[blade_mul_index_const(KBASE + 2, J)],
-        a_coeffs[blade_mul_index_const(KBASE + 1, J)],
-        a_coeffs[blade_mul_index_const(KBASE, J)],
-    )
+    match lane {
+        // SAFETY: `_mm256_permute4x64_pd` requires the `avx2` target feature, which is guaranteed by the caller's `#[target_feature(enable = "avx2")]` attribute. The control mask is a valid compile-time constant.
+        0 => _mm256_permute4x64_pd(reg, 0x00),
+        // SAFETY: `_mm256_permute4x64_pd` requires the `avx2` target feature, which is guaranteed by the caller's `#[target_feature(enable = "avx2")]` attribute. The control mask is a valid compile-time constant.
+        1 => _mm256_permute4x64_pd(reg, 0x55),
+        // SAFETY: `_mm256_permute4x64_pd` requires the `avx2` target feature, which is guaranteed by the caller's `#[target_feature(enable = "avx2")]` attribute. The control mask is a valid compile-time constant.
+        2 => _mm256_permute4x64_pd(reg, 0xAA),
+        // SAFETY: `_mm256_permute4x64_pd` requires the `avx2` target feature, which is guaranteed by the caller's `#[target_feature(enable = "avx2")]` attribute. The control mask is a valid compile-time constant.
+        _ => _mm256_permute4x64_pd(reg, 0xFF),
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn select_lane_by_index(
+    a0: std::arch::x86_64::__m256d,
+    a1: std::arch::x86_64::__m256d,
+    a2: std::arch::x86_64::__m256d,
+    a3: std::arch::x86_64::__m256d,
+    idx: usize,
+) -> std::arch::x86_64::__m256d {
+    match idx {
+        // SAFETY: `broadcast_lane` requires the `avx2` target_feature.
+        // The caller `select_lane_by_index` is annotated with `#[target_feature(enable = "avx2")]`,
+        // guaranteeing the CPU feature is active.
+        0..=3 => unsafe { broadcast_lane(a0, idx) },
+        // SAFETY: CPU feature `avx2` is guaranteed by the caller's target_feature attribute.
+        4..=7 => unsafe { broadcast_lane(a1, idx - 4) },
+        // SAFETY: CPU feature `avx2` is guaranteed by the caller's target_feature attribute.
+        8..=11 => unsafe { broadcast_lane(a2, idx - 8) },
+        // SAFETY: CPU feature `avx2` is guaranteed by the caller's target_feature attribute.
+        _ => unsafe { broadcast_lane(a3, idx - 12) },
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn load_xor_lanes_const<const J: usize, const KBASE: usize>(
+    a0: std::arch::x86_64::__m256d,
+    a1: std::arch::x86_64::__m256d,
+    a2: std::arch::x86_64::__m256d,
+    a3: std::arch::x86_64::__m256d,
+) -> std::arch::x86_64::__m256d {
+    use std::arch::x86_64::_mm256_blend_pd;
+
+    let idx0 = blade_mul_index_const(KBASE, J);
+    let idx1 = blade_mul_index_const(KBASE + 1, J);
+    let idx2 = blade_mul_index_const(KBASE + 2, J);
+    let idx3 = blade_mul_index_const(KBASE + 3, J);
+
+    let b0 = select_lane_by_index(a0, a1, a2, a3, idx0);
+    let b1 = select_lane_by_index(a0, a1, a2, a3, idx1);
+    let b2 = select_lane_by_index(a0, a1, a2, a3, idx2);
+    let b3 = select_lane_by_index(a0, a1, a2, a3, idx3);
+
+    let mix01 = _mm256_blend_pd(b0, b1, 0b0010);
+    let mix23 = _mm256_blend_pd(b2, b3, 0b1000);
+
+    _mm256_blend_pd(mix01, mix23, 0b1100)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C, align(32))]
+struct AlignedMask(pub [u64; 4]);
+
+#[cfg(target_arch = "x86_64")]
+struct SignMaskData<const J: usize, const KBASE: usize>;
+
+#[cfg(target_arch = "x86_64")]
+impl<const J: usize, const KBASE: usize> SignMaskData<J, KBASE> {
+    const DATA: AlignedMask = AlignedMask(lane_sign_mask_bits::<J, KBASE>());
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn fmadd_with_sign_pattern<const J: usize, const KBASE: usize>(
-    a_coeffs: &[f64; TOTAL_BLADES],
+    a0: std::arch::x86_64::__m256d,
+    a1: std::arch::x86_64::__m256d,
+    a2: std::arch::x86_64::__m256d,
+    a3: std::arch::x86_64::__m256d,
     b_ptr: *const f64,
     acc: std::arch::x86_64::__m256d,
 ) -> std::arch::x86_64::__m256d {
     use std::arch::x86_64::{
-        __m256i, _mm256_broadcast_sd, _mm256_castsi256_pd, _mm256_fmadd_pd, _mm256_fnmadd_pd,
-        _mm256_set_epi64x, _mm256_xor_pd,
+        _mm256_broadcast_sd, _mm256_castsi256_pd, _mm256_fmadd_pd, _mm256_fnmadd_pd,
+        _mm256_load_si256, _mm256_xor_pd,
     };
 
-    let lanes = load_xor_lanes_const::<J, KBASE>(a_coeffs);
-    // SAFETY: `J` is a const generic in 0..16 at call sites; `b_ptr` points to `b_coeffs` with 16 lanes.
+    let lanes = load_xor_lanes_const::<J, KBASE>(a0, a1, a2, a3);
+    // SAFETY: `J` is a const generic in 0..16. `b_ptr` points to `b_coeffs` which has 16 elements. The offset `J` is strictly within bounds. The `avx2` feature is guaranteed.
     let b_vec = _mm256_broadcast_sd(unsafe { &*b_ptr.add(J) });
     let signs = lane_sign_pattern::<J, KBASE>();
 
@@ -393,13 +462,8 @@ unsafe fn fmadd_with_sign_pattern<const J: usize, const KBASE: usize>(
         return _mm256_fnmadd_pd(lanes, b_vec, acc);
     }
 
-    let mask = lane_sign_mask_bits::<J, KBASE>();
-    let sign_mask: __m256i = _mm256_set_epi64x(
-        i64::from_ne_bytes(mask[3].to_ne_bytes()),
-        i64::from_ne_bytes(mask[2].to_ne_bytes()),
-        i64::from_ne_bytes(mask[1].to_ne_bytes()),
-        i64::from_ne_bytes(mask[0].to_ne_bytes()),
-    );
+    // SAFETY: `SignMaskData::DATA` is an `AlignedMask` with `#[repr(C, align(32))]`. The pointer cast is valid and the 256-bit aligned load `_mm256_load_si256` is safe.
+    let sign_mask = unsafe { _mm256_load_si256(SignMaskData::<J, KBASE>::DATA.0.as_ptr().cast()) };
     let signed_lanes = _mm256_xor_pd(lanes, _mm256_castsi256_pd(sign_mask));
     _mm256_fmadd_pd(signed_lanes, b_vec, acc)
 }
@@ -411,7 +475,20 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    use std::arch::x86_64::{_mm256_add_pd, _mm256_set1_pd, _mm256_storeu_pd};
+    use std::arch::x86_64::{_mm256_add_pd, _mm256_loadu_pd, _mm256_set1_pd, _mm256_storeu_pd};
+
+    // Public API currently provides only f64 alignment, therefore unaligned loads are required.
+    // AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+    // SAFETY: `a_coeffs` has `TOTAL_BLADES` (16) elements. The slice `0..4` guarantees exactly
+    // 4 `f64` elements (32 bytes), perfectly matching the 256-bit read of `_mm256_loadu_pd`.
+    // The pointer is valid and `loadu` handles potential unaligned memory safely.
+    let a0 = unsafe { _mm256_loadu_pd(a_coeffs[0..4].as_ptr()) };
+    // SAFETY: The slice `4..8` guarantees exactly 4 `f64` elements (32 bytes) for the 256-bit unaligned load.
+    let a1 = unsafe { _mm256_loadu_pd(a_coeffs[4..8].as_ptr()) };
+    // SAFETY: The slice `8..12` guarantees exactly 4 `f64` elements (32 bytes) for the 256-bit unaligned load.
+    let a2 = unsafe { _mm256_loadu_pd(a_coeffs[8..12].as_ptr()) };
+    // SAFETY: The slice `12..16` guarantees exactly 4 `f64` elements (32 bytes) for the 256-bit unaligned load.
+    let a3 = unsafe { _mm256_loadu_pd(a_coeffs[12..16].as_ptr()) };
 
     let mut acc_even0 = _mm256_set1_pd(0.0);
     let mut acc_even1 = _mm256_set1_pd(0.0);
@@ -427,10 +504,14 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
 
     macro_rules! apply_j {
         ($j:expr, $x0:ident, $x1:ident, $x2:ident, $x3:ident) => {
-            $x0 = fmadd_with_sign_pattern::<$j, 0>(a_coeffs, b_ptr, $x0);
-            $x1 = fmadd_with_sign_pattern::<$j, 4>(a_coeffs, b_ptr, $x1);
-            $x2 = fmadd_with_sign_pattern::<$j, 8>(a_coeffs, b_ptr, $x2);
-            $x3 = fmadd_with_sign_pattern::<$j, 12>(a_coeffs, b_ptr, $x3);
+            // SAFETY: `fmadd_with_sign_pattern` requires `avx2,fma`, which is guaranteed by the current function's `target_feature` attribute. `b_ptr` is valid for 16 elements.
+            $x0 = unsafe { fmadd_with_sign_pattern::<$j, 0>(a0, a1, a2, a3, b_ptr, $x0) };
+            // SAFETY: `fmadd_with_sign_pattern` requires `avx2,fma`, which is guaranteed by the current function's `target_feature` attribute. `b_ptr` is valid for 16 elements.
+            $x1 = unsafe { fmadd_with_sign_pattern::<$j, 4>(a0, a1, a2, a3, b_ptr, $x1) };
+            // SAFETY: `fmadd_with_sign_pattern` requires `avx2,fma`, which is guaranteed by the current function's `target_feature` attribute. `b_ptr` is valid for 16 elements.
+            $x2 = unsafe { fmadd_with_sign_pattern::<$j, 8>(a0, a1, a2, a3, b_ptr, $x2) };
+            // SAFETY: `fmadd_with_sign_pattern` requires `avx2,fma`, which is guaranteed by the current function's `target_feature` attribute. `b_ptr` is valid for 16 elements.
+            $x3 = unsafe { fmadd_with_sign_pattern::<$j, 12>(a0, a1, a2, a3, b_ptr, $x3) };
         };
     }
 
