@@ -418,116 +418,81 @@ unsafe fn load_xor_lanes_const<const J: usize, const KBASE: usize>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[repr(C, align(32))]
-struct AlignedMask(pub [u64; 4]);
-
-#[cfg(target_arch = "x86_64")]
-struct SignMaskData<const J: usize, const KBASE: usize>;
-
-#[cfg(target_arch = "x86_64")]
-impl<const J: usize, const KBASE: usize> SignMaskData<J, KBASE> {
-    const DATA: AlignedMask = AlignedMask(lane_sign_mask_bits::<J, KBASE>());
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2,fma")]
-unsafe fn fmadd_with_sign_pattern<const J: usize, const KBASE: usize>(
-    a0: std::arch::x86_64::__m256d,
-    a1: std::arch::x86_64::__m256d,
-    a2: std::arch::x86_64::__m256d,
-    a3: std::arch::x86_64::__m256d,
-    b_ptr: *const f64,
-    acc: std::arch::x86_64::__m256d,
-) -> std::arch::x86_64::__m256d {
-    use std::arch::x86_64::{
-        _mm256_broadcast_sd, _mm256_castsi256_pd, _mm256_fmadd_pd, _mm256_fnmadd_pd,
-        _mm256_load_si256, _mm256_xor_pd,
-    };
-
-    let lanes = load_xor_lanes_const::<J, KBASE>(a0, a1, a2, a3);
-    // SAFETY: `J` is a const generic in 0..16 at call sites; `b_ptr` points to `b_coeffs` with 16 lanes.
-    let b_vec = _mm256_broadcast_sd(unsafe { &*b_ptr.add(J) });
-    let signs = lane_sign_pattern::<J, KBASE>();
-
-    if signs == [1, 1, 1, 1] {
-        return _mm256_fmadd_pd(lanes, b_vec, acc);
-    }
-    if signs == [-1, -1, -1, -1] {
-        return _mm256_fnmadd_pd(lanes, b_vec, acc);
-    }
-
-    let sign_mask = _mm256_load_si256(SignMaskData::<J, KBASE>::DATA.0.as_ptr().cast());
-    let signed_lanes = _mm256_xor_pd(lanes, _mm256_castsi256_pd(sign_mask));
-    _mm256_fmadd_pd(signed_lanes, b_vec, acc)
-}
-
-#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
 unsafe fn geometric_product_x86_avx2_fma_dense(
     a_coeffs: &[f64; TOTAL_BLADES],
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    use std::arch::x86_64::{_mm256_add_pd, _mm256_loadu_pd, _mm256_set1_pd, _mm256_storeu_pd};
+    use std::arch::x86_64::{
+        _mm256_broadcast_sd, _mm256_fmadd_pd, _mm256_fnmadd_pd, _mm256_loadu_pd,
+        _mm256_setzero_pd, _mm256_storeu_pd, _mm256_xor_pd,
+    };
 
-    // Public API currently provides only f64 alignment, therefore unaligned loads are required.
-    // AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
-    // SAFETY: `a_coeffs` has 16 f64 values; slice [0..4] is in-bounds and loadu accepts unaligned pointers.
-    let a0 = unsafe { _mm256_loadu_pd(a_coeffs[0..4].as_ptr()) };
-    // SAFETY: `a_coeffs` has 16 f64 values; slice [4..8] is in-bounds and loadu accepts unaligned pointers.
-    let a1 = unsafe { _mm256_loadu_pd(a_coeffs[4..8].as_ptr()) };
-    // SAFETY: `a_coeffs` has 16 f64 values; slice [8..12] is in-bounds and loadu accepts unaligned pointers.
-    let a2 = unsafe { _mm256_loadu_pd(a_coeffs[8..12].as_ptr()) };
-    // SAFETY: `a_coeffs` has 16 f64 values; slice [12..16] is in-bounds and loadu accepts unaligned pointers.
-    let a3 = unsafe { _mm256_loadu_pd(a_coeffs[12..16].as_ptr()) };
+    let a_ptr = a_coeffs.as_ptr();
+    let a0 = _mm256_loadu_pd(a_ptr);
+    let a1 = _mm256_loadu_pd(a_ptr.add(4));
+    let a2 = _mm256_loadu_pd(a_ptr.add(8));
+    let a3 = _mm256_loadu_pd(a_ptr.add(12));
 
-    let mut acc_even0 = _mm256_set1_pd(0.0);
-    let mut acc_even1 = _mm256_set1_pd(0.0);
-    let mut acc_even2 = _mm256_set1_pd(0.0);
-    let mut acc_even3 = _mm256_set1_pd(0.0);
-
-    let mut acc_odd0 = _mm256_set1_pd(0.0);
-    let mut acc_odd1 = _mm256_set1_pd(0.0);
-    let mut acc_odd2 = _mm256_set1_pd(0.0);
-    let mut acc_odd3 = _mm256_set1_pd(0.0);
-
-    let b_ptr = b_coeffs.as_ptr();
+    let mut acc0 = _mm256_setzero_pd();
+    let mut acc1 = _mm256_setzero_pd();
+    let mut acc2 = _mm256_setzero_pd();
+    let mut acc3 = _mm256_setzero_pd();
 
     macro_rules! apply_j {
-        ($j:expr, $x0:ident, $x1:ident, $x2:ident, $x3:ident) => {
-            $x0 = fmadd_with_sign_pattern::<$j, 0>(a0, a1, a2, a3, b_ptr, $x0);
-            $x1 = fmadd_with_sign_pattern::<$j, 4>(a0, a1, a2, a3, b_ptr, $x1);
-            $x2 = fmadd_with_sign_pattern::<$j, 8>(a0, a1, a2, a3, b_ptr, $x2);
-            $x3 = fmadd_with_sign_pattern::<$j, 12>(a0, a1, a2, a3, b_ptr, $x3);
-        };
+        ($j:expr) => {{
+            // SAFETY: `$j` is in 0..16 at call sites and `b_coeffs` has 16 coefficients.
+            let b_vec = _mm256_broadcast_sd(unsafe { b_coeffs.get_unchecked($j) });
+
+            macro_rules! update_acc {
+                ($kbase:expr, $acc:ident) => {{
+                    let lanes = load_xor_lanes_const::<$j, $kbase>(a0, a1, a2, a3);
+                    let signs = lane_sign_pattern::<$j, $kbase>();
+                    $acc = if signs == [1, 1, 1, 1] {
+                        _mm256_fmadd_pd(lanes, b_vec, $acc)
+                    } else if signs == [-1, -1, -1, -1] {
+                        _mm256_fnmadd_pd(lanes, b_vec, $acc)
+                    } else {
+                        const MASK: [u64; 4] = lane_sign_mask_bits::<$j, $kbase>();
+                        // SAFETY: `__m256d` and `[u64;4]` are both 32-byte plain data containers.
+                        let sign_mask = unsafe { std::mem::transmute::<[u64; 4], std::arch::x86_64::__m256d>(MASK) };
+                        let signed_lanes = _mm256_xor_pd(lanes, sign_mask);
+                        _mm256_fmadd_pd(signed_lanes, b_vec, $acc)
+                    };
+                }};
+            }
+
+            // Interleaved updates keep ILP and avoid back-to-back updates to one accumulator.
+            update_acc!(0, acc0);
+            update_acc!(4, acc1);
+            update_acc!(8, acc2);
+            update_acc!(12, acc3);
+        }};
     }
 
-    apply_j!(0, acc_even0, acc_even1, acc_even2, acc_even3);
-    apply_j!(1, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
-    apply_j!(2, acc_even0, acc_even1, acc_even2, acc_even3);
-    apply_j!(3, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
-    apply_j!(4, acc_even0, acc_even1, acc_even2, acc_even3);
-    apply_j!(5, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
-    apply_j!(6, acc_even0, acc_even1, acc_even2, acc_even3);
-    apply_j!(7, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
-    apply_j!(8, acc_even0, acc_even1, acc_even2, acc_even3);
-    apply_j!(9, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
-    apply_j!(10, acc_even0, acc_even1, acc_even2, acc_even3);
-    apply_j!(11, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
-    apply_j!(12, acc_even0, acc_even1, acc_even2, acc_even3);
-    apply_j!(13, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
-    apply_j!(14, acc_even0, acc_even1, acc_even2, acc_even3);
-    apply_j!(15, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
+    apply_j!(0);
+    apply_j!(1);
+    apply_j!(2);
+    apply_j!(3);
+    apply_j!(4);
+    apply_j!(5);
+    apply_j!(6);
+    apply_j!(7);
+    apply_j!(8);
+    apply_j!(9);
+    apply_j!(10);
+    apply_j!(11);
+    apply_j!(12);
+    apply_j!(13);
+    apply_j!(14);
+    apply_j!(15);
 
-    let out0 = _mm256_add_pd(acc_even0, acc_odd0);
-    let out1 = _mm256_add_pd(acc_even1, acc_odd1);
-    let out2 = _mm256_add_pd(acc_even2, acc_odd2);
-    let out3 = _mm256_add_pd(acc_even3, acc_odd3);
-
-    _mm256_storeu_pd(result_buf[0..4].as_mut_ptr(), out0);
-    _mm256_storeu_pd(result_buf[4..8].as_mut_ptr(), out1);
-    _mm256_storeu_pd(result_buf[8..12].as_mut_ptr(), out2);
-    _mm256_storeu_pd(result_buf[12..16].as_mut_ptr(), out3);
+    let r_ptr = result_buf.as_mut_ptr();
+    _mm256_storeu_pd(r_ptr, acc0);
+    _mm256_storeu_pd(r_ptr.add(4), acc1);
+    _mm256_storeu_pd(r_ptr.add(8), acc2);
+    _mm256_storeu_pd(r_ptr.add(12), acc3);
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
