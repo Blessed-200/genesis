@@ -1,0 +1,211 @@
+name: GENESIS — Production Gate
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  RUST_LOG: warn
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 1: CORRECTITUD
+  # ─────────────────────────────────────────────────────────────────────────────
+  correctness:
+    name: "① Correctitud"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: correctness
+
+      - name: Formato
+        run: cargo fmt --all -- --check
+
+      - name: Clippy workspace (deny warnings)
+        run: |
+          cargo clippy --workspace --all-targets --all-features -- \
+            -D warnings \
+            -D clippy::pedantic \
+            -D clippy::nursery \
+            -A clippy::module_name_repetitions \
+            -A clippy::must_use_candidate
+
+      - name: Build mínima workspace (sin features)
+        run: cargo check --workspace --no-default-features
+
+      - name: Gate inline(always) en topology
+        run: scripts/check_inline_always_topology.sh
+
+      - name: Tests debug
+        run: cargo test --all --verbose
+
+      - name: Tests release
+        run: cargo test --all --release --verbose
+
+      - name: Cross-compile ARM
+        run: |
+          rustup target add aarch64-unknown-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+          cargo build --release --target aarch64-unknown-linux-gnu \
+            -p genesis-types -p genesis-math -p genesis-topology -p genesis-dynamics
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 2: INVARIANTES FÍSICOS
+  # ─────────────────────────────────────────────────────────────────────────────
+  invariants:
+    name: "② Invariantes Físicos"
+    runs-on: ubuntu-latest
+    needs: correctness
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: invariants
+
+      - name: Property-based tests
+        run: cargo test --release --all -- --include-ignored proptest
+
+      - name: HNSW level distribution
+        run: cargo test --release -p genesis-topology -- random_level_distribution --nocapture
+
+      - name: Minkowski signature invariant
+        run: cargo test --release -p genesis-math -- minkowski_signature --nocapture
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 3: RENDIMIENTO (UMBRALES DUROS)
+  # ─────────────────────────────────────────────────────────────────────────────
+  performance:
+    name: "③ Rendimiento"
+    runs-on: ubuntu-latest
+    needs: correctness
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: benchmarks
+
+      - name: Build benchmarks
+        run: cargo build --release --all
+
+      - name: Run Benchmarks (Math & Topology)
+        run: |
+          cargo bench --bench geometry -p genesis-math -- --output-format bencher | tee bench_math.txt
+          cargo bench --bench topology -p genesis-topology -- --output-format bencher | tee bench_topology.txt
+
+      - name: "Validación de Umbrales (Python)"
+        run: |
+          python3 -c "
+          import sys
+          def check_bench(file, pattern, threshold_ns, label):
+              try:
+                  with open(file) as f:
+                      for line in f:
+                          if pattern in line:
+                              parts = line.split()
+                              ns = float([p for p in parts if p.replace('.','').isdigit()][0])
+                              status = 'OK' if ns <= threshold_ns else 'FAIL'
+                              print(f'{label}: {ns:.1f}ns | Threshold: {threshold_ns}ns | {status}')
+                              if status == 'FAIL': sys.exit(1)
+              except FileNotFoundError: print(f'Warning: {file} not found')
+          
+          print('--- Genesis Performance Audit ---')
+          check_bench('bench_math.txt', 'from_dense', 200, 'from_dense_buf')
+          check_bench('bench_topology.txt', 'hnsw_insert_1000', 12000000, 'HNSW insert 1000')
+          check_bench('bench_topology.txt', 'hnsw_search_k10_in_1000', 700000, 'HNSW search k10 in 1000')
+          "
+
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 4: COMPATIBILIDAD MSRV / CONST-EVAL
+  # ─────────────────────────────────────────────────────────────────────────────
+  compatibility-matrix:
+    name: "④ Compatibilidad Toolchain/Features"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - toolchain: "1.75.0"
+            features: ""
+            const_codec: "0"
+          - toolchain: "1.75.0"
+            features: "--features hnsw-f16"
+            const_codec: "0"
+          - toolchain: "stable"
+            features: ""
+            const_codec: "0"
+          - toolchain: "stable"
+            features: "--features hnsw-f16"
+            const_codec: "0"
+          - toolchain: "stable"
+            features: "--features hnsw-f16"
+            const_codec: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: compatibility-${{ matrix.toolchain }}-${{ matrix.features }}-${{ matrix.const_codec }}
+
+      - name: Check genesis-topology feature/toolchain matrix
+        env:
+          GENESIS_ENABLE_CONST_LAYER0_CODEC: ${{ matrix.const_codec }}
+        run: |
+          cargo check -p genesis-topology ${{ matrix.features }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 6: PRODUCTION GATE (EL CERROJO)
+  # ─────────────────────────────────────────────────────────────────────────────
+  production-gate:
+    name: "GENESIS Production Gate"
+    runs-on: ubuntu-latest
+    needs: [correctness, invariants, performance, compatibility-matrix]
+    if: always()
+    steps:
+      - name: Decisión Final
+        run: |
+          if [[ "${{ needs.correctness.result }}" != "success" ]] || \
+             [[ "${{ needs.invariants.result }}" != "success" ]] || \
+             [[ "${{ needs.performance.result }}" != "success" ]] || \
+             [[ "${{ needs.compatibility-matrix.result }}" != "success" ]]; then
+            echo "❌ ESTÁNDAR DE GÉNESIS NO ALCANZADO. Merge bloqueado."
+            exit 1
+          fi
+          echo "✅ GÉNESIS APROBADO: El código es matemáticamente puro y eficiente."
