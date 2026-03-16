@@ -121,9 +121,9 @@ impl FisherEdgeMetric {
     }
 
     fn normalize(&mut self) {
-        for ((i, j), _) in &mut self.edges {
-            if j < i {
-                core::mem::swap(i, j);
+        for ((left, right), _) in &mut self.edges {
+            if *right < *left {
+                core::mem::swap(left, right);
             }
         }
         self.edges.sort_unstable_by_key(|(key, _)| *key);
@@ -168,6 +168,13 @@ mod tests {
     }
 
     #[test]
+    fn new_normalizes_reversed_pairs_for_lookup() {
+        let m = FisherEdgeMetric::new(vec![((node(9), node(2)), 0.42)]);
+        assert!((m.get(node(2), node(9)) - 0.42).abs() < 1e-15);
+        assert!((m.get(node(9), node(2)) - 0.42).abs() < 1e-15);
+    }
+
+    #[test]
     fn is_current_reflects_nodes_in_edges() {
         let m = FisherEdgeMetric::new(vec![((node(2), node(5)), 1.0)]);
         assert!(m.is_current(node(2)));
@@ -178,8 +185,7 @@ mod tests {
     #[test]
     fn edges_iterator_yields_all_entries() {
         let m = FisherEdgeMetric::new(vec![((node(0), node(1)), 0.3), ((node(1), node(2)), 0.7)]);
-        let v: Vec<_> = m.edges().collect();
-        assert_eq!(v.len(), 2);
+        assert_eq!(m.edges().count(), 2);
     }
     #[test]
     fn set_updates_existing_edge_in_place() {

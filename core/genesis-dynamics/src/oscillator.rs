@@ -75,6 +75,11 @@ pub struct QuantumOscillator {
 }
 
 impl QuantumOscillator {
+    #[inline]
+    const fn default_state() -> OscillatorState {
+        OscillatorState::Active
+    }
+
     /// Traza inicial de Fisher (prior no informativo).
     /// Usada para normalizar amplitudes: `amplitude = trace / FISHER_TRACE_INITIAL`.
     pub const FISHER_TRACE_INITIAL: f64 = 1.0;
@@ -84,25 +89,25 @@ impl QuantumOscillator {
     /// Amplitudes `[1.0; 5]` ← prior de máxima certeza. Kuramoto se comporta
     /// exactamente igual que antes de esta extensión.
     #[inline]
-    pub fn new(node_id: NodeId, frequencies: [f64; 5]) -> Self {
+    pub const fn new(node_id: NodeId, frequencies: [f64; 5]) -> Self {
         Self {
             phases: [0.0; 5],
             amplitudes: [1.0; 5],
             frequencies,
             node_id,
-            state: OscillatorState::Active,
+            state: Self::default_state(),
         }
     }
 
     /// Constructor con fases iniciales explícitas. Amplitudes inicializan en `1.0`.
     #[inline]
-    pub fn with_phases(node_id: NodeId, phases: [f64; 5], frequencies: [f64; 5]) -> Self {
+    pub const fn with_phases(node_id: NodeId, phases: [f64; 5], frequencies: [f64; 5]) -> Self {
         Self {
             phases,
             amplitudes: [1.0; 5],
             frequencies,
             node_id,
-            state: OscillatorState::Active,
+            state: Self::default_state(),
         }
     }
 
@@ -148,7 +153,10 @@ impl QuantumOscillator {
     /// AX-ID: AXIOMA-006, AXIOMA-008
     #[inline]
     pub fn amplitude_norm(&self) -> f64 {
-        let sq: f64 = self.amplitudes.iter().map(|a| a * a).sum();
+        let sq: f64 = self
+            .amplitudes
+            .iter()
+            .fold(0.0, |acc, &a| a.mul_add(a, acc));
         (sq / 5.0_f64).sqrt()
     }
 
@@ -198,19 +206,19 @@ impl QuantumOscillator {
     /// Fase primaria del oscilador (grado 0, escalar).
     /// Usada para calcular `r_sync` en `synchrony.rs`.
     #[inline]
-    pub fn primary_phase(&self) -> f64 {
+    pub const fn primary_phase(&self) -> f64 {
         self.phases[0]
     }
 
     /// Marca el oscilador como saturado. Idempotente si ya está saturado o podado.
-    pub fn mark_saturated(&mut self, now_ns: u64) {
+    pub const fn mark_saturated(&mut self, now_ns: u64) {
         if matches!(self.state, OscillatorState::Active) {
             self.state = OscillatorState::Saturated { since_ns: now_ns };
         }
     }
 
     /// Marca el oscilador como podado. Solo desde Active o Saturated.
-    pub fn mark_pruned(&mut self, now_ns: u64) {
+    pub const fn mark_pruned(&mut self, now_ns: u64) {
         if !matches!(self.state, OscillatorState::Pruned { .. }) {
             self.state = OscillatorState::Pruned { at_ns: now_ns };
         }
@@ -342,7 +350,7 @@ mod tests {
             osc.amplitudes = [v; 5];
             let n = osc.amplitude_norm();
             assert!(
-                n >= 0.0 && n <= 1.0 + 1e-14,
+                (0.0..=1.0 + 1e-14).contains(&n),
                 "amplitude_norm = {n} fuera de [0,1] para amplitude = {v}"
             );
         }
@@ -422,9 +430,10 @@ mod tests {
 /// Un oscilador Pruned no participa en el cálculo de Kuramoto ni en VFE.
 ///
 /// AX-ID: AXIOMA-008 (Saturated), AXIOMA-016 (Pruned)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OscillatorState {
     /// Oscilador activo: participa en Kuramoto y VFE.
+    #[default]
     Active,
     /// Fisher saturado: ΔG < ε durante FISHER_SATIATION_WINDOW iteraciones.
     /// El oscilador no acepta nuevos inputs de aprendizaje pero sigue
@@ -446,20 +455,14 @@ pub enum OscillatorState {
 impl OscillatorState {
     /// Retorna true si el oscilador puede recibir inputs de aprendizaje.
     #[inline]
-    pub fn is_active(self) -> bool {
-        matches!(self, OscillatorState::Active)
+    pub const fn is_active(self) -> bool {
+        matches!(self, Self::Active)
     }
 
     /// Retorna true si el oscilador contribuye al parámetro de orden r_sync.
     /// Los saturados SÍ contribuyen; los podados NO.
     #[inline]
-    pub fn contributes_to_sync(self) -> bool {
-        !matches!(self, OscillatorState::Pruned { .. })
-    }
-}
-
-impl Default for OscillatorState {
-    fn default() -> Self {
-        OscillatorState::Active
+    pub const fn contributes_to_sync(self) -> bool {
+        !matches!(self, Self::Pruned { .. })
     }
 }

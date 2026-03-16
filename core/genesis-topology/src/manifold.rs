@@ -1,15 +1,29 @@
+use std::cell::RefCell;
+
+use genesis_math::SparseCliffordVector;
+use smallvec::SmallVec;
+
 use crate::cohomology::CohomologyValidator;
 use crate::hnsw::HnswGraph;
 use crate::incremental_cohomology::IncrementalH1State;
 use crate::rips::RipsComplex;
-use genesis_math::SparseCliffordVector;
-use std::cell::RefCell;
+use crate::topological_intuition::{TopologicalHypothesis, TopologicalIntuition};
 
 const EDGE_DENSITY_LOG_BASE: f64 = 2.0;
 const LANCZOS_MAX_ITERS_DEFAULT: usize = 50;
 const LANCZOS_REORTHOGONALIZE_EVERY: usize = 10;
 const LANCZOS_CONVERGENCE_EPS: f64 = 1e-9;
 const POWER_REFINE_MAX_ITERS: usize = 800;
+
+// Política de mantenimiento para colectores topológicos críticos.
+//
+// - `#[inline(always)]` está prohibido por defecto; una excepción requiere
+//   justificación documentada (benchmark + motivo arquitectónico + riesgo).
+// - Reglas `cfg` del codec: cualquier rama condicionada por
+//   `feature = "hnsw-f16"` o `genesis_const_layer0_codec` debe mantener
+//   contraparte `not(...)` verificable para prevenir símbolos huérfanos.
+//
+// AX-ID: AXIOMA-007, AXIOMA-013, H_restricción (LEY_FUNDACIONAL §5.6)
 
 // ── HyperbolicCoord — Contrato para CRATE-004 ─────────────────────────────────
 
@@ -67,7 +81,7 @@ impl HyperbolicCoord {
     /// Todo `HyperbolicCoord` válido satisface `self.norm_sq() < 1.0`.
     #[must_use]
     pub fn new(x: f64, y: f64) -> Option<Self> {
-        if x * x + y * y < 1.0 && x.is_finite() && y.is_finite() {
+        if x.mul_add(x, y * y) < 1.0 && x.is_finite() && y.is_finite() {
             Some(Self { x, y })
         } else {
             None
@@ -78,7 +92,7 @@ impl HyperbolicCoord {
     #[inline]
     #[must_use]
     pub fn norm_sq(&self) -> f64 {
-        self.x * self.x + self.y * self.y
+        self.x.mul_add(self.x, self.y * self.y)
     }
 
     /// Distancia hiperbólica al origen del disco.
@@ -115,6 +129,36 @@ struct LambdaWorkspace {
 impl LambdaWorkspace {
     fn new() -> Self {
         Self::default()
+    }
+}
+
+fn ensure_lambda_workspace_capacity(ws: &mut LambdaWorkspace, n: usize, max_iters: usize) {
+    // ── Redimensionamiento lazy con crecimiento geométrico ──────────
+    let n_cap = n.next_power_of_two();
+    if ws.degrees.len() < n {
+        ws.degrees.resize(n_cap, 0.0);
+        ws.adj_offsets.resize(n_cap, (0, 0));
+        ws.y.resize(n_cap, 0.0);
+        ws.q_prev.resize(n_cap, 0.0);
+        ws.q_curr.resize(n_cap, 0.0);
+        ws.w.resize(n_cap, 0.0);
+        ws.seen_marks.resize(n_cap, 0);
+    }
+    if ws.adj_flat.is_empty() {
+        ws.adj_flat = Vec::with_capacity(n_cap.saturating_mul(16));
+    }
+
+    let iters_cap = max_iters.next_power_of_two();
+    if ws.alpha.len() < max_iters {
+        ws.alpha.resize(iters_cap, 0.0);
+        ws.beta.resize(iters_cap, 0.0);
+        ws.tri_vec.resize(iters_cap, 0.0);
+        ws.tri_tmp.resize(iters_cap, 0.0);
+    }
+
+    let basis_needed = n * max_iters;
+    if ws.basis.len() < basis_needed {
+        ws.basis.resize(basis_needed.next_power_of_two(), 0.0);
     }
 }
 
@@ -157,7 +201,7 @@ impl ManifoldCollector {
     /// Create a new empty manifold.
     ///
     /// AX-ID: AXIOMA-013
-    pub fn new(ef_construction: usize) -> Self {
+    pub const fn new(ef_construction: usize) -> Self {
         Self {
             graph: HnswGraph::new(ef_construction),
             h1_state: IncrementalH1State::new(),
@@ -232,7 +276,9 @@ impl ManifoldCollector {
     }
 
     /// Return the number of nodes.
-    pub fn node_count(&self) -> usize {
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub const fn node_count(&self) -> usize {
         self.graph.node_count()
     }
 
@@ -322,34 +368,7 @@ impl ManifoldCollector {
 
         LAMBDA_SCRATCH.with(|cell| {
             let mut ws = cell.borrow_mut();
-
-            // ── Redimensionamiento lazy con crecimiento geométrico ──────────
-            let n_cap = n.next_power_of_two();
-            if ws.degrees.len() < n {
-                ws.degrees.resize(n_cap, 0.0);
-                ws.adj_offsets.resize(n_cap, (0, 0));
-                ws.y.resize(n_cap, 0.0);
-                ws.q_prev.resize(n_cap, 0.0);
-                ws.q_curr.resize(n_cap, 0.0);
-                ws.w.resize(n_cap, 0.0);
-                ws.seen_marks.resize(n_cap, 0);
-            }
-            if ws.adj_flat.is_empty() {
-                ws.adj_flat = Vec::with_capacity(n_cap.saturating_mul(16));
-            }
-
-            let iters_cap = max_iters.next_power_of_two();
-            if ws.alpha.len() < max_iters {
-                ws.alpha.resize(iters_cap, 0.0);
-                ws.beta.resize(iters_cap, 0.0);
-                ws.tri_vec.resize(iters_cap, 0.0);
-                ws.tri_tmp.resize(iters_cap, 0.0);
-            }
-
-            let basis_needed = n * max_iters;
-            if ws.basis.len() < basis_needed {
-                ws.basis.resize(basis_needed.next_power_of_two(), 0.0);
-            }
+            ensure_lambda_workspace_capacity(&mut ws, n, max_iters);
 
             // ── Manejo seguro del contador de generación ────────────────────
             if ws.seen_generation == u32::MAX {
@@ -446,13 +465,38 @@ impl ManifoldCollector {
     /// `compute_h1()` que sigue disponible para checkpointing.
     ///
     /// AX-ID: AXIOMA-007, AXIOMA-009
-    pub fn h1_is_zero_fast(&self) -> bool {
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub const fn h1_is_zero_fast(&self) -> bool {
         self.h1_state.h1_is_zero()
     }
 
     /// Dimensión de H¹ según el estado incremental.
-    pub fn h1_dim_fast(&self) -> usize {
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub const fn h1_dim_fast(&self) -> usize {
         self.h1_state.h1_dim()
+    }
+
+    /// Internal read-only access to the underlying HNSW graph for topology inference.
+    ///
+    /// AX-ID: AXIOMA-013
+    pub(crate) const fn graph_ref(&self) -> &HnswGraph {
+        &self.graph
+    }
+
+    /// Internal read-only access to incremental H¹ state for topology inference.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub(crate) const fn h1_state_ref(&self) -> &IncrementalH1State {
+        &self.h1_state
+    }
+
+    /// Infer read-only topological hypotheses for downstream dynamics.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-013, H_dinámica (LEY_FUNDACIONAL §3.2)
+    pub fn infer_topological_hypotheses(&self) -> SmallVec<[TopologicalHypothesis; 16]> {
+        TopologicalIntuition::new(self).infer()
     }
 
     /// Find nodes affected by a candidate vector expansion.
@@ -514,7 +558,7 @@ impl ManifoldCollector {
     ///
     /// En estado normal (CRATE-004 no implementado): siempre 0.
     /// Útil para diagnóstico y tests.
-    pub fn hyperbolic_coord_count(&self) -> usize {
+    pub const fn hyperbolic_coord_count(&self) -> usize {
         self.hyperbolic_coords.len()
     }
 }
@@ -731,11 +775,13 @@ fn power_refine_shifted_eigenvalue(
 }
 
 fn vec_norm(v: &[f64]) -> f64 {
-    v.iter().map(|x| x * x).sum::<f64>().sqrt()
+    v.iter().fold(0.0, |acc, x| x.mul_add(*x, acc)).sqrt()
 }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
-    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+    a.iter()
+        .zip(b.iter())
+        .fold(0.0, |acc, (x, y)| x.mul_add(*y, acc))
 }
 
 fn axpy_inplace(y: &mut [f64], alpha: f64, x: &[f64]) {
@@ -802,12 +848,12 @@ fn largest_tridiagonal_eigenvalue(
 fn tridiagonal_mv(alpha: &[f64], beta: &[f64], x: &[f64], out: &mut [f64]) {
     let m = alpha.len();
     for i in 0..m {
-        let mut acc = alpha[i] * x[i];
+        let mut acc = alpha[i].mul_add(x[i], 0.0);
         if i > 0 {
-            acc += beta[i - 1] * x[i - 1];
+            acc = beta[i - 1].mul_add(x[i - 1], acc);
         }
         if i + 1 < m {
-            acc += beta[i] * x[i + 1];
+            acc = beta[i].mul_add(x[i + 1], acc);
         }
         out[i] = acc;
     }
@@ -827,9 +873,10 @@ fn deflate_ones(v: &mut [f64]) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use genesis_math::SparseCliffordVector;
     use genesis_types::NodeId;
+
+    use super::*;
 
     fn power_iteration_lambda2_reference(manifold: &ManifoldCollector, max_iters: usize) -> f64 {
         let n = manifold.graph.node_count();
@@ -944,7 +991,7 @@ mod tests {
 
     /// Minimum algebraic connectivity constant — matches GENESIS_PROOF_SPEC §7.
     fn make_vec(id: u64) -> SparseCliffordVector {
-        let s = id as f64 * 0.1 + 0.05;
+        let s = (id as f64).mul_add(0.1, 0.05);
         SparseCliffordVector::from_iter((0..4).map(|b| (b, s * (b as f64 + 1.0)))).unwrap()
     }
 
@@ -1089,14 +1136,14 @@ mod tests {
 
     #[test]
     fn lambda2_lanczos_matches_power_iteration() {
-        let mut rng = Lcg64::new(0xDEC0DED);
+        let mut rng = Lcg64::new(0x0DEC_0DED);
 
         for _ in 0..100 {
             let n = rng.range_usize(50, 200);
             let mut m = ManifoldCollector::new(64);
 
             for i in 0..n {
-                let base = i as f64 * 0.05 + 0.01;
+                let base = (i as f64).mul_add(0.05, 0.01);
                 let vec = SparseCliffordVector::from_iter((0..4).map(|b| {
                     let jitter = rng.next_f64() * 1e-4;
                     (b, base * (b as f64 + 1.0) + jitter)

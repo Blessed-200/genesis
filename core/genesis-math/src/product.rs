@@ -224,6 +224,14 @@ fn geometric_product_dispatch_dense(
             }
             return;
         }
+        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+        {
+            // SAFETY: guarded by runtime feature detection.
+            unsafe {
+                geometric_product_x86_avx2_fma_dense(a_coeffs, b_coeffs, result_buf);
+            }
+            return;
+        }
         if std::arch::is_x86_feature_detected!("avx2") {
             // SAFETY: guarded by runtime feature detection.
             unsafe {
@@ -313,6 +321,145 @@ unsafe fn geometric_product_x86_avx2_dense(
     _mm256_storeu_pd(result_buf[4..8].as_mut_ptr(), acc1);
     _mm256_storeu_pd(result_buf[8..12].as_mut_ptr(), acc2);
     _mm256_storeu_pd(result_buf[12..16].as_mut_ptr(), acc3);
+}
+
+#[cfg(target_arch = "x86_64")]
+const fn blade_mul_index_const(a: usize, b: usize) -> usize {
+    a ^ b
+}
+
+#[cfg(target_arch = "x86_64")]
+const fn blade_mul_sign_const(a: usize, b: usize) -> i8 {
+    CAYLEY_SIGN[a][b]
+}
+
+#[cfg(target_arch = "x86_64")]
+const fn lane_sign_pattern<const J: usize, const KBASE: usize>() -> [i8; 4] {
+    [
+        blade_mul_sign_const(blade_mul_index_const(KBASE, J), J),
+        blade_mul_sign_const(blade_mul_index_const(KBASE + 1, J), J),
+        blade_mul_sign_const(blade_mul_index_const(KBASE + 2, J), J),
+        blade_mul_sign_const(blade_mul_index_const(KBASE + 3, J), J),
+    ]
+}
+
+#[cfg(target_arch = "x86_64")]
+const fn lane_sign_mask_bits<const J: usize, const KBASE: usize>() -> [u64; 4] {
+    let signs = lane_sign_pattern::<J, KBASE>();
+    [
+        if signs[0] < 0 { SIGN_FLIP_BIT } else { 0 },
+        if signs[1] < 0 { SIGN_FLIP_BIT } else { 0 },
+        if signs[2] < 0 { SIGN_FLIP_BIT } else { 0 },
+        if signs[3] < 0 { SIGN_FLIP_BIT } else { 0 },
+    ]
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn load_xor_lanes_const<const J: usize, const KBASE: usize>(
+    a_coeffs: &[f64; TOTAL_BLADES],
+) -> std::arch::x86_64::__m256d {
+    use std::arch::x86_64::_mm256_set_pd;
+
+    _mm256_set_pd(
+        a_coeffs[blade_mul_index_const(KBASE + 3, J)],
+        a_coeffs[blade_mul_index_const(KBASE + 2, J)],
+        a_coeffs[blade_mul_index_const(KBASE + 1, J)],
+        a_coeffs[blade_mul_index_const(KBASE, J)],
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn fmadd_with_sign_pattern<const J: usize, const KBASE: usize>(
+    a_coeffs: &[f64; TOTAL_BLADES],
+    b_ptr: *const f64,
+    acc: std::arch::x86_64::__m256d,
+) -> std::arch::x86_64::__m256d {
+    use std::arch::x86_64::{
+        __m256i, _mm256_broadcast_sd, _mm256_castsi256_pd, _mm256_fmadd_pd, _mm256_fnmadd_pd,
+        _mm256_set_epi64x, _mm256_xor_pd,
+    };
+
+    let lanes = load_xor_lanes_const::<J, KBASE>(a_coeffs);
+    // SAFETY: `J` is a const generic in 0..16 at call sites; `b_ptr` points to `b_coeffs` with 16 lanes.
+    let b_vec = _mm256_broadcast_sd(unsafe { &*b_ptr.add(J) });
+    let signs = lane_sign_pattern::<J, KBASE>();
+
+    if signs == [1, 1, 1, 1] {
+        return _mm256_fmadd_pd(lanes, b_vec, acc);
+    }
+    if signs == [-1, -1, -1, -1] {
+        return _mm256_fnmadd_pd(lanes, b_vec, acc);
+    }
+
+    let mask = lane_sign_mask_bits::<J, KBASE>();
+    let sign_mask: __m256i = _mm256_set_epi64x(
+        i64::from_ne_bytes(mask[3].to_ne_bytes()),
+        i64::from_ne_bytes(mask[2].to_ne_bytes()),
+        i64::from_ne_bytes(mask[1].to_ne_bytes()),
+        i64::from_ne_bytes(mask[0].to_ne_bytes()),
+    );
+    let signed_lanes = _mm256_xor_pd(lanes, _mm256_castsi256_pd(sign_mask));
+    _mm256_fmadd_pd(signed_lanes, b_vec, acc)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,fma")]
+unsafe fn geometric_product_x86_avx2_fma_dense(
+    a_coeffs: &[f64; TOTAL_BLADES],
+    b_coeffs: &[f64; TOTAL_BLADES],
+    result_buf: &mut [f64; TOTAL_BLADES],
+) {
+    use std::arch::x86_64::{_mm256_add_pd, _mm256_set1_pd, _mm256_storeu_pd};
+
+    let mut acc_even0 = _mm256_set1_pd(0.0);
+    let mut acc_even1 = _mm256_set1_pd(0.0);
+    let mut acc_even2 = _mm256_set1_pd(0.0);
+    let mut acc_even3 = _mm256_set1_pd(0.0);
+
+    let mut acc_odd0 = _mm256_set1_pd(0.0);
+    let mut acc_odd1 = _mm256_set1_pd(0.0);
+    let mut acc_odd2 = _mm256_set1_pd(0.0);
+    let mut acc_odd3 = _mm256_set1_pd(0.0);
+
+    let b_ptr = b_coeffs.as_ptr();
+
+    macro_rules! apply_j {
+        ($j:expr, $x0:ident, $x1:ident, $x2:ident, $x3:ident) => {
+            $x0 = fmadd_with_sign_pattern::<$j, 0>(a_coeffs, b_ptr, $x0);
+            $x1 = fmadd_with_sign_pattern::<$j, 4>(a_coeffs, b_ptr, $x1);
+            $x2 = fmadd_with_sign_pattern::<$j, 8>(a_coeffs, b_ptr, $x2);
+            $x3 = fmadd_with_sign_pattern::<$j, 12>(a_coeffs, b_ptr, $x3);
+        };
+    }
+
+    apply_j!(0, acc_even0, acc_even1, acc_even2, acc_even3);
+    apply_j!(1, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
+    apply_j!(2, acc_even0, acc_even1, acc_even2, acc_even3);
+    apply_j!(3, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
+    apply_j!(4, acc_even0, acc_even1, acc_even2, acc_even3);
+    apply_j!(5, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
+    apply_j!(6, acc_even0, acc_even1, acc_even2, acc_even3);
+    apply_j!(7, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
+    apply_j!(8, acc_even0, acc_even1, acc_even2, acc_even3);
+    apply_j!(9, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
+    apply_j!(10, acc_even0, acc_even1, acc_even2, acc_even3);
+    apply_j!(11, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
+    apply_j!(12, acc_even0, acc_even1, acc_even2, acc_even3);
+    apply_j!(13, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
+    apply_j!(14, acc_even0, acc_even1, acc_even2, acc_even3);
+    apply_j!(15, acc_odd0, acc_odd1, acc_odd2, acc_odd3);
+
+    let out0 = _mm256_add_pd(acc_even0, acc_odd0);
+    let out1 = _mm256_add_pd(acc_even1, acc_odd1);
+    let out2 = _mm256_add_pd(acc_even2, acc_odd2);
+    let out3 = _mm256_add_pd(acc_even3, acc_odd3);
+
+    _mm256_storeu_pd(result_buf[0..4].as_mut_ptr(), out0);
+    _mm256_storeu_pd(result_buf[4..8].as_mut_ptr(), out1);
+    _mm256_storeu_pd(result_buf[8..12].as_mut_ptr(), out2);
+    _mm256_storeu_pd(result_buf[12..16].as_mut_ptr(), out3);
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
@@ -1008,7 +1155,7 @@ mod tests {
     fn mv_from_mask(mask: u16, base: f64) -> SparseCliffordVector {
         SparseCliffordVector::from_iter((0..TOTAL_BLADES).filter_map(|i| {
             if (mask & (1u16 << i)) != 0 {
-                Some((i, base + i as f64 * 0.5))
+                Some((i, (i as f64).mul_add(0.5, base)))
             } else {
                 None
             }
@@ -1292,12 +1439,67 @@ mod tests {
 //
 // AX-ID: AXIOMA-001
 // ─────────────────────────────────────────────────────────────────────────────
+#[cfg(all(test, target_arch = "x86_64"))]
+mod simd_equivalence_tests {
+    use super::{
+        geometric_product_scalar_dense, geometric_product_x86_avx2_fma_dense, TOTAL_BLADES,
+    };
+
+    #[test]
+    fn avx2_fma_dense_kernel_matches_scalar_for_one_million_cases() {
+        if !(std::arch::is_x86_feature_detected!("avx2")
+            && std::arch::is_x86_feature_detected!("fma"))
+        {
+            return;
+        }
+
+        let mut state = 0xD1B5_4A32_CE77_9A1Fu64;
+        for _ in 0..1_000_000usize {
+            let mut a = [0.0f64; TOTAL_BLADES];
+            let mut b = [0.0f64; TOTAL_BLADES];
+
+            for i in 0..TOTAL_BLADES {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let x = ((state >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
+                a[i] = x.mul_add(2.0, -1.0);
+
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let y = ((state >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
+                b[i] = y.mul_add(2.0, -1.0);
+            }
+
+            let mut scalar = [0.0f64; TOTAL_BLADES];
+            let mut simd = [0.0f64; TOTAL_BLADES];
+            geometric_product_scalar_dense(&a, &b, &mut scalar);
+            // SAFETY: guarded by runtime feature checks above.
+            unsafe {
+                geometric_product_x86_avx2_fma_dense(&a, &b, &mut simd);
+            }
+
+            for k in 0..TOTAL_BLADES {
+                assert!(
+                    (scalar[k] - simd[k]).abs() < 1e-12,
+                    "mismatch at blade {k}: scalar={} simd={}",
+                    scalar[k],
+                    simd[k]
+                );
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 #[cfg(all(test, feature = "properties"))]
 #[allow(clippy::needless_range_loop)]
 mod property_tests {
-    use super::*;
     use genesis_types::constants::COGNITIVE_PLANCK_CONSTANT;
     use proptest::prelude::*;
+
+    use super::*;
 
     fn approx_eq(lhs: Option<&SparseCliffordVector>, rhs: Option<&SparseCliffordVector>) -> bool {
         const TOL: f64 = COGNITIVE_PLANCK_CONSTANT * 1e6;
@@ -1354,9 +1556,8 @@ mod property_tests {
         ) {
             let mut bc_buf = [0.0f64; TOTAL_BLADES];
             for i in 0..TOTAL_BLADES { bc_buf[i] = b.coeffs[i] + c.coeffs[i]; }
-            let b_plus_c = match SparseCliffordVector::from_dense(&bc_buf) {
-                Ok(v) => v,
-                Err(_) => return Ok(()),
+            let Ok(b_plus_c) = SparseCliffordVector::from_dense(&bc_buf) else {
+                return Ok(());
             };
             let lhs = sparse_geometric_product(&a, &b_plus_c);
             let ab  = sparse_geometric_product(&a, &b);

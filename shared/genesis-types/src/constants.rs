@@ -242,6 +242,7 @@ pub const fn validate_constant_ordering() -> bool {
 // ============================================================================
 
 #[cfg(test)]
+#[allow(clippy::assertions_on_constants)]
 mod tests {
     use super::*;
 

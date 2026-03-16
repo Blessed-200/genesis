@@ -83,7 +83,7 @@ pub(crate) const ODD_GRADE_PREFIX_TABLE: [i32; TOTAL_BLADES] = {
 ///
 /// AX-ID: AXIOMA-001, AXIOMA-002
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CliffordBasis {
     /// Grassmann grade of each blade index: `grade[i] = popcount(i)`.
     pub grade: [u8; TOTAL_BLADES],
@@ -133,7 +133,7 @@ impl CliffordBasis {
             }
             blade += 1;
         }
-        CliffordBasis {
+        Self {
             grade,
             signature,
             fenwick_parity_tree: fenwick,
@@ -186,7 +186,11 @@ impl CliffordBasis {
         let reorder_sign: i8 = if ((k * (k - 1) / 2) % 2) == 0 { 1 } else { -1 };
         let spatial_bits = (blade >> 1) & 0b111;
         let spatial_count = spatial_bits.count_ones();
-        let metric_sign: i8 = if (spatial_count % 2) == 0 { 1 } else { -1 };
+        let metric_sign: i8 = if spatial_count.is_multiple_of(2) {
+            1
+        } else {
+            -1
+        };
         reorder_sign * metric_sign
     }
 
@@ -219,7 +223,7 @@ pub const CANONICAL_G13: CliffordBasis = CliffordBasis::build_g13();
 
 /// Convenience reference accessor.
 #[inline]
-pub fn g13() -> &'static CliffordBasis {
+pub const fn g13() -> &'static CliffordBasis {
     &CANONICAL_G13
 }
 

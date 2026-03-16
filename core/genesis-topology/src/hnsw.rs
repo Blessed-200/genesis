@@ -1,5 +1,6 @@
 #![allow(
     clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
     clippy::cast_sign_loss,
     clippy::map_unwrap_or,
     clippy::missing_errors_doc,
@@ -14,21 +15,189 @@ use std::cell::RefCell;
 /// Adjacency lists stored as sorted Vec<(`NodeId`, f64)> with binary search.
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
+use std::sync::atomic::{AtomicPtr, Ordering as AtomicOrdering};
+use std::sync::Arc;
 use std::thread;
 
 use fixedbitset::FixedBitSet;
+use genesis_math::SparseCliffordVector;
+use genesis_types::{GenesisError, NodeId};
 use smallvec::SmallVec;
 
 use crate::geodesic::geometric_distance;
-use genesis_math::SparseCliffordVector;
-use genesis_types::{GenesisError, NodeId};
 
 const TOTAL_BLADES: usize = 16;
 
+// Política de mantenimiento para módulos críticos de topología.
+//
+// - `#[inline(always)]` está prohibido salvo excepción documentada con
+//   benchmark reproducible + motivo arquitectónico + evaluación de riesgo.
+// - Los símbolos del codec layer-0 deben mantener simetría de `cfg`:
+//   `feature = "hnsw-f16"`, `genesis_const_layer0_codec`, y `test`.
+//   Cualquier símbolo condicionado por `cfg` debe tener contraparte
+//   explícita `not(...)` para evitar símbolos huérfanos entre perfiles.
+//
+// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+
+mod layer0_codec {
+    use super::TOTAL_BLADES;
+    use genesis_math::SparseCliffordVector;
+
+    #[cfg(feature = "hnsw-f16")]
+    mod f16_kernel {
+        #[inline]
+        pub(in super::super) const fn f32_to_f16_bits_core(value: f32) -> u16 {
+            let bits = value.to_bits();
+            let sign = ((bits >> 16) & 0x8000) as u16;
+            let exp = ((bits >> 23) & 0xFF) as i32;
+            let frac = bits & 0x7F_FFFF;
+            if exp <= 112 {
+                if exp < 103 {
+                    return sign;
+                }
+                let mant = frac | 0x80_0000;
+                return sign | (((mant >> (126 - exp)) + 0x1000) >> 13) as u16;
+            }
+            if exp >= 143 {
+                return sign | 0x7C00;
+            }
+            sign | ((((exp - 112) as u32) << 10) as u16) | (((frac + 0x1000) >> 13) as u16)
+        }
+
+        #[inline]
+        pub(in super::super) fn f16_bits_to_f32_core(bits: u16) -> f32 {
+            let sign = (u32::from(bits & 0x8000)) << 16;
+            let exp = (bits >> 10) & 0x1F;
+            let frac = u32::from(bits & 0x03FF);
+            let f_bits = if exp == 0 {
+                if frac == 0 {
+                    sign
+                } else {
+                    let mut mant = frac;
+                    let mut e = -14i32;
+                    while (mant & 0x0400) == 0 {
+                        mant <<= 1;
+                        e -= 1;
+                    }
+                    sign | (((e + 127) as u32) << 23) | ((mant & 0x03FF) << 13)
+                }
+            } else if exp == 0x1F {
+                sign | 0x7F80_0000 | (frac << 13)
+            } else {
+                sign | ((u32::from(exp) + 112) << 23) | (frac << 13)
+            };
+            f32::from_bits(f_bits)
+        }
+    }
+
+    /// Trait sellado para codificación densa de layer-0.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+    pub(super) trait Layer0Codec: sealed::Sealed {
+        type Storage: Copy;
+
+        fn encode(values: &[f32; TOTAL_BLADES]) -> Self::Storage;
+        fn distance(stored: &Self::Storage, query: &SparseCliffordVector) -> f64;
+        fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES];
+    }
+
+    #[cfg(any(not(feature = "hnsw-f16"), test))]
+    pub(super) struct F32Codec;
+
+    #[cfg(any(not(feature = "hnsw-f16"), test))]
+    impl Layer0Codec for F32Codec {
+        type Storage = [f32; TOTAL_BLADES];
+
+        fn encode(values: &[f32; TOTAL_BLADES]) -> Self::Storage {
+            *values
+        }
+
+        fn distance(stored: &Self::Storage, query: &SparseCliffordVector) -> f64 {
+            let dense = core::array::from_fn(|i| f64::from(stored[i]));
+            crate::geodesic::fast_bivector_distance_from_dense(&dense, query)
+        }
+
+        fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES] {
+            core::array::from_fn(|i| f64::from(stored[i]))
+        }
+    }
+
+    #[cfg(feature = "hnsw-f16")]
+    pub(super) struct F16Codec;
+
+    #[cfg(feature = "hnsw-f16")]
+    impl Layer0Codec for F16Codec {
+        type Storage = [u16; TOTAL_BLADES];
+
+        fn encode(values: &[f32; TOTAL_BLADES]) -> Self::Storage {
+            #[cfg(genesis_const_layer0_codec)]
+            {
+                return encode_f16_const(values);
+            }
+
+            #[cfg(not(genesis_const_layer0_codec))]
+            {
+                encode_f16_runtime(values)
+            }
+        }
+
+        fn distance(stored: &Self::Storage, query: &SparseCliffordVector) -> f64 {
+            super::fast_bivector_distance_f16(stored, query)
+        }
+
+        fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES] {
+            core::array::from_fn(|i| f64::from(f16_bits_to_f32(stored[i])))
+        }
+    }
+
+    #[cfg(all(feature = "hnsw-f16", not(genesis_const_layer0_codec)))]
+    fn encode_f16_runtime(values: &[f32; TOTAL_BLADES]) -> [u16; TOTAL_BLADES] {
+        core::array::from_fn(|i| f32_to_f16_bits(values[i]))
+    }
+
+    #[cfg(all(feature = "hnsw-f16", genesis_const_layer0_codec))]
+    const fn encode_f16_const(values: &[f32; TOTAL_BLADES]) -> [u16; TOTAL_BLADES] {
+        let mut encoded = [0_u16; TOTAL_BLADES];
+        let mut i = 0;
+        while i < TOTAL_BLADES {
+            encoded[i] = f32_to_f16_bits_const(values[i]);
+            i += 1;
+        }
+        encoded
+    }
+
+    #[cfg(feature = "hnsw-f16")]
+    pub(super) fn f16_bits_to_f32(bits: u16) -> f32 {
+        f16_kernel::f16_bits_to_f32_core(bits)
+    }
+
+    #[cfg(all(feature = "hnsw-f16", not(genesis_const_layer0_codec)))]
+    pub(super) const fn f32_to_f16_bits(value: f32) -> u16 {
+        f16_kernel::f32_to_f16_bits_core(value)
+    }
+
+    #[cfg(all(feature = "hnsw-f16", genesis_const_layer0_codec))]
+    const fn f32_to_f16_bits_const(value: f32) -> u16 {
+        f16_kernel::f32_to_f16_bits_core(value)
+    }
+
+    #[cfg(all(feature = "hnsw-f16", test))]
+    pub(super) use f16_kernel::{f16_bits_to_f32_core, f32_to_f16_bits_core};
+
+    mod sealed {
+        pub trait Sealed {}
+        #[cfg(any(not(feature = "hnsw-f16"), test))]
+        impl Sealed for super::F32Codec {}
+        #[cfg(feature = "hnsw-f16")]
+        impl Sealed for super::F16Codec {}
+    }
+}
+
 #[cfg(feature = "hnsw-f16")]
-type Layer0Coeffs = [u16; TOTAL_BLADES];
+type ActiveLayer0Codec = layer0_codec::F16Codec;
 #[cfg(not(feature = "hnsw-f16"))]
-type Layer0Coeffs = [f32; TOTAL_BLADES];
+type ActiveLayer0Codec = layer0_codec::F32Codec;
+type Layer0Coeffs = <ActiveLayer0Codec as layer0_codec::Layer0Codec>::Storage;
 
 /// Maximum number of layers in the HNSW graph.
 const MAX_LAYERS: usize = 16;
@@ -39,7 +208,7 @@ pub(crate) const M: usize = 16;
 
 /// Maximum connections at layer 0 (M0 = 2*M).
 /// `pub(crate)` for manifold.rs stack-allocated neighbour buffers (BN-02).
-pub(crate) const M0: usize = 32;
+pub(crate) const M0: usize = M * 2;
 
 /// Level multiplier: 1.0 / ln(M).
 // M es una constante pequeña (≤ 64). M as f64 es exacto: M < 2^53.
@@ -78,29 +247,56 @@ struct HnswNode {
 }
 
 impl HnswNode {
-    fn new(id: NodeId, vec: SparseCliffordVector, max_layer: usize) -> Self {
+    /// Builds an HNSW node with cached layer-0 coefficients.
+    ///
+    /// ## Finiteness contract
+    ///
+    /// `geometric_distance` is defined only on finite coefficients; therefore,
+    /// every blade used to materialise `layer0` must remain finite after the
+    /// `f64 -> f32` projection. Non-finite values are rejected upstream by
+    /// `SparseCliffordVector` constructors, and this function keeps a debug-time
+    /// guard to detect any invariant breach before `encode_layer0`.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+    fn new(id: NodeId, vec: SparseCliffordVector, max_layer: usize) -> Result<Self, GenesisError> {
         let mut layer0 = [0.0_f32; TOTAL_BLADES];
         for (idx, coeff) in vec.coeffs.iter().enumerate() {
-            layer0[idx] = *coeff as f32;
+            let coeff_f32 = *coeff as f32;
+            debug_assert!(
+                coeff_f32.is_finite(),
+                "layer0 coefficient must be finite after f64->f32 projection"
+            );
+            layer0[idx] = coeff_f32;
         }
-        Self {
+        Ok(Self {
             id,
             vec,
-            layer0: encode_layer0(&layer0),
+            layer0: encode_layer0(&layer0)?,
             layers: vec![Vec::new(); max_layer + 1],
-        }
+        })
     }
 }
 
-fn encode_layer0(values: &[f32; TOTAL_BLADES]) -> Layer0Coeffs {
-    #[cfg(feature = "hnsw-f16")]
-    {
-        core::array::from_fn(|i| f32_to_f16_bits(values[i]))
+/// Encodes dense layer-0 coefficients into the storage format configured for
+/// the current build (`f32` or `f16` bits).
+///
+/// ## Finiteness contract
+///
+/// Inputs must be finite. This preserves the metric contract required by
+/// `geometric_distance` and avoids introducing NaN/Inf into the layer-0 fast
+/// path. In debug/test builds we assert this invariant before encoding.
+///
+/// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+fn encode_layer0(values: &[f32; TOTAL_BLADES]) -> Result<Layer0Coeffs, GenesisError> {
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(GenesisError::InvalidInput(
+            "Non-finite coefficients detected after conversion",
+        ));
     }
-    #[cfg(not(feature = "hnsw-f16"))]
-    {
-        *values
-    }
+    debug_assert!(values.iter().all(|value| value.is_finite()));
+    Ok(<ActiveLayer0Codec as layer0_codec::Layer0Codec>::encode(
+        values,
+    ))
 }
 
 #[cfg(feature = "hnsw-f16")]
@@ -152,56 +348,17 @@ pub fn fast_bivector_distance_f16(stored: &[u16; 16], query: &SparseCliffordVect
     )))]
     {
         for i in 0..16 {
-            decompressed[i] = f64::from(f16_bits_to_f32(stored[i]));
+            decompressed[i] = f64::from(layer0_codec::f16_bits_to_f32(stored[i]));
         }
     }
 
     crate::geodesic::fast_bivector_distance_from_dense(&decompressed, query)
 }
 
-#[cfg(feature = "hnsw-f16")]
-fn f16_bits_to_f32(bits: u16) -> f32 {
-    let sign = (u32::from(bits & 0x8000)) << 16;
-    let exp = (bits >> 10) & 0x1F;
-    let frac = u32::from(bits & 0x03FF);
-    let f_bits = if exp == 0 {
-        if frac == 0 {
-            sign
-        } else {
-            let mut mant = frac;
-            let mut e = -14i32;
-            while (mant & 0x0400) == 0 {
-                mant <<= 1;
-                e -= 1;
-            }
-            sign | (((e + 127) as u32) << 23) | ((mant & 0x03FF) << 13)
-        }
-    } else if exp == 0x1F {
-        sign | 0x7F80_0000 | (frac << 13)
-    } else {
-        sign | ((u32::from(exp) + 112) << 23) | (frac << 13)
-    };
-    f32::from_bits(f_bits)
-}
-
-#[cfg(feature = "hnsw-f16")]
-fn f32_to_f16_bits(value: f32) -> u16 {
-    let bits = value.to_bits();
-    let sign = ((bits >> 16) & 0x8000) as u16;
-    let exp = i32::from(u16::try_from((bits >> 23) & 0xFF).expect("f32 exponent fits in u16"));
-    let frac = bits & 0x7F_FFFF;
-    if exp <= 112 {
-        if exp < 103 {
-            return sign;
-        }
-        let mant = frac | 0x80_0000;
-        return sign | (((mant >> (126 - exp)) + 0x1000) >> 13) as u16;
-    }
-    if exp >= 143 {
-        return sign | 0x7C00;
-    }
-    sign | ((((exp - 112) as u32) << 10) as u16) | (((frac + 0x1000) >> 13) as u16)
-}
+#[cfg(all(feature = "hnsw-f16", test))]
+use layer0_codec::{
+    f16_bits_to_f32_core as f16_bits_to_f32, f32_to_f16_bits_core as f32_to_f16_bits,
+};
 
 #[derive(Default)]
 struct SearchScratch {
@@ -222,6 +379,7 @@ thread_local! {
 /// using the exclusive bivector metric from genesis-math.
 ///
 /// AX-ID: AXIOMA-013
+#[derive(Clone)]
 pub struct HnswGraph {
     /// All nodes stored in a flat Vec. Index = internal idx.
     nodes: Vec<HnswNode>,
@@ -241,6 +399,36 @@ pub struct HnswGraph {
     state: GraphState,
 }
 
+/// Cache-optimised SoA view of layer-0 HNSW data.
+///
+/// This structure flattens node metadata and base-layer adjacency into contiguous
+/// buffers to improve prefetch locality and enable auto-vectorisation-friendly
+/// traversal patterns in read-heavy paths.
+///
+/// AX-ID: AXIOMA-013
+pub struct HnswLayer0Soa {
+    /// Node IDs in dense internal-index order.
+    pub node_ids: Vec<NodeId>,
+    /// Dense `[f64; 16]` blade coefficients for layer-0 vectors.
+    pub dense_coeffs: Vec<[f64; TOTAL_BLADES]>,
+    /// Per-node offsets into `neighbor_ids` / `neighbor_distances`.
+    pub neighbor_offsets: Vec<(usize, usize)>,
+    /// Flattened neighbour IDs for layer 0.
+    pub neighbor_ids: Vec<NodeId>,
+    /// Flattened neighbour distances for layer 0.
+    pub neighbor_distances: Vec<f64>,
+}
+
+/// Lock-free append-only snapshot index for HNSW.
+///
+/// Writers clone the current immutable snapshot, apply one mutation, and publish
+/// with CAS. Readers load the latest snapshot without locking.
+///
+/// AX-ID: AXIOMA-013
+pub struct LockFreeHnswIndex {
+    head: AtomicPtr<HnswGraph>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GraphState {
     /// Fase online: appends directos en `id_index` sin ordenar.
@@ -253,7 +441,7 @@ impl HnswGraph {
     /// Create a new empty HNSW graph.
     ///
     /// AX-ID: AXIOMA-013
-    pub fn new(ef_construction: usize) -> Self {
+    pub const fn new(ef_construction: usize) -> Self {
         Self {
             nodes: Vec::new(),
             id_index: Vec::new(),
@@ -355,7 +543,7 @@ impl HnswGraph {
 
         let target_layer = Self::random_level(id);
         let new_idx = self.nodes.len();
-        self.nodes.push(HnswNode::new(id, *vec, target_layer));
+        self.nodes.push(HnswNode::new(id, *vec, target_layer)?);
         self.insert_id_index(id, new_idx);
 
         if id.get() < u64::from(u32::MAX) {
@@ -500,13 +688,11 @@ impl HnswGraph {
     }
 
     fn distance_to_node(&self, query: &SparseCliffordVector, idx: usize, layer: usize) -> f64 {
-        #[cfg(feature = "hnsw-f16")]
         if layer == 0 {
-            return fast_bivector_distance_f16(&self.nodes[idx].layer0, query);
-        }
-        #[cfg(not(feature = "hnsw-f16"))]
-        {
-            let _ = (self.nodes[idx].layer0, layer);
+            return <ActiveLayer0Codec as layer0_codec::Layer0Codec>::distance(
+                &self.nodes[idx].layer0,
+                query,
+            );
         }
         geometric_distance(query, &self.nodes[idx].vec)
     }
@@ -640,7 +826,7 @@ impl HnswGraph {
     /// Search for the k nearest neighbours to query.
     ///
     /// AX-ID: AXIOMA-013
-    pub fn search_nearest(&mut self, query: &SparseCliffordVector, k: usize) -> Vec<NodeId> {
+    pub fn search_nearest(&self, query: &SparseCliffordVector, k: usize) -> Vec<NodeId> {
         let Some(entry_idx) = self.entry else {
             return Vec::new();
         };
@@ -681,28 +867,24 @@ impl HnswGraph {
     pub fn neighbors_within(&self, id: NodeId, radius: f64) -> impl Iterator<Item = NodeId> + '_ {
         // FIX-E.1: Single get_idx call — the former code called get_idx(id) twice
         // (once for `node_vec`, once for `idx`), wasting a lookup per call.
-        let candidates: Vec<NodeId> = if let Some(idx) = self.get_idx(id) {
-            let nv = self.nodes[idx].vec;
-            if self.nodes[idx].layers.is_empty() {
-                Vec::new()
-            } else {
-                self.nodes[idx].layers[0]
-                    .iter()
-                    .filter_map(|&(nb_id, _)| {
-                        self.get_idx(nb_id).and_then(|ni| {
+        let candidates: SmallVec<[NodeId; M]> =
+            self.get_idx(id).map_or_else(SmallVec::new, |idx| {
+                // SAFETY: `idx` comes from `self.get_idx(id)`, which guarantees an in-bounds index.
+                let node = unsafe { self.nodes.get_unchecked(idx) };
+                let nv = node.vec;
+                node.layers.first().map_or_else(SmallVec::new, |layer0| {
+                    let mut local = SmallVec::<[NodeId; M]>::with_capacity(layer0.len().min(M0));
+                    for &(nb_id, _) in layer0 {
+                        if let Some(ni) = self.get_idx(nb_id) {
                             let d = self.distance_to_node(&nv, ni, 0);
                             if d <= radius {
-                                Some(nb_id)
-                            } else {
-                                None
+                                local.push(nb_id);
                             }
-                        })
-                    })
-                    .collect()
-            }
-        } else {
-            Vec::new()
-        };
+                        }
+                    }
+                    local
+                })
+            });
         candidates.into_iter()
     }
 
@@ -756,7 +938,9 @@ impl HnswGraph {
     }
 
     /// Number of nodes in the graph.
-    pub fn node_count(&self) -> usize {
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub const fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
@@ -766,6 +950,40 @@ impl HnswGraph {
             .iter()
             .map(|n| n.layers.first().map_or(0, Vec::len))
             .sum()
+    }
+
+    /// Build a contiguous layer-0 SoA snapshot for read-heavy numeric pipelines.
+    ///
+    /// AX-ID: AXIOMA-013
+    pub fn layer0_soa(&self) -> HnswLayer0Soa {
+        let mut node_ids = Vec::with_capacity(self.nodes.len());
+        let mut dense_coeffs = Vec::with_capacity(self.nodes.len());
+        let mut neighbor_offsets = Vec::with_capacity(self.nodes.len());
+        let mut neighbor_ids = Vec::new();
+        let mut neighbor_distances = Vec::new();
+
+        for node in &self.nodes {
+            node_ids.push(node.id);
+            dense_coeffs.push(decode_layer0_to_f64(&node.layer0));
+            let start = neighbor_ids.len();
+            if let Some(layer0) = node.layers.first() {
+                neighbor_ids.reserve(layer0.len());
+                neighbor_distances.reserve(layer0.len());
+                for &(nb_id, d) in layer0 {
+                    neighbor_ids.push(nb_id);
+                    neighbor_distances.push(d);
+                }
+            }
+            neighbor_offsets.push((start, neighbor_ids.len()));
+        }
+
+        HnswLayer0Soa {
+            node_ids,
+            dense_coeffs,
+            neighbor_offsets,
+            neighbor_ids,
+            neighbor_distances,
+        }
     }
 
     /// Remove a node and all its edges from the graph.
@@ -844,6 +1062,116 @@ impl HnswGraph {
     }
 }
 
+fn decode_layer0_to_f64(stored: &Layer0Coeffs) -> [f64; TOTAL_BLADES] {
+    <ActiveLayer0Codec as layer0_codec::Layer0Codec>::decode_to_f64(stored)
+}
+
+impl LockFreeHnswIndex {
+    /// Create a lock-free snapshot index with an empty HNSW graph.
+    ///
+    /// AX-ID: AXIOMA-013
+    pub fn new(ef_construction: usize) -> Self {
+        let snapshot = Arc::new(HnswGraph::new(ef_construction));
+        Self {
+            head: AtomicPtr::new(Arc::into_raw(snapshot).cast_mut()),
+        }
+    }
+
+    fn load_snapshot(&self) -> Arc<HnswGraph> {
+        loop {
+            let ptr = self.head.load(AtomicOrdering::Acquire);
+            assert!(!ptr.is_null(), "LockFreeHnswIndex head must be initialized");
+
+            // SAFETY: `ptr` comes from `Arc::into_raw` and points to a live allocation
+            // while held by `head`. We take a temporary strong ref then validate that
+            // the atomic head did not change before converting it into an `Arc`.
+            unsafe {
+                Arc::increment_strong_count(ptr);
+            }
+
+            if self.head.load(AtomicOrdering::Acquire) == ptr {
+                // SAFETY: We just incremented the strong count for `ptr`.
+                return unsafe { Arc::from_raw(ptr) };
+            }
+
+            // SAFETY: Balance the temporary strong-count increment from this loop
+            // iteration before retrying with the new head pointer.
+            unsafe {
+                drop(Arc::from_raw(ptr));
+            }
+        }
+    }
+
+    /// Insert a node into the latest snapshot via append-only CAS publication.
+    ///
+    /// AX-ID: AXIOMA-013
+    pub fn insert(&self, id: NodeId, vec: &SparseCliffordVector) -> Result<(), GenesisError> {
+        loop {
+            let base = self.load_snapshot();
+            let current = Arc::as_ptr(&base).cast_mut();
+            let mut updated = (*base).clone();
+            updated.insert(id, vec)?;
+            let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
+
+            match self.head.compare_exchange(
+                current,
+                candidate,
+                AtomicOrdering::AcqRel,
+                AtomicOrdering::Acquire,
+            ) {
+                Ok(_) => {
+                    // SAFETY: Successful CAS replaced the head's strong reference from
+                    // `current` to `candidate`; release the superseded head ref.
+                    unsafe {
+                        drop(Arc::from_raw(current));
+                    }
+                    return Ok(());
+                }
+                Err(_) => {
+                    // SAFETY: CAS failed, so `candidate` was never published.
+                    unsafe {
+                        drop(Arc::from_raw(candidate));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Search nearest neighbours from the latest published snapshot.
+    ///
+    /// AX-ID: AXIOMA-013
+    pub fn search_nearest(&self, query: &SparseCliffordVector, k: usize) -> Vec<NodeId> {
+        self.load_snapshot().search_nearest(query, k)
+    }
+
+    /// Number of nodes in the latest published snapshot.
+    ///
+    /// AX-ID: AXIOMA-013
+    pub fn node_count(&self) -> usize {
+        self.load_snapshot().node_count()
+    }
+
+    /// Build a contiguous SoA layer-0 snapshot from the latest published graph.
+    ///
+    /// AX-ID: AXIOMA-013
+    pub fn layer0_soa(&self) -> HnswLayer0Soa {
+        self.load_snapshot().layer0_soa()
+    }
+}
+
+impl Drop for LockFreeHnswIndex {
+    fn drop(&mut self) {
+        let ptr = self.head.swap(std::ptr::null_mut(), AtomicOrdering::AcqRel);
+        if !ptr.is_null() {
+            // SAFETY: `ptr` is the head-owned strong ref previously created via
+            // `Arc::into_raw`; dropping it releases the final snapshot reference.
+            unsafe {
+                drop(Arc::from_raw(ptr));
+            }
+        }
+    }
+}
+
 /// LSD radix sort para pares `(NodeId, internal_idx)` por `NodeId.get()` en O(8N).
 fn radix_sort_node_ids(index: &mut Vec<(NodeId, usize)>) {
     if index.len() <= 1 {
@@ -858,7 +1186,7 @@ fn radix_sort_node_ids(index: &mut Vec<(NodeId, usize)>) {
         let shift = pass * 8;
         let mut counts = [0usize; 256];
         let workers = thread::available_parallelism()
-            .map(|nz| nz.get())
+            .map(std::num::NonZero::<usize>::get)
             .unwrap_or(1)
             .min(8);
 
@@ -966,8 +1294,10 @@ impl Iterator for NeighborIter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use genesis_math::SparseCliffordVector;
+    use proptest::prelude::*;
+
+    use super::*;
 
     fn make_vec(coeff: f64) -> SparseCliffordVector {
         SparseCliffordVector::from_iter((0..4).map(|i| (i, coeff * (i as f64 + 1.0) * 0.1)))
@@ -979,10 +1309,57 @@ mod tests {
     }
 
     #[test]
+    fn layer0_soa_preserves_layer0_cardinality() {
+        let mut graph = HnswGraph::new(16);
+        for i in 0..16_u64 {
+            graph
+                .insert(make_id(i), &make_vec((i as f64).mul_add(0.01, 0.1)))
+                .expect("insert should succeed");
+        }
+
+        let soa = graph.layer0_soa();
+        let total_layer0: usize = graph
+            .nodes
+            .iter()
+            .map(|node| node.layers.first().map_or(0, Vec::len))
+            .sum();
+
+        assert_eq!(soa.node_ids.len(), graph.node_count());
+        assert_eq!(soa.dense_coeffs.len(), graph.node_count());
+        assert_eq!(soa.neighbor_offsets.len(), graph.node_count());
+        assert_eq!(soa.neighbor_ids.len(), total_layer0);
+        assert_eq!(soa.neighbor_distances.len(), total_layer0);
+    }
+
+    #[test]
+    fn lock_free_index_supports_multiwriter_single_snapshot_semantics() {
+        use std::sync::Arc;
+
+        let index = Arc::new(LockFreeHnswIndex::new(16));
+        std::thread::scope(|scope| {
+            for shard in 0..4_u64 {
+                let idx = Arc::clone(&index);
+                scope.spawn(move || {
+                    for i in 0..8_u64 {
+                        let id = make_id(shard * 8 + i);
+                        let vec = make_vec(((shard * 8 + i) as f64).mul_add(0.01, 0.2));
+                        idx.insert(id, &vec).expect("lock-free insert must succeed");
+                    }
+                });
+            }
+        });
+
+        assert_eq!(index.node_count(), 32);
+        let query = make_vec(0.25);
+        let result = index.search_nearest(&query, 4);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
     fn hnsw_insert_and_search() {
         let mut g = HnswGraph::new(16);
         for i in 0..10u64 {
-            let v = make_vec(i as f64 * 0.3 + 0.1);
+            let v = make_vec((i as f64).mul_add(0.3, 0.1));
             g.insert(make_id(i), &v).unwrap();
         }
         assert_eq!(g.node_count(), 10);
@@ -1016,10 +1393,13 @@ mod tests {
         let mut g = HnswGraph::new(64);
         let mut vecs: Vec<SparseCliffordVector> = Vec::with_capacity(n);
         for i in 0..n {
-            let coeff = (i as f64) * 0.001 + 0.01;
-            let v = SparseCliffordVector::from_iter(
-                (0..4).map(|b| (b, coeff * ((b * 7 + i * 3) % 16) as f64 * 0.1 + 0.001)),
-            )
+            let coeff = (i as f64).mul_add(0.001, 0.01);
+            let v = SparseCliffordVector::from_iter((0..4).map(|b| {
+                (
+                    b,
+                    (coeff * ((b * 7 + i * 3) % 16) as f64).mul_add(0.1, 0.001),
+                )
+            }))
             .unwrap();
             vecs.push(v);
             g.insert(
@@ -1054,6 +1434,70 @@ mod tests {
     }
 
     #[test]
+    fn search_nearest_matches_fixture_bruteforce_top1() {
+        let fixture: [[f64; TOTAL_BLADES]; 8] = [
+            [
+                0.10, -0.20, 0.30, -0.40, 0.50, -0.60, 0.70, -0.80, 0.90, -1.00, 1.10, -1.20, 1.30,
+                -1.40, 1.50, -1.60,
+            ],
+            [
+                0.15, -0.10, 0.35, -0.30, 0.55, -0.50, 0.75, -0.70, 0.95, -0.90, 1.15, -1.10, 1.35,
+                -1.30, 1.55, -1.50,
+            ],
+            [
+                -0.25, 0.20, -0.15, 0.10, -0.05, 0.00, 0.05, -0.10, 0.15, -0.20, 0.25, -0.30, 0.35,
+                -0.40, 0.45, -0.50,
+            ],
+            [
+                1.20, 1.10, 1.00, 0.90, 0.80, 0.70, 0.60, 0.50, -0.40, -0.30, -0.20, -0.10, 0.00,
+                0.10, 0.20, 0.30,
+            ],
+            [
+                -1.10, -1.00, -0.90, -0.80, -0.70, -0.60, -0.50, -0.40, 0.30, 0.20, 0.10, 0.00,
+                -0.10, -0.20, -0.30, -0.40,
+            ],
+            [
+                0.002, 0.004, 0.006, 0.008, -0.010, -0.012, -0.014, -0.016, 0.018, 0.020, -0.022,
+                -0.024, 0.026, 0.028, -0.030, -0.032,
+            ],
+            [
+                0.75, -0.25, 0.50, -0.10, 0.25, -0.05, 0.10, -0.02, -0.10, 0.20, -0.30, 0.40,
+                -0.50, 0.60, -0.70, 0.80,
+            ],
+            [
+                -0.70, 0.60, -0.50, 0.40, -0.30, 0.20, -0.10, 0.05, 0.00, -0.05, 0.10, -0.15, 0.20,
+                -0.25, 0.30, -0.35,
+            ],
+        ];
+
+        let mut g = HnswGraph::new(64);
+        let mut vecs = Vec::with_capacity(fixture.len());
+        for (i, dense) in fixture.iter().enumerate() {
+            let v = SparseCliffordVector::from_dense(dense).expect("finite fixture vector");
+            g.insert(make_id(i as u64), &v)
+                .expect("fixture insert must succeed");
+            vecs.push(v);
+        }
+
+        let query = SparseCliffordVector::from_dense(&[
+            0.14, -0.11, 0.34, -0.31, 0.54, -0.49, 0.74, -0.69, 0.94, -0.89, 1.14, -1.09, 1.34,
+            -1.29, 1.54, -1.49,
+        ])
+        .expect("finite query");
+
+        let mut brute: Vec<(usize, f64)> = vecs
+            .iter()
+            .enumerate()
+            .map(|(idx, v)| (idx, geometric_distance(&query, v)))
+            .collect();
+        brute.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+
+        let got = g.search_nearest(&query, 1);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], make_id(brute[0].0 as u64));
+    }
+
+    #[test]
     #[ignore = "performance test: run with cargo test -- --ignored in release mode"]
     fn hnsw_log_routing_under_10ms_for_1_m() {
         // Sandbox constraint: test with N=10000 actual nodes and verify
@@ -1061,7 +1505,7 @@ mod tests {
         let n = 10_000usize;
         let mut g = HnswGraph::new(32);
         for i in 0..n {
-            let coeff = (i as f64) * 0.0001 + 0.01;
+            let coeff = (i as f64).mul_add(0.0001, 0.01);
             let v = SparseCliffordVector::from_iter((0..4).map(|b| (b, coeff * (b as f64 + 1.0))))
                 .unwrap();
             g.insert(
@@ -1091,7 +1535,7 @@ mod tests {
         let n = 10_000usize;
         let mut g = HnswGraph::new(16);
         for i in 0..n {
-            let v = make_vec(i as f64 * 0.01 + 0.1);
+            let v = make_vec((i as f64).mul_add(0.01, 0.1));
             g.insert(
                 NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
                 &v,
@@ -1128,7 +1572,7 @@ mod tests {
         );
 
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let expected_max = ((10_000_f64).ln() / (16_f64).ln()).floor() as usize;
+        let expected_max = (10_000_f64).log(16_f64).floor() as usize;
         assert!(
             max_level <= expected_max,
             "max_level={} excede límite teórico {}",
@@ -1142,7 +1586,7 @@ mod tests {
         let n = 100usize;
         let mut g = HnswGraph::new(16);
         for i in 0..n {
-            let v = make_vec(i as f64 * 0.05 + 0.1);
+            let v = make_vec((i as f64).mul_add(0.05, 0.1));
             g.insert(
                 NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
                 &v,
@@ -1166,14 +1610,14 @@ mod tests {
         // Un nodo con vecinos solapados entre capas debe emitir cada ID exactamente una vez.
         let mut g = HnswGraph::new(16);
         for i in 0..20u64 {
-            let v = make_vec(i as f64 * 0.1 + 0.1);
+            let v = make_vec((i as f64).mul_add(0.1, 0.1));
             g.insert(
                 NodeId::try_new(i).expect("NodeId válido por construcción"),
                 &v,
             )
             .unwrap();
         }
-        for id in g.nodes().collect::<Vec<_>>() {
+        for id in g.nodes() {
             let mut seen = std::collections::HashSet::new();
             for nb in g.neighbors(id) {
                 assert!(
@@ -1191,7 +1635,7 @@ mod tests {
         // Los resultados de search_nearest deben estar ordenados por distancia.
         let mut g = HnswGraph::new(16);
         for i in 0..50u64 {
-            let v = make_vec(i as f64 * 0.05 + 0.1);
+            let v = make_vec((i as f64).mul_add(0.05, 0.1));
             g.insert(
                 NodeId::try_new(i).expect("NodeId válido por construcción"),
                 &v,
@@ -1213,7 +1657,7 @@ mod tests {
     fn edge_density_within_bounds() {
         let mut g = HnswGraph::new(16);
         for i in 0..50u64 {
-            let v = make_vec(i as f64 * 0.05 + 0.1);
+            let v = make_vec((i as f64).mul_add(0.05, 0.1));
             g.insert(
                 NodeId::try_new(i).expect("NodeId válido por construcción"),
                 &v,
@@ -1238,7 +1682,7 @@ mod tests {
         let mut g = HnswGraph::new(64);
 
         for i in 0..2_000u64 {
-            let coeff = (i as f64) * 0.0007 + 0.01;
+            let coeff = (i as f64).mul_add(0.0007, 0.01);
             let v = SparseCliffordVector::from_iter(
                 (0..8).map(|b| (b, coeff * (((b * 13 + i as usize * 5) % 31) as f64 + 1.0))),
             )
@@ -1251,7 +1695,7 @@ mod tests {
 
             // Verify local degree bounds per node per layer.
             // This is the tighter invariant that replaces global density enforcement.
-            for node in g.nodes.iter() {
+            for node in &g.nodes {
                 for (layer_idx, adj) in node.layers.iter().enumerate() {
                     let m_max = if layer_idx == 0 { M0 } else { M };
                     assert!(
@@ -1294,7 +1738,7 @@ mod tests {
     fn compact_index_enables_binary_search_fallback() {
         let mut g = HnswGraph::new(16);
         for i in [5_u64, 2, 9, 1, 7] {
-            let v = make_vec(i as f64 * 0.1 + 0.2);
+            let v = make_vec((i as f64).mul_add(0.1, 0.2));
             g.insert(
                 NodeId::try_new(i).expect("NodeId válido por construcción"),
                 &v,
@@ -1319,11 +1763,102 @@ mod tests {
     }
     #[cfg(feature = "hnsw-f16")]
     #[test]
+    fn encode_layer0_matches_f16_encoder_per_index() {
+        let input = core::array::from_fn(|i| (i as f32).mul_add(0.25, -1.5));
+        let encoded = encode_layer0(&input).expect("finite input must encode");
+
+        for i in 0..TOTAL_BLADES {
+            assert_eq!(encoded[i], f32_to_f16_bits(input[i]), "blade index {i}");
+        }
+    }
+
+    #[cfg(not(feature = "hnsw-f16"))]
+    #[test]
+    fn encode_layer0_returns_exact_f32_copy_without_feature() {
+        let input = core::array::from_fn(|i| (i as f32 * 1.25) - 7.0);
+        let encoded = encode_layer0(&input).expect("finite input must encode");
+
+        assert_eq!(encoded, input);
+    }
+
+    #[cfg(feature = "hnsw-f16")]
+    #[test]
     fn layer0_f16_storage_is_half_of_f32() {
         assert_eq!(
             std::mem::size_of::<Layer0Coeffs>() * 2,
             std::mem::size_of::<[f32; TOTAL_BLADES]>()
         );
+    }
+
+    #[cfg(feature = "hnsw-f16")]
+    #[test]
+    fn layer0_distance_regression_f32_vs_f16_fixed_dataset() {
+        let dataset: [[f64; TOTAL_BLADES]; 6] = [
+            [
+                0.0, 0.1, -0.2, 0.3, 0.4, -0.5, 0.6, -0.7, 0.8, -0.9, 1.0, -1.1, 1.2, -1.3, 1.4,
+                -1.5,
+            ],
+            [
+                1.0, -1.0, 0.9, -0.9, 0.8, -0.8, 0.7, -0.7, 0.6, -0.6, 0.5, -0.5, 0.4, -0.4, 0.3,
+                -0.3,
+            ],
+            [
+                0.25,
+                -0.125,
+                0.0625,
+                -0.03125,
+                0.015_625,
+                -0.007_812_5,
+                0.0039,
+                -0.00195,
+                0.9,
+                -0.45,
+                0.225,
+                -0.1125,
+                0.05625,
+                -0.02812,
+                0.01406,
+                -0.00703,
+            ],
+            [
+                -0.99, 0.77, -0.55, 0.33, -0.11, 0.22, -0.44, 0.66, -0.88, 1.1, -1.2, 0.95, -0.75,
+                0.5, -0.25, 0.125,
+            ],
+            [
+                0.001, 0.002, 0.003, 0.004, -0.005, -0.006, -0.007, -0.008, 0.009, 0.010, -0.011,
+                -0.012, 0.013, 0.014, -0.015, -0.016,
+            ],
+            [
+                1.75, -1.5, 1.25, -1.0, 0.75, -0.5, 0.25, 0.0, -0.25, 0.5, -0.75, 1.0, -1.25, 1.5,
+                -1.75, 2.0,
+            ],
+        ];
+
+        for (q_idx, query_dense) in dataset.iter().enumerate() {
+            let query = SparseCliffordVector::from_dense(query_dense).expect("finite dense query");
+            for (v_idx, vector_dense) in dataset.iter().enumerate() {
+                let f32_layer: [f32; TOTAL_BLADES] =
+                    core::array::from_fn(|i| vector_dense[i] as f32);
+                let encoded_f32 =
+                    <layer0_codec::F32Codec as layer0_codec::Layer0Codec>::encode(&f32_layer);
+                let encoded_f16 =
+                    <layer0_codec::F16Codec as layer0_codec::Layer0Codec>::encode(&f32_layer);
+
+                let d_f32 = <layer0_codec::F32Codec as layer0_codec::Layer0Codec>::distance(
+                    &encoded_f32,
+                    &query,
+                );
+                let d_f16 = <layer0_codec::F16Codec as layer0_codec::Layer0Codec>::distance(
+                    &encoded_f16,
+                    &query,
+                );
+
+                assert!(
+                    (d_f32 - d_f16).abs() < 2.0e-3,
+                    "distance regression q={q_idx} v={v_idx}: f32={d_f32} f16={d_f16}"
+                );
+            }
+        }
     }
 
     #[cfg(feature = "hnsw-f16")]
@@ -1334,6 +1869,102 @@ mod tests {
             let y = f16_bits_to_f32(f32_to_f16_bits(x));
             assert!((x - y).abs() < 1e-3, "x={x} y={y}");
         }
+    }
+
+    #[cfg(feature = "hnsw-f16")]
+    #[test]
+    fn f16_local_monotonicity_holds_in_finite_range() {
+        let mut prev = f16_bits_to_f32(f32_to_f16_bits(0.0));
+        for i in 0..=2048 {
+            let x = i as f32 / 512.0;
+            let y = f16_bits_to_f32(f32_to_f16_bits(x));
+            assert!(
+                y >= prev,
+                "non-monotonic around x={x}: prev={prev} current={y}"
+            );
+            prev = y;
+        }
+    }
+
+    #[cfg(feature = "hnsw-f16")]
+    #[test]
+    fn f16_roundtrip_is_bounded_in_wider_finite_range() {
+        for i in -4000..=4000 {
+            let x = i as f32 / 1000.0;
+            let y = f16_bits_to_f32(f32_to_f16_bits(x));
+            let tol = 5.0e-3;
+            assert!((x - y).abs() <= tol, "x={x} y={y} tol={tol}");
+        }
+    }
+
+    #[cfg(all(feature = "hnsw-f16", genesis_const_layer0_codec))]
+    #[test]
+    fn f16_runtime_and_const_core_match() {
+        const CONST_REF_A: u16 = layer0_codec::f32_to_f16_bits_core(-3.75);
+        const CONST_REF_B: u16 = layer0_codec::f32_to_f16_bits_core(0.333_251_95);
+
+        assert_eq!(f32_to_f16_bits(-3.75), CONST_REF_A);
+        assert_eq!(f32_to_f16_bits(0.333_251_95), CONST_REF_B);
+
+        for i in -4096..=4096 {
+            let x = i as f32 / 257.0;
+            assert_eq!(
+                f32_to_f16_bits(x),
+                layer0_codec::f32_to_f16_bits_core(x),
+                "x={x}"
+            );
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn finite_random_16d_inputs_encode_layer0_without_nan_or_inf(
+            input in proptest::array::uniform16(-1.0e6_f64..1.0e6_f64)
+        ) {
+            let vector = SparseCliffordVector::from_dense(&input)
+                .expect("finite 16D input must be accepted");
+
+            let _node = HnswNode::new(make_id(999), vector, 0).expect("finite vector must create node");
+            let layer0_f32: [f32; TOTAL_BLADES] = core::array::from_fn(|i| input[i] as f32);
+            let encoded = encode_layer0(&layer0_f32).expect("finite layer0 must encode");
+
+            #[cfg(not(feature = "hnsw-f16"))]
+            {
+                prop_assert!(encoded.iter().all(|value| value.is_finite()));
+            }
+
+            #[cfg(feature = "hnsw-f16")]
+            {
+                let decoded: [f32; TOTAL_BLADES] = core::array::from_fn(|i| f16_bits_to_f32(encoded[i]));
+                prop_assert!(decoded.iter().all(|value| value.is_finite()));
+            }
+        }
+
+        #[test]
+        fn sparse_vector_rejects_non_finite_coefficients(
+            idx in 0usize..TOTAL_BLADES,
+            use_nan in any::<bool>()
+        ) {
+            let mut dense = [0.0_f64; TOTAL_BLADES];
+            dense[idx] = if use_nan { f64::NAN } else { f64::INFINITY };
+
+            let result = SparseCliffordVector::from_dense(&dense);
+            prop_assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn encode_layer0_returns_invalid_input_when_input_contains_non_finite_values() {
+        let mut input = [0.0_f32; TOTAL_BLADES];
+        input[3] = f32::NAN;
+        let result = encode_layer0(&input);
+
+        assert_eq!(
+            result,
+            Err(GenesisError::InvalidInput(
+                "Non-finite coefficients detected after conversion",
+            ))
+        );
     }
 
     #[test]
@@ -1388,9 +2019,10 @@ mod tests {
 
 #[cfg(test)]
 mod scaling_tests {
-    use super::*;
     use genesis_math::SparseCliffordVector;
     use genesis_types::NodeId;
+
+    use super::*;
 
     /// Empirically verify HNSW search scales as O(log N) not O(N).
     ///
@@ -1411,7 +2043,7 @@ mod scaling_tests {
             let mut rng = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             for c in &mut coeffs {
                 rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-                *c = ((rng >> 33) as f64 / u32::MAX as f64) * 2.0 - 1.0;
+                *c = ((rng >> 33) as f64 / u32::MAX as f64).mul_add(2.0, -1.0);
             }
             SparseCliffordVector::from_dense(&coeffs)
                 .unwrap_or_else(|_| SparseCliffordVector::zero())

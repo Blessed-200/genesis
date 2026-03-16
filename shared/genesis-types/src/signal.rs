@@ -36,11 +36,11 @@
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 
-use crate::constants::{CLIFFORD_BASIS_SIZE, COGNITIVE_PLANCK_CONSTANT};
-use crate::error::{domain_code, GenesisError};
-
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+
+use crate::constants::{CLIFFORD_BASIS_SIZE, COGNITIVE_PLANCK_CONSTANT};
+use crate::error::{domain_code, GenesisError};
 
 // ============================================================================
 // NEWTYPES — CORRECCIÓN ESTRUCTURAL-3
@@ -497,22 +497,13 @@ impl SpikeComponents {
 
     /// Returns `true` if blade `blade` is present in this snapshot.
     ///
-    /// Linear scan over `count` elements (K ≤ 16 — always bounded).
-    /// Early exit on overshoot (indices are sorted ascending).
+    /// Binary search over sorted active indices (O(log K), K ≤ 16).
     ///
     /// AX-ID: AXIOMA-018
     #[inline]
     pub fn is_active(&self, blade: u16) -> bool {
         let n = self.count as usize;
-        for i in 0..n {
-            if self.indices[i] == blade {
-                return true;
-            }
-            if self.indices[i] > blade {
-                break;
-            }
-        }
-        false
+        self.indices[..n].binary_search(&blade).is_ok()
     }
 
     /// Returns the coefficient for `blade`, or `0.0` if inactive.
@@ -1032,8 +1023,9 @@ impl DomainResetSignal {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashSet;
+
+    use super::*;
 
     // -----------------------------------------------------------------------
     // SpikeComponents — layout and size
@@ -1602,6 +1594,7 @@ mod tests {
         let s = core::mem::MaybeUninit::<SpikeComponents>::zeroed();
         // SAFETY: MaybeUninit is only used to get addresses — we never read uninit data.
         let base_addr = s.as_ptr() as usize;
+        // SAFETY: We only compute the field address from a valid pointer; no read occurs.
         let values_addr = unsafe { core::ptr::addr_of!((*s.as_ptr()).values) } as usize;
         assert_eq!(
             values_addr, base_addr,
@@ -1614,6 +1607,7 @@ mod tests {
     fn spike_components_indices_at_offset_128() {
         let s = core::mem::MaybeUninit::<SpikeComponents>::zeroed();
         let base_addr = s.as_ptr() as usize;
+        // SAFETY: We only compute the field address from a valid pointer; no read occurs.
         let indices_addr = unsafe { core::ptr::addr_of!((*s.as_ptr()).indices) } as usize;
         assert_eq!(
             indices_addr - base_addr,

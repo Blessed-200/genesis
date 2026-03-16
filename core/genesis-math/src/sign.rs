@@ -55,7 +55,7 @@ impl BladeIndex {
     /// # Errors
     /// Returns `GenesisError::BladeIndexOutOfRange` if `idx >= 16`.
     #[inline]
-    pub fn new(idx: u8) -> Result<Self, GenesisError> {
+    pub const fn new(idx: u8) -> Result<Self, GenesisError> {
         if idx > 15 {
             Err(GenesisError::BladeIndexOutOfRange {
                 index: idx as usize,
@@ -128,7 +128,7 @@ impl Sign {
 
     /// Returns the sign as `i8` ∈ {1, −1}.
     #[inline]
-    pub fn as_i8(self) -> i8 {
+    pub const fn as_i8(self) -> i8 {
         self as i8
     }
 

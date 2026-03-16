@@ -12,10 +12,8 @@
 #![allow(clippy::cast_precision_loss, clippy::doc_markdown)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use genesis_math::{
-    compute_clifford_norm_sq, experimental::kernel_dense_g13::dense_geometric_product_g13,
-    sparse_geometric_product, SparseCliffordVector,
-};
+use genesis_math::experimental::kernel_dense_g13::dense_geometric_product_g13;
+use genesis_math::{compute_clifford_norm_sq, sparse_geometric_product, SparseCliffordVector};
 use genesis_types::constants::COGNITIVE_PLANCK_CONSTANT;
 
 // ── Benchmark helpers ─────────────────────────────────────────────────────────
@@ -125,7 +123,7 @@ fn single_blade(blade: usize, coef: f64) -> SparseCliffordVector {
 fn sparse_mv_from_mask(mask: u16, seed: f64) -> SparseCliffordVector {
     SparseCliffordVector::from_iter((0..16).filter_map(|i| {
         if (mask & (1 << i)) != 0 {
-            Some((i, seed + (i as f64) * 0.25))
+            Some((i, (i as f64).mul_add(0.25, seed)))
         } else {
             None
         }
@@ -282,6 +280,41 @@ fn bench_bivector_norm_sq_of_product(c: &mut Criterion) {
         });
 }
 
+#[inline]
+fn matmul4x4(a: &[[f64; 4]; 4], b: &[[f64; 4]; 4]) -> [[f64; 4]; 4] {
+    let mut out = [[0.0f64; 4]; 4];
+    for i in 0..4 {
+        for j in 0..4 {
+            let mut sum = 0.0f64;
+            for k in 0..4 {
+                sum = a[i][k].mul_add(b[k][j], sum);
+            }
+            out[i][j] = sum;
+        }
+    }
+    out
+}
+
+fn matrix4_from_mv(mv: &SparseCliffordVector) -> [[f64; 4]; 4] {
+    core::array::from_fn(|i| core::array::from_fn(|j| mv.coeffs[i * 4 + j]))
+}
+
+fn bench_elite_algebra_vs_matrix4(c: &mut Criterion) {
+    let a_mv = full_mv();
+    let b_mv = SparseCliffordVector::from_iter((0..16).map(|i| (i, (i as f64).sin()))).unwrap();
+    let a_mat = matrix4_from_mv(&a_mv);
+    let b_mat = matrix4_from_mv(&b_mv);
+
+    let mut group = c.benchmark_group("elite_algebra_compare");
+    group.bench_function("clifford_g13_geometric_product_sparse", |bencher| {
+        bencher.iter(|| black_box(sparse_geometric_product(black_box(&a_mv), black_box(&b_mv))));
+    });
+    group.bench_function("matrix4x4_multiplication_fma", |bencher| {
+        bencher.iter(|| black_box(matmul4x4(black_box(&a_mat), black_box(&b_mat))));
+    });
+    group.finish();
+}
+
 // ── Benchmark: sparse_geometric_product — contiguous sparse batch ───────────
 
 fn bench_sparse_geo_product_contiguous_batch(c: &mut Criterion) {
@@ -319,5 +352,6 @@ criterion_group!(
     bench_bivector_norm_sq_of_product,
     bench_sparse_geo_product_contiguous_batch,
     bench_from_dense_single_pass,
+    bench_elite_algebra_vs_matrix4,
 );
 criterion_main!(benches);

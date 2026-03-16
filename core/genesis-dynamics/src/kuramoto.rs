@@ -1,5 +1,6 @@
-use crate::oscillator::QuantumOscillator;
 use genesis_types::{GenesisError, NodeId};
+
+use crate::oscillator::QuantumOscillator;
 
 /// Genera una muestra aproximadamente `N(0,1)` vía Box-Muller con LCG de 64 bits.
 ///
@@ -43,12 +44,14 @@ fn gaussian_noise(rng: &mut u64) -> f64 {
     #[allow(clippy::cast_precision_loss)]
     let u2 = (*rng >> 11) as f64 / (1u64 << 53) as f64;
 
-    let r = (-2.0 * u1.ln()).sqrt();
-    let theta = 2.0 * core::f64::consts::PI * u2;
+    let r = u1.ln().mul_add(-2.0, 0.0).sqrt();
+    let theta = u2.mul_add(2.0 * core::f64::consts::PI, 0.0);
     r * theta.cos()
 }
 
 // ── wrap_phase_diff ───────────────────────────────────────────────────────────
+
+const INV_TAU: f64 = 1.0 / core::f64::consts::TAU;
 
 /// Diferencia de fase en S¹.
 ///
@@ -67,7 +70,13 @@ fn gaussian_noise(rng: &mut u64) -> f64 {
 #[allow(clippy::inline_always)]
 #[inline(always)]
 fn wrap_phase_diff(d: f64) -> f64 {
-    d - core::f64::consts::TAU * (d * (1.0 / core::f64::consts::TAU) + 0.5).floor()
+    let turns = d.mul_add(INV_TAU, 0.5).floor();
+    let wrapped = core::f64::consts::TAU.mul_add(-turns, d);
+    if wrapped == core::f64::consts::PI {
+        -core::f64::consts::PI
+    } else {
+        wrapped
+    }
 }
 
 // ── QuantumKuramotoNetwork ────────────────────────────────────────────────────
@@ -132,7 +141,7 @@ impl QuantumKuramotoNetwork {
     /// Creates a new Kuramoto network with the given noise temperature `kT`.
     ///
     /// Higher `temperature` → stronger stochastic exploration (AXIOMA-006).
-    pub fn new(temperature: f64) -> Self {
+    pub const fn new(temperature: f64) -> Self {
         Self {
             oscillators: Vec::new(),
             coupling: Vec::new(),
@@ -265,7 +274,11 @@ impl QuantumKuramotoNetwork {
 
         // Mean amplitude squared — normalises amplitude product.
         let avg_amp_sq: f64 = {
-            let s: f64 = self.oscillators.iter().map(|o| o.amplitude_norm()).sum();
+            let s: f64 = self
+                .oscillators
+                .iter()
+                .map(super::oscillator::QuantumOscillator::amplitude_norm)
+                .sum();
             let mean = s / n as f64;
             (mean * mean).max(f64::MIN_POSITIVE)
         };
@@ -278,7 +291,7 @@ impl QuantumKuramotoNetwork {
             self.sat_scratch[i] = 1.0 - amp;
         }
 
-        let sqrt_2k_t_dt = (2.0 * self.temperature * dt).sqrt();
+        let sqrt_2k_t_dt = self.temperature.mul_add(2.0 * dt, 0.0).sqrt();
 
         for i in 0..n {
             if !self.oscillators[i].state.contributes_to_sync() {
@@ -307,16 +320,18 @@ impl QuantumKuramotoNetwork {
                 let amp_factor = (amp_i * amp_j) / avg_amp_sq;
 
                 // Orientation modulation: α + β·⟨Bᵢ,Bⱼ⟩₂ ∈ (α−β, α+β) for unit bivectors.
-                let orient_factor = KURAMOTO_COUPLING_ALPHA + KURAMOTO_COUPLING_BETA * dot_biv;
+                let orient_factor =
+                    KURAMOTO_COUPLING_BETA.mul_add(dot_biv, KURAMOTO_COUPLING_ALPHA);
 
                 // Habituation: settled pairs withdraw coupling (AXIOMA-008 coupling).
-                let habituate = 1.0 - sat_i * sat_j;
+                let habituate = (-sat_i).mul_add(sat_j, 1.0);
 
                 let adaptive_gamma =
                     (gamma_0 * amp_factor * orient_factor * habituate).max(KURAMOTO_COUPLING_FLOOR);
 
                 for g in 0..5usize {
-                    coupling_sums[g] += adaptive_gamma * (phi_j[g] - phi_i[g]).sin();
+                    coupling_sums[g] =
+                        adaptive_gamma.mul_add((phi_j[g] - phi_i[g]).sin(), coupling_sums[g]);
                 }
             }
 
@@ -327,7 +342,8 @@ impl QuantumKuramotoNetwork {
                 } else {
                     0.0
                 };
-                self.oscillators[i].phases[g] += (omega + coupling_sum) * dt + eta;
+                self.oscillators[i].phases[g] =
+                    dt.mul_add(omega + coupling_sum, self.oscillators[i].phases[g]) + eta;
             }
         }
 
@@ -336,7 +352,7 @@ impl QuantumKuramotoNetwork {
 
     /// Número de nodos registrados.
     #[inline]
-    pub fn node_count(&self) -> usize {
+    pub const fn node_count(&self) -> usize {
         self.oscillators.len()
     }
 
@@ -367,10 +383,13 @@ impl QuantumKuramotoNetwork {
         }
         let oi = &self.oscillators[ii];
         let oj = &self.oscillators[ij];
-        let sum_sq: f64 = (0..5)
-            .map(|g| {
-                let d = wrap_phase_diff(oi.phases[g] - oj.phases[g]);
-                d * d
+        let sum_sq: f64 = oi
+            .phases
+            .iter()
+            .zip(oj.phases.iter())
+            .map(|(&phi_i, &phi_j)| {
+                let d = wrap_phase_diff(phi_i - phi_j);
+                d.mul_add(d, 0.0)
             })
             .sum();
         (sum_sq / 5.0).sqrt()
@@ -397,7 +416,7 @@ impl QuantumKuramotoNetwork {
             self.phase_scratch[i] = self.oscillators[i].phases;
         }
 
-        let sqrt_2k_t_dt = (2.0 * self.temperature * dt).sqrt();
+        let sqrt_2k_t_dt = self.temperature.mul_add(2.0 * dt, 0.0).sqrt();
 
         if self.temperature > 0.0 {
             self.step_inner_noisy(dt, sqrt_2k_t_dt);
@@ -430,8 +449,8 @@ impl QuantumKuramotoNetwork {
         #[allow(clippy::cast_precision_loss)]
         let u2 = (self.rng_state >> 11) as f64 / (1u64 << 53) as f64;
 
-        let r = (-2.0 * u1.ln()).sqrt();
-        let theta = 2.0 * core::f64::consts::PI * u2;
+        let r = u1.ln().mul_add(-2.0, 0.0).sqrt();
+        let theta = u2.mul_add(2.0 * core::f64::consts::PI, 0.0);
         let (sin_theta, cos_theta) = theta.sin_cos();
         self.spare_gaussian = Some(r * sin_theta);
         r * cos_theta
@@ -461,8 +480,8 @@ impl QuantumKuramotoNetwork {
             if oscillators[j_u32 as usize].state.contributes_to_sync() {
                 #[allow(clippy::cast_possible_truncation)]
                 let phi_j = &phase_scratch[j_u32 as usize];
-                for g in 0..5usize {
-                    sums[g] += gamma * (phi_j[g] - phi_i[g]).sin();
+                for (g, sum_g) in sums.iter_mut().enumerate() {
+                    *sum_g = gamma.mul_add((phi_j[g] - phi_i[g]).sin(), *sum_g);
                 }
             }
         }
@@ -487,7 +506,8 @@ impl QuantumKuramotoNetwork {
             );
             for (g, coupling_sum) in coupling_sums.iter().enumerate() {
                 let omega = self.oscillators[i].frequencies[g];
-                self.oscillators[i].phases[g] += (omega + coupling_sum) * dt;
+                self.oscillators[i].phases[g] =
+                    dt.mul_add(omega + coupling_sum, self.oscillators[i].phases[g]);
             }
         }
     }
@@ -514,15 +534,17 @@ impl QuantumKuramotoNetwork {
             // for self access more predictable.
             let noise_buf = {
                 let mut buf = [0.0f64; 5];
-                for n in buf.iter_mut() {
+                for n in &mut buf {
                     *n = self.next_gaussian();
                 }
                 buf
             };
             for (g, coupling_sum) in coupling_sums.iter().enumerate() {
                 let omega = self.oscillators[i].frequencies[g];
-                self.oscillators[i].phases[g] +=
-                    (omega + coupling_sum) * dt + sqrt_2k_t_dt * noise_buf[g];
+                self.oscillators[i].phases[g] = sqrt_2k_t_dt.mul_add(
+                    noise_buf[g],
+                    dt.mul_add(omega + coupling_sum, self.oscillators[i].phases[g]),
+                );
             }
         }
     }
@@ -561,8 +583,8 @@ impl QuantumKuramotoNetwork {
                     .fold((0.0f64, 0.0f64, 0.0f64), |(sc, ss, sa), osc| {
                         let a = osc.amplitudes[g];
                         (
-                            sc + a * osc.phases[g].cos(),
-                            ss + a * osc.phases[g].sin(),
+                            a.mul_add(osc.phases[g].cos(), sc),
+                            a.mul_add(osc.phases[g].sin(), ss),
                             sa + a,
                         )
                     });
@@ -631,7 +653,7 @@ impl QuantumKuramotoNetwork {
     /// Number of coupling edges currently registered.
     ///
     /// Useful for verifying that `remove_oscillator` correctly purges edges.
-    pub fn coupling_count(&self) -> usize {
+    pub const fn coupling_count(&self) -> usize {
         self.coupling.len()
     }
 
@@ -645,13 +667,15 @@ impl QuantumKuramotoNetwork {
     /// Returns 0.0 if the node is not registered.
     /// AX-ID: LEY_FUNDACIONAL §3.7, CRATE-004 prerequisite
     pub fn amplitude_norm(&self, id: NodeId) -> f64 {
-        let raw = id.get() as usize;
+        let Ok(raw) = usize::try_from(id.get()) else {
+            return 0.0;
+        };
         let idx = self
             .id_to_idx
             .get(raw)
             .copied()
             .filter(|&i| i != u32::MAX)
-            .map(|i| i as usize);
+            .and_then(|i| usize::try_from(i).ok());
         idx.and_then(|i| self.oscillators.get(i))
             .map_or(0.0, crate::oscillator::QuantumOscillator::amplitude_norm)
     }
@@ -665,13 +689,15 @@ impl QuantumKuramotoNetwork {
     ///
     /// AX-ID: LEY_FUNDACIONAL §3.7, CRATE-004 prerequisite
     pub fn set_amplitude_all_grades(&mut self, id: NodeId, amplitude: f64) {
-        let raw = id.get() as usize;
+        let Ok(raw) = usize::try_from(id.get()) else {
+            return;
+        };
         let idx = self
             .id_to_idx
             .get(raw)
             .copied()
             .filter(|&i| i != u32::MAX)
-            .map(|i| i as usize);
+            .and_then(|i| usize::try_from(i).ok());
         if let Some(i) = idx {
             if let Some(osc) = self.oscillators.get_mut(i) {
                 osc.amplitudes = [amplitude.clamp(0.0, 1.0); 5];
@@ -693,7 +719,9 @@ impl QuantumKuramotoNetwork {
     ///
     /// AX-ID: LEY_FUNDACIONAL §3.7 (WormholeCollapse), CRATE-004 prerequisite
     pub fn remove_oscillator(&mut self, id: NodeId) -> Result<(), GenesisError> {
-        let raw = id.get() as usize;
+        let Ok(raw) = usize::try_from(id.get()) else {
+            return Err(GenesisError::NodeNotFound { id });
+        };
         let idx = self
             .id_to_idx
             .get(raw)
@@ -1139,20 +1167,50 @@ mod tests {
     }
 
     #[test]
-    fn wrap_phase_diff_property() {
+    fn wrap_phase_diff_plus_pi_boundary_maps_to_minus_pi() {
         let two_pi = core::f64::consts::TAU;
         let pi = core::f64::consts::PI;
 
-        // Bordes exactos y equivalentes periódicos.
-        let edge_cases = [-pi, pi, -3.0 * pi, 3.0 * pi, -two_pi, two_pi, 0.0, f64::NAN];
-        for &d in &edge_cases {
+        for &n in &[-3.0_f64, -1.0, 0.0, 2.0, 7.0] {
+            let d = n.mul_add(two_pi, pi);
             let w = wrap_phase_diff(d);
-            if d.is_nan() {
-                assert!(w.is_nan(), "NaN debe propagarse");
-            } else {
-                assert!(w >= -pi && w < pi, "wrap fuera de rango [-π, π): {}", w);
-            }
+            assert!(
+                (w + pi).abs() <= 1e-12,
+                "d=n·2π+π debe mapear a -π: n={} d={} wrap={}",
+                n,
+                d,
+                w
+            );
         }
+    }
+
+    #[test]
+    fn wrap_phase_diff_minus_pi_boundary_maps_to_minus_pi() {
+        let two_pi = core::f64::consts::TAU;
+        let pi = core::f64::consts::PI;
+
+        for &n in &[-5.0_f64, -1.0, 0.0, 1.0, 4.0] {
+            let d = n.mul_add(two_pi, -pi);
+            let w = wrap_phase_diff(d);
+            assert!(
+                (w + pi).abs() <= 1e-12,
+                "d=n·2π-π debe mapear a -π: n={} d={} wrap={}",
+                n,
+                d,
+                w
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_phase_diff_propagates_nan() {
+        assert!(wrap_phase_diff(f64::NAN).is_nan(), "NaN debe propagarse");
+    }
+
+    #[test]
+    fn wrap_phase_diff_periodic_invariant() {
+        let two_pi = core::f64::consts::TAU;
+        let pi = core::f64::consts::PI;
 
         // 10k casos pseudoaleatorios con invarianza periódica y rango.
         let mut state = 0x9E37_79B9_7F4A_7C15_u64;
@@ -1166,21 +1224,24 @@ mod tests {
             let w = wrap_phase_diff(d);
             assert!(w >= -pi && w < pi, "wrap fuera de rango [-π, π): {}", w);
 
-            let wp = wrap_phase_diff(d + 37.0 * two_pi);
-            assert!(
-                (w - wp).abs() <= 1e-12,
-                "invarianza periódica rota: d={} wrap={} wrap+2πk={}",
-                d,
-                w,
-                wp
-            );
+            for &k in &[-37.0_f64, -1.0, 0.0, 1.0, 37.0] {
+                let wp = wrap_phase_diff(k.mul_add(two_pi, d));
+                assert!(
+                    (w - wp).abs() <= 1e-12,
+                    "invarianza periódica rota: d={} k={} wrap={} wrap+2πk={}",
+                    d,
+                    k,
+                    w,
+                    wp
+                );
+            }
         }
     }
 
     #[test]
     fn gaussian_noise_mean_and_variance() {
         // Verificar E[η] ≈ 0 y Var[η] ≈ 1 para N=10000 muestras.
-        let mut rng = 0xdeadbeef_u64;
+        let mut rng = 0xdead_beef_u64;
         let n = 10_000usize;
         let mut sum = 0.0f64;
         let mut sum_sq = 0.0f64;
@@ -1190,7 +1251,7 @@ mod tests {
             sum_sq += x * x;
         }
         let mean = sum / n as f64;
-        let variance = sum_sq / n as f64 - mean * mean;
+        let variance = mean.mul_add(-mean, sum_sq / n as f64);
         assert!(mean.abs() < 0.05, "E[η] = {:.4} debe ser ≈ 0", mean);
         assert!(
             (variance - 1.0).abs() < 0.05,
@@ -1219,9 +1280,10 @@ mod tests {
 
 #[cfg(test)]
 mod prerequisite_api_tests {
-    use super::*;
-    use crate::oscillator::{OscillatorState, QuantumOscillator};
     use genesis_types::NodeId;
+
+    use super::*;
+    use crate::oscillator::QuantumOscillator;
 
     fn node(raw: u64) -> NodeId {
         NodeId::try_new(raw).unwrap()

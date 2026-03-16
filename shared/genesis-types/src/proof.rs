@@ -26,6 +26,8 @@ use arrayvec::ArrayVec;
 use blake3;
 use smallvec::SmallVec;
 
+use crate::{error::GenesisError, signal::NodeId};
+
 /// SSO witness buffer — stack-inline for witnesses ≤ 512 bytes (matches
 /// `WitnessBuffer::Small` capacity, guaranteeing zero-alloc end-to-end),
 /// heap spill only for larger witnesses.
@@ -52,6 +54,113 @@ pub type Witness = SmallVec<[u8; 512]>;
 ///
 /// AX-ID: GENESIS_PROOF_SPEC §2.2, FIX-C
 pub const WITNESS_INLINE_CAPACITY: usize = 512;
+
+/// Hash canónico de un [`Proof`] (BLAKE3, 32 bytes).
+///
+/// AX-ID: `GENESIS_PROOF_SPEC` §2.2
+pub type ProofHash = [u8; 32];
+
+/// Capacidad inline para premisas causales antes de hacer spill a heap.
+///
+/// AX-ID: `GENESIS_PROOF_SPEC` §2.5
+pub const PREMISES_INLINE_CAPACITY: usize = 4;
+
+/// Buffer de premisas con ruta hot-path sin heap para ≤4 entradas.
+///
+/// AX-ID: `GENESIS_PROOF_SPEC` §2.5
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Premises {
+    /// Ruta stack-only para historiales causales cortos.
+    Small(ArrayVec<ProofHash, PREMISES_INLINE_CAPACITY>),
+    /// Spill a heap cuando el grafo requiere más premisas.
+    Large(Vec<ProofHash>),
+}
+
+impl Default for Premises {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Premises {
+    /// Crea un contenedor vacío de premisas causales.
+    ///
+    /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
+    pub fn new() -> Self {
+        Self::Small(ArrayVec::new())
+    }
+
+    /// Retorna el número de premisas.
+    ///
+    /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
+    pub const fn len(&self) -> usize {
+        match self {
+            Self::Small(items) => items.len(),
+            Self::Large(items) => items.len(),
+        }
+    }
+
+    /// Retorna `true` si no hay premisas.
+    ///
+    /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Agrega una premisa causal al final.
+    ///
+    /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
+    pub fn push(&mut self, premise: ProofHash) {
+        match self {
+            Self::Small(items) => {
+                if items.len() < PREMISES_INLINE_CAPACITY {
+                    items.push(premise);
+                } else {
+                    let mut large = Vec::with_capacity(items.len() + 1);
+                    large.extend(items.iter().copied());
+                    large.push(premise);
+                    *self = Self::Large(large);
+                }
+            }
+            Self::Large(items) => items.push(premise),
+        }
+    }
+
+    /// Itera sobre las premisas almacenadas.
+    ///
+    /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
+    pub fn iter(&self) -> impl Iterator<Item = &ProofHash> {
+        match self {
+            Self::Small(items) => items.iter(),
+            Self::Large(items) => items.iter(),
+        }
+    }
+}
+
+impl From<Vec<ProofHash>> for Premises {
+    fn from(value: Vec<ProofHash>) -> Self {
+        if value.len() <= PREMISES_INLINE_CAPACITY {
+            let mut small = ArrayVec::<ProofHash, PREMISES_INLINE_CAPACITY>::new();
+            small.extend(value);
+            Self::Small(small)
+        } else {
+            Self::Large(value)
+        }
+    }
+}
+
+/// Metadatos opcionales de consistencia histórica para un [`Proof`].
+///
+/// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofMeta {
+    /// Nodo que originó la mutación o aserción certificada.
+    pub origin_node: NodeId,
+    /// Dominio lógico del target (mutación o aserción), hash estable.
+    pub target_domain_hash: ProofHash,
+    /// Hash del estado/aserción resultante tras aplicar la prueba.
+    pub resulting_state_hash: ProofHash,
+}
 
 // ============================================================================
 // AxiomID
@@ -163,7 +272,7 @@ impl AxiomID {
     /// Invariantes requeridos para mutaciones estructurales estándar.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.1
-    pub const STRUCTURAL_REQUIRED: &'static [AxiomID] = &[
+    pub const STRUCTURAL_REQUIRED: &'static [Self] = &[
         Self::MinkowskiSignature,
         Self::CohomologyZero,
         Self::AlgebraicConnectivity,
@@ -175,7 +284,7 @@ impl AxiomID {
     /// Incluye verificación de dualidad Fisher y admisión energética.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.1
-    pub const EXPANSION_REQUIRED: &'static [AxiomID] = &[
+    pub const EXPANSION_REQUIRED: &'static [Self] = &[
         Self::MinkowskiSignature,
         Self::CohomologyZero,
         Self::AlgebraicConnectivity,
@@ -215,7 +324,13 @@ pub struct Proof {
     /// Timestamp en nanosegundos del momento de generación.
     pub timestamp: u64,
     /// BLAKE3 del campo `witness`. Detecta cualquier modificación post-generación.
-    pub hash: [u8; 32],
+    pub hash: ProofHash,
+    /// Referencia opcional al proof padre en la cadena causal.
+    pub parent_proof_hash: Option<ProofHash>,
+    /// Premisas causales explícitas (DAG) de este proof.
+    pub premises: Premises,
+    /// Capa opcional de metaconsistencia (origen, dominio y estado resultante).
+    pub meta: Option<ProofMeta>,
 }
 
 impl Proof {
@@ -227,6 +342,9 @@ impl Proof {
             witness,
             timestamp,
             hash,
+            parent_proof_hash: None,
+            premises: Premises::new(),
+            meta: None,
         }
     }
 
@@ -248,10 +366,177 @@ impl Proof {
         use crate::constants::PROOF_MAX_AGE_NS;
         current_ns >= self.timestamp && current_ns - self.timestamp < PROOF_MAX_AGE_NS
     }
+
+    /// Adjunta relaciones causales opcionales sin alterar el hash base.
+    ///
+    /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
+    #[must_use]
+    pub fn with_causal_links(
+        mut self,
+        parent_proof_hash: Option<ProofHash>,
+        premises: Premises,
+    ) -> Self {
+        self.parent_proof_hash = parent_proof_hash;
+        self.premises = premises;
+        self
+    }
+
+    /// Adjunta metadatos de dominio para validación histórica.
+    ///
+    /// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
+    #[must_use]
+    pub const fn with_meta(mut self, meta: ProofMeta) -> Self {
+        self.meta = Some(meta);
+        self
+    }
 }
 
-fn blake3_hash(data: &[u8]) -> [u8; 32] {
+fn blake3_hash(data: &[u8]) -> ProofHash {
     *blake3::hash(data).as_bytes()
+}
+
+/// Resultado de una validación de metaconsistencia.
+///
+/// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
+#[derive(Debug, Clone, PartialEq)]
+pub enum MetaConsistencyError {
+    /// Falló la validación base (hash+witness+axiomas) del layer existente.
+    Base(GenesisError),
+    /// El grafo causal contiene un ciclo, violando la estructura DAG.
+    CausalCycle,
+    /// Existe conflicto histórico con otro proof válido.
+    Conflict {
+        /// Hash del proof candidato que intenta entrar al historial.
+        candidate: ProofHash,
+        /// Hash del proof histórico ya aceptado con el que colisiona.
+        existing: ProofHash,
+    },
+}
+
+/// Regla pluggable para detección de conflictos históricos.
+///
+/// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
+pub trait ConflictRule {
+    /// Retorna `true` si `candidate` y `existing` son mutuamente incompatibles.
+    fn conflicts(&self, candidate: &Proof, existing: &Proof) -> bool;
+}
+
+/// Heurística base de conflicto: mismo nodo + mismo dominio + estado distinto.
+///
+/// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NodeDomainStateConflictRule;
+
+impl ConflictRule for NodeDomainStateConflictRule {
+    fn conflicts(&self, candidate: &Proof, existing: &Proof) -> bool {
+        match (&candidate.meta, &existing.meta) {
+            (Some(c), Some(e)) => {
+                c.origin_node == e.origin_node
+                    && c.target_domain_hash == e.target_domain_hash
+                    && c.resulting_state_hash != e.resulting_state_hash
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Capa separada de validación histórica sobre proofs internamente válidos.
+///
+/// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
+#[derive(Debug, Clone)]
+pub struct MetaConsistencyValidator<R: ConflictRule = NodeDomainStateConflictRule> {
+    rule: R,
+}
+
+impl<R: ConflictRule> MetaConsistencyValidator<R> {
+    /// Construye un validador con una regla de conflicto pluggable.
+    ///
+    /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
+    pub const fn new(rule: R) -> Self {
+        Self { rule }
+    }
+
+    /// Ejecuta validación histórica: DAG + conflictos contra historial válido.
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    /// - `MetaConsistencyError::CausalCycle` if the causal proof graph contains a cycle.
+    /// - `MetaConsistencyError::Conflict` if the candidate proof conflicts with an existing proof.
+    ///
+    /// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
+    pub fn validate_against_history(
+        &self,
+        candidate: &Proof,
+        history: &[&Proof],
+    ) -> Result<(), MetaConsistencyError> {
+        Self::ensure_dag(candidate, history)?;
+
+        for existing in history {
+            if self.rule.conflicts(candidate, existing) {
+                return Err(MetaConsistencyError::Conflict {
+                    candidate: candidate.hash,
+                    existing: existing.hash,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn ensure_dag(candidate: &Proof, history: &[&Proof]) -> Result<(), MetaConsistencyError> {
+        let mut nodes: Vec<(ProofHash, &Proof)> = Vec::with_capacity(history.len() + 1);
+        for proof in history {
+            nodes.push((proof.hash, *proof));
+        }
+        nodes.push((candidate.hash, candidate));
+        nodes.sort_by_key(|(hash, _)| *hash);
+
+        let mut colors = vec![0u8; nodes.len()];
+        for idx in 0..nodes.len() {
+            if colors[idx] == 0 && Self::dfs_cycle(idx, &nodes, &mut colors) {
+                return Err(MetaConsistencyError::CausalCycle);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn dfs_cycle(idx: usize, nodes: &[(ProofHash, &Proof)], colors: &mut [u8]) -> bool {
+        colors[idx] = 1;
+        let (_, proof) = nodes[idx];
+
+        if let Some(parent) = proof.parent_proof_hash {
+            if let Ok(next_idx) = nodes.binary_search_by_key(&parent, |(hash, _)| *hash) {
+                if colors[next_idx] == 1
+                    || (colors[next_idx] == 0 && Self::dfs_cycle(next_idx, nodes, colors))
+                {
+                    return true;
+                }
+            }
+        }
+
+        for premise in proof.premises.iter() {
+            if let Ok(next_idx) = nodes.binary_search_by_key(premise, |(hash, _)| *hash) {
+                if colors[next_idx] == 1
+                    || (colors[next_idx] == 0 && Self::dfs_cycle(next_idx, nodes, colors))
+                {
+                    return true;
+                }
+            }
+        }
+
+        colors[idx] = 2;
+        false
+    }
+}
+
+impl Default for MetaConsistencyValidator<NodeDomainStateConflictRule> {
+    fn default() -> Self {
+        Self {
+            rule: NodeDomainStateConflictRule,
+        }
+    }
 }
 
 // ============================================================================
@@ -383,6 +668,22 @@ impl AxiomGuard {
     /// Retorna [`crate::error::GenesisError::ProofInvalid`] cuando el proof no
     /// cumple integridad, cobertura de axiomas o replay del witness.
     ///
+    /// # Errors
+    ///
+    /// Retorna [`crate::error::GenesisError::ProofInvalid`] en cualquiera de
+    /// estas condiciones contractuales:
+    ///
+    /// - **Violación de integridad topológica del witness**: el hash BLAKE3 del
+    ///   witness no coincide con `proof.hash`, indicando alteración del
+    ///   certificado después de su emisión.
+    /// - **Disonancia de mutación declarada**: falta al menos un axioma de
+    ///   `required` dentro de `proof.axioms_checked`, por lo que la mutación no
+    ///   satisface el contrato mínimo para ser aplicada.
+    /// - **Incumplimiento axiomático en replay**: el witness no puede
+    ///   deserializarse de forma consistente (frames truncados, IDs inválidos o
+    ///   checks con resultado negativo), rompiendo la trazabilidad de los
+    ///   axiomas reclamados por el proof.
+    ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.4
     pub fn verify_for_result<'p, M: Mutation>(
         proof: &'p Proof,
@@ -392,6 +693,26 @@ impl AxiomGuard {
         Ok(VerifiedProof {
             _mutation: core::marker::PhantomData,
         })
+    }
+
+    /// Verifica la capa base y luego aplica metaconsistencia histórica.
+    ///
+    /// # Errors
+    ///
+    /// Returns:
+    /// - `MetaConsistencyError::Base` if the base proof validation fails.
+    /// - Any error produced by the meta-consistency validator
+    ///   (causal cycle or historical conflict).
+    ///
+    /// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
+    pub fn verify_with_meta<R: ConflictRule>(
+        proof: &Proof,
+        required: &[AxiomID],
+        history: &[&Proof],
+        validator: &MetaConsistencyValidator<R>,
+    ) -> Result<(), MetaConsistencyError> {
+        Self::verify_with_error(proof, required).map_err(MetaConsistencyError::Base)?;
+        validator.validate_against_history(proof, history)
     }
 
     /// Deserializa el witness frame a frame y verifica que todos los axiomas
@@ -566,21 +887,30 @@ impl Default for WitnessBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use core::alloc::{GlobalAlloc, Layout};
-    use core::sync::atomic::{AtomicUsize, Ordering};
+    use core::cell::Cell;
+
+    use super::*;
 
     struct CountingAllocator;
 
-    static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static ALLOC_RECORDING: Cell<bool> = const { Cell::new(false) };
+        static ALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
+        static ALLOC_GUARD_DEPTH: Cell<usize> = const { Cell::new(0) };
+    }
 
     #[global_allocator]
     static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
-    // SAFETY: Delegates to the system allocator while counting allocation calls.
+    // SAFETY: Delegates to the system allocator while counting allocations for the current test thread.
     unsafe impl GlobalAlloc for CountingAllocator {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
+            ALLOC_RECORDING.with(|recording| {
+                if recording.get() {
+                    ALLOC_COUNT.with(|count| count.set(count.get() + 1));
+                }
+            });
             std::alloc::System.alloc(layout)
         }
 
@@ -591,17 +921,47 @@ mod tests {
 
         // SAFETY: delegates directly to GlobalAlloc::realloc; ptr was allocated by this allocator.
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            ALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
+            ALLOC_RECORDING.with(|recording| {
+                if recording.get() {
+                    ALLOC_COUNT.with(|count| count.set(count.get() + 1));
+                }
+            });
             std::alloc::System.realloc(ptr, layout, new_size)
         }
     }
 
-    fn reset_alloc_counter() {
-        ALLOC_COUNT.store(0, Ordering::SeqCst);
+    struct AllocationScope {
+        start: usize,
     }
 
-    fn alloc_count() -> usize {
-        ALLOC_COUNT.load(Ordering::SeqCst)
+    impl AllocationScope {
+        fn begin() -> Self {
+            ALLOC_GUARD_DEPTH.with(|depth| {
+                assert_eq!(
+                    depth.get(),
+                    0,
+                    "nested allocation scopes in the same thread are unsupported"
+                );
+                depth.set(1);
+            });
+
+            ALLOC_COUNT.with(|count| count.set(0));
+            ALLOC_RECORDING.with(|recording| recording.set(true));
+            let start = ALLOC_COUNT.with(Cell::get);
+
+            Self { start }
+        }
+
+        fn delta(&self) -> usize {
+            ALLOC_COUNT.with(Cell::get).saturating_sub(self.start)
+        }
+    }
+
+    impl Drop for AllocationScope {
+        fn drop(&mut self) {
+            ALLOC_RECORDING.with(|recording| recording.set(false));
+            ALLOC_GUARD_DEPTH.with(|depth| depth.set(0));
+        }
     }
 
     // ── Helper ─────────────────────────────────────────────────────────────
@@ -679,11 +1039,11 @@ mod tests {
         }
 
         let proof = build_proof(&[(AxiomID::MinkowskiSignature, true)]).unwrap();
-        let err =
-            match AxiomGuard::verify_for_result::<MissingMutation>(&proof, &[AxiomID::CohomologyZero]) {
-                Ok(_) => panic!("missing required axiom must fail"),
-                Err(err) => err,
-            };
+        let Err(err) =
+            AxiomGuard::verify_for_result::<MissingMutation>(&proof, &[AxiomID::CohomologyZero])
+        else {
+            panic!("missing required axiom must fail")
+        };
         assert_eq!(
             err,
             crate::error::GenesisError::ProofInvalid { axiom_id: 1 }
@@ -877,16 +1237,16 @@ mod tests {
     #[test]
     fn witness_builder_small_witness_zero_alloc_256_bytes() {
         let mut builder = WitnessBuilder::new();
-        reset_alloc_counter();
 
+        let scope = AllocationScope::begin();
         for _ in 0..64 {
             builder.check(AxiomID::MinkowskiSignature, || true).unwrap();
         }
 
         assert_eq!(
-            alloc_count(),
+            scope.delta(),
             0,
-            "builder hot path should be zero-allocation"
+            "WitnessBuilder hot path must not allocate while writing <=256 bytes"
         );
     }
 
@@ -952,5 +1312,57 @@ mod tests {
         let blake3_digest = blake3_hash(b"test");
         assert_eq!(blake3_digest.len(), 32);
         assert_ne!(blake3_digest, reference_sha_256_baseline(b"test"));
+    }
+
+    #[test]
+    fn meta_consistency_detects_conflict_between_two_valid_proofs() {
+        let mut a = WitnessBuilder::new();
+        a.check(AxiomID::MinkowskiSignature, || true)
+            .expect("axiom check should pass");
+        let proof_a = a
+            .build(100)
+            .with_meta(ProofMeta {
+                origin_node: NodeId::try_new(7).expect("valid node"),
+                target_domain_hash: [1u8; 32],
+                resulting_state_hash: [9u8; 32],
+            })
+            .with_causal_links(None, Premises::new());
+
+        let mut premises_b = Premises::new();
+        premises_b.push(proof_a.hash);
+
+        let mut b = WitnessBuilder::new();
+        b.check(AxiomID::MinkowskiSignature, || true)
+            .expect("axiom check should pass");
+        b.check(AxiomID::CohomologyZero, || true)
+            .expect("axiom check should pass");
+        let proof_b = b
+            .build(101)
+            .with_meta(ProofMeta {
+                origin_node: NodeId::try_new(7).expect("valid node"),
+                target_domain_hash: [1u8; 32],
+                resulting_state_hash: [10u8; 32],
+            })
+            .with_causal_links(Some(proof_a.hash), premises_b);
+
+        assert!(AxiomGuard::verify(&proof_a, &[AxiomID::MinkowskiSignature]));
+        assert!(AxiomGuard::verify(&proof_b, &[AxiomID::MinkowskiSignature]));
+
+        let validator = MetaConsistencyValidator::default();
+        let err = AxiomGuard::verify_with_meta(
+            &proof_b,
+            &[AxiomID::MinkowskiSignature],
+            &[&proof_a],
+            &validator,
+        )
+        .expect_err("proofs should conflict at meta layer");
+
+        assert_eq!(
+            err,
+            MetaConsistencyError::Conflict {
+                candidate: proof_b.hash,
+                existing: proof_a.hash,
+            }
+        );
     }
 }

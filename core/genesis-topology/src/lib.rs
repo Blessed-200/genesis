@@ -65,13 +65,24 @@ pub mod manifold;
 ///
 /// AX-ID: AXIOMA-007
 pub mod rips;
+/// Topological intuition engine for read-only structural hypotheses.
+///
+/// AX-ID: AXIOMA-007, AXIOMA-013
+pub mod topological_intuition;
 
-pub use cohomology::CohomologyValidator;
+pub use cohomology::{
+    benchmark_rank_by_gaussian_elimination, benchmark_xor_row_elimination, CohomologyValidator,
+};
 #[allow(deprecated)]
 pub use geodesic::fast_bivector_distance;
 pub use geodesic::{bivector_interaction, geometric_distance};
 pub use hnsw::HnswGraph;
-pub use incremental_cohomology::IncrementalH1State;
+pub use hnsw::{HnswLayer0Soa, LockFreeHnswIndex};
+pub use incremental_cohomology::{IncrementalH1State, LockFreeIncrementalH1};
 pub use lsh::CliffordHashTable;
 pub use manifold::{HyperbolicCoord, ManifoldCollector};
 pub use rips::RipsComplex;
+
+pub use topological_intuition::{
+    HypothesisExplanation, HypothesisKind, TopologicalHypothesis, TopologicalIntuition,
+};

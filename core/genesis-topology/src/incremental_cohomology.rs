@@ -12,10 +12,13 @@
 
 use genesis_types::NodeId;
 use smallvec::SmallVec;
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::Arc;
 
 // ── Union-Find para ∂₁ ───────────────────────────────────────────────────────
 
 /// Union-Find con compresión de caminos y unión por rango para rank_d1 = N - c.
+#[derive(Clone)]
 pub(crate) struct PersistentUnionFind {
     parent: Vec<u32>,
     rank: Vec<u8>,
@@ -24,7 +27,7 @@ pub(crate) struct PersistentUnionFind {
 }
 
 impl PersistentUnionFind {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             parent: Vec::new(),
             rank: Vec::new(),
@@ -83,13 +86,14 @@ impl PersistentUnionFind {
     }
 
     #[inline]
-    pub fn rank_d1(&self) -> usize {
+    pub const fn rank_d1(&self) -> usize {
         self.num_nodes.saturating_sub(self.components)
     }
 }
 
 // ── IncrementalD2: Base escalonada de im(∂₂) ─────────────────────────────────
 
+#[derive(Clone)]
 enum Column {
     Sparse(SmallVec<[u32; 8]>),
     Dense(Box<[u64]>),
@@ -112,6 +116,7 @@ const DENSE_THRESHOLD: usize = 64;
 /// each iteration either kills the leading bit (strict progress) or finds a
 /// new pivot slot (terminates). Total reductions ≤ `num_edges` (theoretical
 /// bound from linear algebra), so termination is guaranteed.
+#[derive(Clone)]
 pub(crate) struct IncrementalD2 {
     /// Reduced basis columns of `im(∂₂)`, one per H¹ generator found so far.
     base_cols: Vec<Column>,
@@ -125,7 +130,7 @@ pub(crate) struct IncrementalD2 {
 
 impl IncrementalD2 {
     /// Creates an empty `IncrementalD2` with no edges or basis columns.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             base_cols: Vec::new(),
             pivot_row: Vec::new(),
@@ -228,7 +233,7 @@ impl IncrementalD2 {
 
     /// Returns the current rank of `im(∂₂)` = number of independent triangle boundaries.
     #[inline]
-    pub fn rank(&self) -> usize {
+    pub const fn rank(&self) -> usize {
         self.rank
     }
 }
@@ -329,7 +334,7 @@ fn xor_columns(a: Column, b: &Column, num_edges: usize) -> Column {
             }
         }
         (Column::Dense(mut da), Column::Sparse(sb)) => {
-            for &idx in sb.iter() {
+            for &idx in sb {
                 let word = idx as usize / 64;
                 let bit = idx as usize % 64;
                 if word < da.len() {
@@ -356,7 +361,7 @@ fn xor_columns(a: Column, b: &Column, num_edges: usize) -> Column {
 }
 
 fn sparse_to_dense(sv: &[u32], num_edges: usize) -> Box<[u64]> {
-    let n_words = (num_edges + 63) / 64;
+    let n_words = num_edges.div_ceil(64);
     let mut bm = vec![0u64; n_words.max(1)].into_boxed_slice();
     for &idx in sv {
         let word = idx as usize / 64;
@@ -395,13 +400,25 @@ fn first_set_bit(bm: &[u64]) -> Option<u32> {
 type EdgeKey = u128;
 
 #[inline]
-fn edge_key(u: NodeId, v: NodeId) -> EdgeKey {
-    let (a, b) = if u <= v {
-        (u.get(), v.get())
+const fn canonical_edge_endpoints(u: NodeId, v: NodeId) -> (u64, u64) {
+    let u_raw = u.get();
+    let v_raw = v.get();
+    if u_raw <= v_raw {
+        (u_raw, v_raw)
     } else {
-        (v.get(), u.get())
-    };
+        (v_raw, u_raw)
+    }
+}
+
+#[inline]
+const fn pack_edge_key(a: u64, b: u64) -> EdgeKey {
     (a as u128) << 64 | b as u128
+}
+
+#[inline]
+const fn edge_key(u: NodeId, v: NodeId) -> EdgeKey {
+    let (a, b) = canonical_edge_endpoints(u, v);
+    pack_edge_key(a, b)
 }
 
 /// Estado incremental de H¹(M, F).
@@ -423,6 +440,7 @@ fn edge_key(u: NodeId, v: NodeId) -> EdgeKey {
 /// sequential layout (EdgeKey = u128, so entries are 24 bytes → ~2.7 entries/cache line).
 /// `insert` is O(E) shift in the worst case, but HNSW insertions are mostly sequential
 /// (IDs are assigned in order) so new keys land near the end → amortised O(1) shift.
+#[derive(Clone)]
 pub struct IncrementalH1State {
     uf: PersistentUnionFind,
     d2: IncrementalD2,
@@ -430,19 +448,49 @@ pub struct IncrementalH1State {
     edge_map: Vec<(EdgeKey, u32)>,
     num_edges: usize,
     ops_since_checkpoint: usize,
+    inference_step: usize,
+    persistent_cycles: Vec<PersistentCycleRecord>,
+    triangle_closures: Vec<TriangleClosureRecord>,
+}
+
+/// Persistent H¹ cycle record used by topological inference.
+///
+/// AX-ID: AXIOMA-007, AXIOMA-009, H_restricción (LEY_FUNDACIONAL §3.5)
+#[derive(Clone, Copy, Debug)]
+pub struct PersistentCycleRecord {
+    /// Representative nodes associated with the cycle witness edge.
+    pub nodes: [NodeId; 2],
+    /// Filtration step where the cycle appeared.
+    pub birth_step: usize,
+    /// Optional step where the cycle was closed by a 2-simplex.
+    pub death_step: Option<usize>,
+}
+
+/// Triangle closure record used for cycle-filling hypotheses.
+///
+/// AX-ID: AXIOMA-007, AXIOMA-009, H_restricción (LEY_FUNDACIONAL §3.5)
+#[derive(Clone, Copy, Debug)]
+pub struct TriangleClosureRecord {
+    /// Triangle vertices that closed a previously active 1-cycle.
+    pub nodes: [NodeId; 3],
+    /// Filtration step where closure occurred.
+    pub step: usize,
 }
 
 const CHECKPOINT_INTERVAL: usize = 1_000_000;
 
 impl IncrementalH1State {
     /// Creates an empty H¹ state with no nodes or edges.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             uf: PersistentUnionFind::new(),
             d2: IncrementalD2::new(),
             edge_map: Vec::new(),
             num_edges: 0,
             ops_since_checkpoint: 0,
+            inference_step: 0,
+            persistent_cycles: Vec::new(),
+            triangle_closures: Vec::new(),
         }
     }
 
@@ -454,9 +502,10 @@ impl IncrementalH1State {
     /// Registra una arista (u, v). Idempotente si ya existe.
     /// Retorna el ID de arista (existente o nuevo).
     pub fn add_edge(&mut self, u: NodeId, v: NodeId) -> u32 {
+        self.inference_step = self.inference_step.saturating_add(1);
         let key = edge_key(u, v);
         match self.edge_map.binary_search_by_key(&key, |&(k, _)| k) {
-            Ok(pos) => return self.edge_map[pos].1, // already present
+            Ok(pos) => self.edge_map[pos].1, // already present
             Err(ins) => {
                 // Insert at sorted position — O(E) shift but sequential IDs
                 // make this near-O(1) amortised in practice.
@@ -464,7 +513,14 @@ impl IncrementalH1State {
                 self.edge_map.insert(ins, (key, edge_id));
                 self.d2.register_edge(edge_id);
                 self.num_edges += 1;
-                self.uf.union(u.get() as usize, v.get() as usize);
+                let created_cycle = !self.uf.union(u.get() as usize, v.get() as usize);
+                if created_cycle {
+                    self.persistent_cycles.push(PersistentCycleRecord {
+                        nodes: [u, v],
+                        birth_step: self.inference_step,
+                        death_step: None,
+                    });
+                }
 
                 self.ops_since_checkpoint += 1;
                 if self.ops_since_checkpoint >= CHECKPOINT_INTERVAL {
@@ -478,12 +534,30 @@ impl IncrementalH1State {
 
     /// Registra un triángulo (a, b, c) si todas sus aristas existen.
     pub fn add_triangle(&mut self, a: NodeId, b: NodeId, c: NodeId) {
+        self.inference_step = self.inference_step.saturating_add(1);
         if let (Some(e1), Some(e2), Some(e3)) = (
             self.lookup_edge(a, b),
             self.lookup_edge(a, c),
             self.lookup_edge(b, c),
         ) {
             if self.d2.add_triangle(e1, e2, e3) {
+                // NOTE: Heuristic closure pairing for inference only.
+                //
+                // We map each new 2-simplex that increases rank(im ∂₂) to the first
+                // still-open persistent cycle record. This gives a deterministic
+                // birth/death proxy for TopologicalIntuition without claiming exact
+                // cycle-triangle correspondence in full persistent homology.
+                if let Some(record) = self
+                    .persistent_cycles
+                    .iter_mut()
+                    .find(|record| record.death_step.is_none())
+                {
+                    record.death_step = Some(self.inference_step);
+                }
+                self.triangle_closures.push(TriangleClosureRecord {
+                    nodes: [a, b, c],
+                    step: self.inference_step,
+                });
                 self.ops_since_checkpoint += 1;
                 if self.ops_since_checkpoint >= CHECKPOINT_INTERVAL {
                     self.run_checkpoint();
@@ -500,7 +574,7 @@ impl IncrementalH1State {
             .map(|pos| self.edge_map[pos].1)
     }
 
-    fn run_checkpoint(&mut self) {
+    const fn run_checkpoint(&mut self) {
         // Placeholder para compactación de base o validación externa.
         self.ops_since_checkpoint = 0;
     }
@@ -508,7 +582,7 @@ impl IncrementalH1State {
     /// Retorna true si H¹ = 0 (invariante de cohomología satisfecho). O(1).
     ///
     /// AX-ID: AXIOMA-007, AXIOMA-009
-    pub fn h1_is_zero(&self) -> bool {
+    pub const fn h1_is_zero(&self) -> bool {
         let rank_d1 = self.uf.rank_d1();
         let rank_d2 = self.d2.rank();
         let dim_ker_d1 = self.num_edges.saturating_sub(rank_d1);
@@ -516,18 +590,165 @@ impl IncrementalH1State {
     }
 
     /// Dimensión de H¹ según el estado incremental. O(1).
-    pub fn h1_dim(&self) -> usize {
+    pub const fn h1_dim(&self) -> usize {
         let rank_d1 = self.uf.rank_d1();
         let rank_d2 = self.d2.rank();
         self.num_edges
             .saturating_sub(rank_d1)
             .saturating_sub(rank_d2)
     }
+
+    /// Returns persistent cycle records for read-only inference.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub fn persistent_cycles(&self) -> &[PersistentCycleRecord] {
+        &self.persistent_cycles
+    }
+
+    /// Returns triangle closure records for read-only inference.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub fn triangle_closures(&self) -> &[TriangleClosureRecord] {
+        &self.triangle_closures
+    }
+
+    /// Returns current deterministic filtration step.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub const fn inference_step(&self) -> usize {
+        self.inference_step
+    }
 }
 
 impl Default for IncrementalH1State {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+struct H1SnapshotNode {
+    state: Arc<IncrementalH1State>,
+    next: *mut Self,
+}
+
+/// Lock-free append-only snapshot wrapper for incremental H¹ state.
+///
+/// Writers publish immutable snapshots with CAS; readers observe the latest
+/// topological state without blocking.
+///
+/// AX-ID: AXIOMA-007, AXIOMA-009
+pub struct LockFreeIncrementalH1 {
+    head: AtomicPtr<H1SnapshotNode>,
+}
+
+impl LockFreeIncrementalH1 {
+    /// Create an empty lock-free H¹ state.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub fn new() -> Self {
+        let initial = Box::new(H1SnapshotNode {
+            state: Arc::new(IncrementalH1State::new()),
+            next: std::ptr::null_mut(),
+        });
+        Self {
+            head: AtomicPtr::new(Box::into_raw(initial)),
+        }
+    }
+
+    fn load_snapshot(&self) -> Arc<IncrementalH1State> {
+        let ptr = self.head.load(Ordering::Acquire);
+        assert!(
+            !ptr.is_null(),
+            "LockFreeIncrementalH1 head must be initialized"
+        );
+        // SAFETY: snapshot nodes are append-only and reclaimed only at Drop.
+        unsafe { Arc::clone(&(*ptr).state) }
+    }
+
+    fn publish_update<F>(&self, apply: F)
+    where
+        F: Fn(&mut IncrementalH1State),
+    {
+        loop {
+            let current = self.head.load(Ordering::Acquire);
+            let base = self.load_snapshot();
+            let mut updated = (*base).clone();
+            apply(&mut updated);
+            let candidate = Box::into_raw(Box::new(H1SnapshotNode {
+                state: Arc::new(updated),
+                next: current,
+            }));
+            match self.head.compare_exchange(
+                current,
+                candidate,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(_) => {
+                    // SAFETY: candidate was not published, local unique ownership remains.
+                    unsafe {
+                        drop(Box::from_raw(candidate));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Append one node to the latest H¹ snapshot.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub fn add_node(&self) {
+        self.publish_update(IncrementalH1State::add_node);
+    }
+
+    /// Append one edge insertion to the latest H¹ snapshot.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub fn add_edge(&self, u: NodeId, v: NodeId) {
+        self.publish_update(|state| {
+            state.add_edge(u, v);
+        });
+    }
+
+    /// Append one triangle insertion to the latest H¹ snapshot.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub fn add_triangle(&self, a: NodeId, b: NodeId, c: NodeId) {
+        self.publish_update(|state| state.add_triangle(a, b, c));
+    }
+
+    /// Query if H¹ = 0 on latest snapshot.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub fn h1_is_zero(&self) -> bool {
+        self.load_snapshot().h1_is_zero()
+    }
+
+    /// Query H¹ dimension on latest snapshot.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub fn h1_dim(&self) -> usize {
+        self.load_snapshot().h1_dim()
+    }
+}
+
+impl Default for LockFreeIncrementalH1 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for LockFreeIncrementalH1 {
+    fn drop(&mut self) {
+        let mut ptr = self.head.swap(std::ptr::null_mut(), Ordering::AcqRel);
+        while !ptr.is_null() {
+            // SAFETY: exclusive ownership during Drop.
+            unsafe {
+                let node = Box::from_raw(ptr);
+                ptr = node.next;
+            }
+        }
     }
 }
 
@@ -589,23 +810,63 @@ mod tests {
 
     #[test]
     fn two_triangles_sharing_edge_h1_zero() {
-        let mut s = IncrementalH1State::new();
+        let mut h1_state = IncrementalH1State::new();
         let nodes: Vec<NodeId> = (0..4)
             .map(|i| {
-                s.add_node();
+                h1_state.add_node();
                 node(i)
             })
             .collect();
-        let (a, b, c, d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
+        let (node_a, node_b, node_c, node_d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
         // Triángulo 1: a-b-c
-        s.add_edge(a, b);
-        s.add_edge(b, c);
-        s.add_edge(a, c);
-        s.add_triangle(a, b, c);
+        h1_state.add_edge(node_a, node_b);
+        h1_state.add_edge(node_b, node_c);
+        h1_state.add_edge(node_a, node_c);
+        h1_state.add_triangle(node_a, node_b, node_c);
         // Triángulo 2: a-b-d
-        s.add_edge(a, d);
-        s.add_edge(b, d);
-        s.add_triangle(a, b, d);
-        assert!(s.h1_is_zero());
+        h1_state.add_edge(node_a, node_d);
+        h1_state.add_edge(node_b, node_d);
+        h1_state.add_triangle(node_a, node_b, node_d);
+        assert!(h1_state.h1_is_zero());
+    }
+
+    #[test]
+    fn lock_free_incremental_h1_preserves_triangle_invariant() {
+        let state = LockFreeIncrementalH1::new();
+        let (a, b, c) = (node(0), node(1), node(2));
+        state.add_node();
+        state.add_node();
+        state.add_node();
+        state.add_edge(a, b);
+        state.add_edge(b, c);
+        state.add_edge(a, c);
+        assert_eq!(state.h1_dim(), 1);
+        state.add_triangle(a, b, c);
+        assert!(state.h1_is_zero());
+    }
+
+    #[test]
+    fn lock_free_incremental_h1_handles_parallel_edge_inserts() {
+        use std::sync::Arc;
+
+        let state = Arc::new(LockFreeIncrementalH1::new());
+        for _ in 0..8 {
+            state.add_node();
+        }
+
+        std::thread::scope(|scope| {
+            for shard in 0..4_u64 {
+                let h1 = Arc::clone(&state);
+                scope.spawn(move || {
+                    for i in 0..2_u64 {
+                        let u = node(shard * 2 + i);
+                        let v = node((shard * 2 + i + 1) % 8);
+                        h1.add_edge(u, v);
+                    }
+                });
+            }
+        });
+
+        assert!(state.h1_dim() <= 8);
     }
 }

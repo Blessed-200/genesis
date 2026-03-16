@@ -13,6 +13,7 @@
 //! - [`grade`]      — `CLIFFORD_NORM_WEIGHTS`, `compute_clifford_norm_sq`, projections
 //! - [`multivector`]— `SparseCliffordVector` (primary type)
 //! - [`product`]    — `sparse_geometric_product`
+//! - [`semantic`]   — wedge/meet/join/contractions/rotor sandwich
 //!
 //! # Design constraints (ENGINEERING_BLUEPRINT §1, §6)
 //! - `HashMap` / `BTreeMap` PROHIBITED everywhere.
@@ -50,19 +51,25 @@ pub mod experimental;
 pub mod grade;
 pub mod multivector;
 pub mod product;
+pub mod semantic;
 pub mod sign;
 
 pub use basis::{CliffordBasis, CANONICAL_G13};
-pub use dual::{geometric_product_dual, Dual, SparseDualVector};
+pub use dual::{geometric_product_dual, hodge_dual, hodge_undual, Dual, SparseDualVector};
 pub use grade::{
     compute_clifford_norm, compute_clifford_norm_sq, grade_project_ct, grades_present,
     is_homogeneous, max_grade, min_grade, reverse, CLIFFORD_NORM_WEIGHTS, REVERSE_SIGN,
 };
-pub use multivector::SparseCliffordVector;
-pub use multivector::{fast_metric_distance, fast_metric_distance_from_dense};
+pub use multivector::{
+    fast_metric_distance, fast_metric_distance_from_dense, SparseCliffordVector,
+};
 pub use product::{
     bivector_norm_sq_of_product, bivector_norm_sq_of_product_lhs_dense, sparse_geometric_product,
     sparse_geometric_product_with_mode, BivectorProduct, GeometricProductMode,
+};
+pub use semantic::{
+    commutator, is_unit_rotor, join, left_contraction, meet, right_contraction, rotor_sandwich,
+    rotor_sandwich_checked, wedge,
 };
 pub use sign::{compute_clifford_sign, fast_cayley_product, BladeIndex, Sign, CAYLEY_SIGN};
 

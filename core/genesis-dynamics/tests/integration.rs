@@ -6,6 +6,36 @@
 
 use genesis_dynamics::*;
 use genesis_types::NodeId;
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+struct CountingAllocator;
+
+static ALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        ALLOC_CALLS.fetch_add(1, Ordering::Relaxed);
+        System.alloc(layout)
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        ALLOC_CALLS.fetch_add(1, Ordering::Relaxed);
+        System.alloc_zeroed(layout)
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        ALLOC_CALLS.fetch_add(1, Ordering::Relaxed);
+        System.realloc(ptr, layout, new_size)
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        System.dealloc(ptr, layout)
+    }
+}
+
+#[global_allocator]
+static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
 #[test]
 fn stress_kuramoto_10k_steps_no_nan() {
@@ -112,4 +142,42 @@ fn critical_coupling_threshold() {
     }
     let r = synchrony_order(&net);
     assert!(r > 0.5, "Con Γ > K_c debe emerger sincronía: r = {:.4}", r);
+}
+
+#[test]
+fn heap_audit_update_cycle_performs_zero_allocations() {
+    let n = 64usize;
+    let mut net = QuantumKuramotoNetwork::new(0.2);
+    for i in 0..n {
+        net.add_oscillator(QuantumOscillator::new(
+            NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+            [0.01 * i as f64; 5],
+        ))
+        .expect("NodeId válido por construcción");
+    }
+
+    for i in 0..n {
+        let next = (i + 1) % n;
+        net.set_coupling(
+            NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+            NodeId::try_new(next as u64).expect("NodeId válido por construcción"),
+            0.15,
+        );
+    }
+
+    for _ in 0..8 {
+        net.step(0.01);
+    }
+
+    let before = ALLOC_CALLS.load(Ordering::Relaxed);
+    for _ in 0..128 {
+        net.step(0.01);
+    }
+    let after = ALLOC_CALLS.load(Ordering::Relaxed);
+
+    assert_eq!(
+        after - before,
+        0,
+        "el ciclo principal net.step() debe realizar 0 reservaciones en heap"
+    );
 }

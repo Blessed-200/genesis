@@ -1,4 +1,4 @@
-#![allow(clippy::float_cmp, clippy::uninlined_format_args)]
+#![allow(clippy::float_cmp)]
 
 use genesis_math::SparseCliffordVector;
 use genesis_types::{GenesisError, NodeId};
@@ -43,15 +43,19 @@ pub(crate) const VFE_BLADE_WEIGHTS: [f64; 16] = [
 /// y para retrocompatibilidad del método `mean()`.
 pub(crate) const GRADE1_BLADE_INDICES: [usize; 4] = [1, 2, 4, 8];
 
+const fn is_finite_scalar(v: f64) -> bool {
+    v.is_finite()
+}
+
 fn is_finite_vec4(values: &[f64; 4]) -> bool {
-    values.iter().all(|v| v.is_finite())
+    values.iter().all(|&v| is_finite_scalar(v))
 }
 
 fn is_finite_vec16(values: &[f64; 16]) -> bool {
-    values.iter().all(|v| v.is_finite())
+    values.iter().all(|&v| is_finite_scalar(v))
 }
 
-fn sanitize_trace(trace: f64) -> f64 {
+const fn sanitize_trace(trace: f64) -> f64 {
     if !trace.is_finite() {
         return 1.0;
     }
@@ -169,7 +173,7 @@ impl Belief {
     ///
     /// AX-ID: CRATE-004 prerequisite (FIX-H)
     #[inline]
-    pub(crate) fn tombstone() -> Self {
+    pub(crate) const fn tombstone() -> Self {
         Self {
             mean_full: [0.0; 16],
             precision_full: [0.0; 16],
@@ -179,7 +183,7 @@ impl Belief {
 }
 
 impl FisherInfo {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             trace: 1.0,
             delta_g: 0.0,
@@ -195,8 +199,9 @@ pub use genesis_types::FisherEdgeMetric;
 
 /// Función auxiliar canónica de arista — mantenida internamente para compatibilidad
 /// con tests que la referencian directamente dentro de este módulo.
-fn canonical_edge(i: NodeId, j: NodeId) -> (NodeId, NodeId) {
-    if i <= j {
+#[inline]
+const fn canonical_edge(i: NodeId, j: NodeId) -> (NodeId, NodeId) {
+    if i.get() <= j.get() {
         (i, j)
     } else {
         (j, i)
@@ -225,12 +230,12 @@ pub struct VFEMinimizer {
 
 impl VFEMinimizer {
     #[inline]
-    fn bounded_step(dt: f64, trace: f64) -> f64 {
-        (dt / (1.0 + dt * trace)).min(0.9)
+    const fn bounded_step(dt: f64, trace: f64) -> f64 {
+        (dt / dt.mul_add(trace, 1.0)).min(0.9)
     }
 
     /// Creates an empty VFE minimiser with no registered nodes.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             beliefs: Vec::new(),
             fisher: Vec::new(),
@@ -260,8 +265,9 @@ impl VFEMinimizer {
         if !is_finite_vec4(&prior_mean) {
             return;
         }
-        let raw =
-            usize::try_from(id.get()).expect("NodeId must fit into usize on supported targets");
+        let Ok(raw) = usize::try_from(id.get()) else {
+            return;
+        };
 
         // Defensive maximum: 100× production target. Prevents OOM from buggy callers.
         const MAX_ALLOWED_NODE_ID: usize = 100_000_000;
@@ -278,12 +284,9 @@ impl VFEMinimizer {
             self.id_to_idx.resize(raw + 1, u32::MAX);
         }
         if self.id_to_idx[raw] == u32::MAX {
-            let idx = match u32::try_from(self.beliefs.len()) {
-                Ok(v) => v,
-                Err(_) => {
-                    debug_assert!(false, "VFEMinimizer belief count overflowed u32::MAX");
-                    return;
-                }
+            let Ok(idx) = u32::try_from(self.beliefs.len()) else {
+                debug_assert!(false, "VFEMinimizer belief count overflowed u32::MAX");
+                return;
             };
             self.id_to_idx[raw] = idx;
             self.beliefs.push(Belief::new(id, prior_mean));
@@ -295,8 +298,9 @@ impl VFEMinimizer {
     ///
     /// O(1) direct-index access. Returns None for unregistered IDs without panic.
     fn lookup(&self, id: NodeId) -> Option<usize> {
-        let raw =
-            usize::try_from(id.get()).expect("NodeId must fit into usize on supported targets");
+        let Ok(raw) = usize::try_from(id.get()) else {
+            return None;
+        };
         self.id_to_idx.get(raw).and_then(|&idx| {
             if idx == u32::MAX {
                 None
@@ -333,7 +337,8 @@ impl VFEMinimizer {
         for (k, &blade_idx) in GRADE1_BLADE_INDICES.iter().enumerate() {
             let delta = belief.mean_full[blade_idx] - target[k];
             let w = VFE_BLADE_WEIGHTS[blade_idx];
-            let term = w * belief.precision_full[blade_idx] * delta * delta;
+            let weighted_precision = w * belief.precision_full[blade_idx];
+            let term = delta.mul_add(delta * weighted_precision, 0.0);
             let y = term - comp;
             let t = sum + y;
             comp = (t - sum) - y;
@@ -388,12 +393,13 @@ impl VFEMinimizer {
             let delta = belief.mean_full[i] - target[i];
             let prec = belief.precision_full[i];
             let w = VFE_BLADE_WEIGHTS[i];
-            let term = w * prec * delta * delta;
+            let weighted_precision = w * prec;
+            let term = delta.mul_add(delta * weighted_precision, 0.0);
             let y = term - comp;
             let t = vfe + y;
             comp = (t - vfe) - y;
             vfe = t;
-            grad[i] = 2.0 * w * prec * delta;
+            grad[i] = delta.mul_add((2.0 * w) * prec, 0.0);
         }
         (vfe, grad)
     }
@@ -437,7 +443,7 @@ impl VFEMinimizer {
                 let mut sum = 0.0f64;
                 let mut comp = 0.0f64;
                 for (i, &m) in belief.mean_full.iter().enumerate() {
-                    let term = VFE_BLADE_WEIGHTS[i] * m * m;
+                    let term = m.mul_add(m * VFE_BLADE_WEIGHTS[i], 0.0);
                     let y = term - comp;
                     let t = sum + y;
                     comp = (t - sum) - y;
@@ -445,7 +451,7 @@ impl VFEMinimizer {
                 }
                 sum
             };
-            let vfe = trace * error_sq;
+            let vfe = trace.mul_add(error_sq, 0.0);
             if vfe > max_vfe {
                 max_vfe = vfe;
                 max_id = Some(belief.node_id);
@@ -479,16 +485,16 @@ impl VFEMinimizer {
         let mut error_sq = 0.0f64;
         for (k, &blade_idx) in GRADE1_BLADE_INDICES.iter().enumerate() {
             let err = observation[k] - belief.mean_full[blade_idx];
-            belief.mean_full[blade_idx] += step * err;
+            belief.mean_full[blade_idx] = step.mul_add(err, belief.mean_full[blade_idx]);
             belief.precision_full[blade_idx] =
                 (belief.precision_full[blade_idx] + step).clamp(0.0, 1.0e6);
-            error_sq += err * err;
+            error_sq = err.mul_add(err, error_sq);
         }
 
         let old_trace = fisher.trace;
         let error_mag = error_sq.sqrt();
-        fisher.trace = sanitize_trace(old_trace / (1.0 + step * error_mag.max(TRACE_MIN)));
-        fisher.delta_g = 0.5 * (fisher.trace - old_trace).abs();
+        fisher.trace = sanitize_trace(old_trace / step.mul_add(error_mag.max(TRACE_MIN), 1.0));
+        fisher.delta_g = 0.5_f64.mul_add((fisher.trace - old_trace).abs(), 0.0);
     }
 
     /// Actualiza las creencias sobre los 16 blades completos de G(1,3).
@@ -526,15 +532,15 @@ impl VFEMinimizer {
                 continue;
             }
             let err = target - belief.mean_full[i];
-            belief.mean_full[i] += step * err;
+            belief.mean_full[i] = step.mul_add(err, belief.mean_full[i]);
             belief.precision_full[i] = (belief.precision_full[i] + step).clamp(0.0, 1.0e6);
-            error_sq += err * err;
+            error_sq = err.mul_add(err, error_sq);
         }
 
         let old_trace = fisher.trace;
         let error_mag = error_sq.sqrt();
-        fisher.trace = sanitize_trace(old_trace / (1.0 + step * error_mag.max(TRACE_MIN)));
-        fisher.delta_g = 0.5 * (fisher.trace - old_trace).abs();
+        fisher.trace = sanitize_trace(old_trace / step.mul_add(error_mag.max(TRACE_MIN), 1.0));
+        fisher.delta_g = 0.5_f64.mul_add((fisher.trace - old_trace).abs(), 0.0);
     }
 
     /// Acceso a `FisherInfo` de un nodo.
@@ -571,7 +577,9 @@ impl VFEMinimizer {
     /// Returns `Err(GenesisError::NodeNotFound)` if the node does not exist.
     /// AX-ID: LEY_FUNDACIONAL §3.7, CRATE-004 prerequisite
     pub fn remove_node(&mut self, id: NodeId) -> Result<(), GenesisError> {
-        let raw = id.get() as usize;
+        let Ok(raw) = usize::try_from(id.get()) else {
+            return Err(GenesisError::NodeNotFound { id });
+        };
         let idx = self.lookup(id).ok_or(GenesisError::NodeNotFound { id })?;
         if raw < self.id_to_idx.len() {
             self.id_to_idx[raw] = u32::MAX;
@@ -591,8 +599,9 @@ impl Default for VFEMinimizer {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {
-    use super::*;
     use genesis_math::SparseCliffordVector;
+
+    use super::*;
 
     #[test]
     fn vfe_internal_drive_returns_highest_vfe_node() {
@@ -788,6 +797,23 @@ mod tests {
     }
 
     #[test]
+    fn mul_add_precision_drift_stays_below_threshold_after_ten_million_ops() {
+        const OPS: usize = 10_000_000;
+        const DELTA: f64 = f64::EPSILON * 0.5;
+
+        let mut state = 1.0f64;
+        for i in 0..OPS {
+            let signed_delta = if (i & 1) == 0 { DELTA } else { -DELTA };
+            state = state.mul_add(1.0, signed_delta);
+        }
+
+        let drift = (state - 1.0).abs();
+        assert!(
+            drift < 1.0e-15,
+            "drift FMA tras {OPS} operaciones excede el umbral: {drift:e}"
+        );
+    }
+    #[test]
     fn bounded_step_grid_respects_declared_bounds() {
         let dts = [1e-12_f64, 1e-9, 1e-6, 1e-3, 1.0, 1e3, 1e6, 1e9, 1e12];
         let traces = [1e-12_f64, 1e-9, 1e-6, 1e-3, 1.0, 1e3, 1e6, 1e9, 1e12];
@@ -921,7 +947,7 @@ mod tests {
     fn fisher_edge_metric_binary_search_correctness() {
         let mut seed = 0x9E37_79B9_7F4A_7C15u64;
         let mut next_random = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             seed
         };
 

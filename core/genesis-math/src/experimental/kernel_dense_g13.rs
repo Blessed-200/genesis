@@ -76,11 +76,11 @@ mod tests {
         let cases = [
             (
                 dense_from_fn(|i| (i as f64) - 2.0),
-                dense_from_fn(|i| 0.5 * (i as f64) + 1.0),
+                dense_from_fn(|i| 0.5f64.mul_add(i as f64, 1.0)),
             ),
             (
                 dense_from_fn(|i| if i % 2 == 0 { i as f64 } else { -(i as f64) }),
-                dense_from_fn(|i| ((i * i) as f64) * 0.25 - 3.0),
+                dense_from_fn(|i| ((i * i) as f64).mul_add(0.25, -3.0)),
             ),
             (
                 dense_from_fn(|i| ((i as f64) - 7.5) / 3.0),

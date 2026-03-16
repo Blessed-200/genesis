@@ -1,3 +1,6 @@
+use std::cmp::{Ordering, Reverse};
+use std::collections::BinaryHeap;
+
 use genesis_math::SparseCliffordVector;
 /// AX-ID: AXIOMA-013
 /// Locality Sensitive Hashing for G(1,3) vectors.
@@ -5,8 +8,6 @@ use genesis_math::SparseCliffordVector;
 /// Buckets: Vec<Vec<NodeId>> indexed by sorted (u32, Vec<NodeId>) pairs.
 /// No `HashMap`. O(log N) amortized.
 use genesis_types::NodeId;
-use std::cmp::{Ordering, Reverse};
-use std::collections::BinaryHeap;
 
 /// Number of projection hyperplanes per table.
 const N_PROJECTIONS: usize = 8;
@@ -62,7 +63,7 @@ struct LshTable {
 }
 
 impl LshTable {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             buckets: Vec::new(),
         }
@@ -106,30 +107,62 @@ impl LshTable {
 /// Insert: `O(N_TABLES * log bucket_size)`.
 /// Candidates: `O(sum(bucket_sizes) * log N_TABLES)` with k-way merge + deduplicación.
 ///
-/// # Projection vector cache (BN-04)
-/// The 32 `SparseCliffordVector` projections derived from `PROJ_COEFFS` are
-/// computed **once** in `new()` and stored in `proj_vecs`. This eliminates
-/// 32 × `from_dense()` calls (including finite checks + metadata computation)
-/// on every `insert()` — reducing ~6400 CPU instructions per insert to ~32
-/// scalar product evaluations.
+/// # Projection cache (BN-04)
+/// Projection coefficients are generated at compile time (`PROJ_COEFFS`) and
+/// packed once in `new()` into a fixed 6-lane bivector representation.
+/// Hashing then uses a branchless fixed-width dot kernel with no allocation.
 ///
 /// AX-ID: AXIOMA-013
 pub struct CliffordHashTable {
     tables: [LshTable; N_TABLES],
-    /// Precomputed projection vectors. Computed once in `new()`, reused on every hash.
-    /// `proj_vecs[t * N_PROJECTIONS + p]` is the p-th projection vector for table t.
-    proj_vecs: [SparseCliffordVector; TOTAL_PROJECTIONS],
+    /// Packed bivector-only projection coefficients.
+    ///
+    /// Layout: `[projection][bivector_lane]` where lane order follows `BIVECTOR_BLADES`.
+    /// This allows branchless fixed-width kernels (`6` lanes) for signature hashing,
+    /// avoiding sparse iterator overhead in hot paths.
+    ///
+    /// AX-ID: AXIOMA-013
+    proj_bivector_coeffs: [[f64; 6]; TOTAL_PROJECTIONS],
+}
+
+/// Pack a multivector into a fixed 6-lane bivector array.
+///
+/// Lane order matches `BIVECTOR_BLADES` exactly.
+///
+/// AX-ID: AXIOMA-013
+#[inline]
+const fn pack_bivector_coeffs(vec: &SparseCliffordVector) -> [f64; 6] {
+    [
+        vec.coeffs[BIVECTOR_BLADES[0]],
+        vec.coeffs[BIVECTOR_BLADES[1]],
+        vec.coeffs[BIVECTOR_BLADES[2]],
+        vec.coeffs[BIVECTOR_BLADES[3]],
+        vec.coeffs[BIVECTOR_BLADES[4]],
+        vec.coeffs[BIVECTOR_BLADES[5]],
+    ]
+}
+
+/// Fixed-width bivector projection kernel.
+///
+/// AX-ID: AXIOMA-013
+#[inline]
+fn dot_bivector_lanes(lhs: &[f64; 6], rhs: &[f64; 6]) -> f64 {
+    lhs[0].mul_add(rhs[0], lhs[1].mul_add(rhs[1], lhs[2].mul_add(rhs[2], 0.0)))
+        + lhs[3].mul_add(rhs[3], lhs[4].mul_add(rhs[4], lhs[5] * rhs[5]))
 }
 
 impl CliffordHashTable {
-    /// Create a new empty hash table with precomputed projection vectors.
-    ///
-    /// The `PROJ_COEFFS` compile-time constants are converted to
-    /// `SparseCliffordVector` instances once here, eliminating per-insert recomputation.
+    /// Create a new empty hash table with prepacked bivector projections.
     pub fn new() -> Self {
-        let proj_vecs = core::array::from_fn(|i| {
-            SparseCliffordVector::from_dense(&PROJ_COEFFS[i])
-                .expect("BN-04: PROJ_COEFFS must produce valid SparseCliffordVectors")
+        let proj_bivector_coeffs = core::array::from_fn(|i| {
+            [
+                PROJ_COEFFS[i][BIVECTOR_BLADES[0]],
+                PROJ_COEFFS[i][BIVECTOR_BLADES[1]],
+                PROJ_COEFFS[i][BIVECTOR_BLADES[2]],
+                PROJ_COEFFS[i][BIVECTOR_BLADES[3]],
+                PROJ_COEFFS[i][BIVECTOR_BLADES[4]],
+                PROJ_COEFFS[i][BIVECTOR_BLADES[5]],
+            ]
         });
         Self {
             tables: [
@@ -138,18 +171,20 @@ impl CliffordHashTable {
                 LshTable::new(),
                 LshTable::new(),
             ],
-            proj_vecs,
+            proj_bivector_coeffs,
         }
     }
 
-    /// Compute the N_PROJECTIONS-bit bucket hash for table `t`.
-    /// Uses precomputed `proj_vecs` — zero allocation, 8 scalar products.
+    /// Compute the N_PROJECTIONS-bit bucket hash for table `t` from packed
+    /// bivector lanes.
+    ///
+    /// AX-ID: AXIOMA-013
     #[inline]
-    fn hash_vector_local(&self, vec: &SparseCliffordVector, t: usize) -> u32 {
+    fn hash_packed_bivector(&self, packed_bivector: &[f64; 6], t: usize) -> u32 {
         let start = t * N_PROJECTIONS;
         let mut bits: u32 = 0;
         for p in 0..N_PROJECTIONS {
-            if vec.metric_scalar_product(&self.proj_vecs[start + p]) >= 0.0 {
+            if dot_bivector_lanes(packed_bivector, &self.proj_bivector_coeffs[start + p]) >= 0.0 {
                 bits |= 1 << p;
             }
         }
@@ -160,8 +195,9 @@ impl CliffordHashTable {
     ///
     /// AX-ID: AXIOMA-013
     pub fn insert(&mut self, id: NodeId, vec: &SparseCliffordVector) {
+        let packed = pack_bivector_coeffs(vec);
         for t in 0..N_TABLES {
-            let bucket = self.hash_vector_local(vec, t);
+            let bucket = self.hash_packed_bivector(&packed, t);
             self.tables[t].insert(bucket, id);
         }
     }
@@ -200,10 +236,9 @@ impl CliffordHashTable {
             }
         }
 
-        let bucket_slices: [&[NodeId]; N_TABLES] = core::array::from_fn(|t| {
-            let bucket = self.hash_vector_local(query, t);
-            self.tables[t].get(bucket)
-        });
+        let packed = pack_bivector_coeffs(query);
+        let bucket_slices: [&[NodeId]; N_TABLES] =
+            core::array::from_fn(|t| self.tables[t].get(self.hash_packed_bivector(&packed, t)));
 
         let mut heap: BinaryHeap<Reverse<MergeItem>> = BinaryHeap::new();
         for (table_idx, bucket) in bucket_slices.iter().enumerate() {
@@ -248,9 +283,10 @@ impl Default for CliffordHashTable {
 
 #[cfg(test)]
 mod tests {
+    use genesis_math::SparseCliffordVector;
+
     use super::*;
     use crate::geodesic::geometric_distance;
-    use genesis_math::SparseCliffordVector;
 
     fn make_vec(pairs: &[(usize, f64)]) -> SparseCliffordVector {
         SparseCliffordVector::from_iter(pairs.iter().copied()).unwrap()
@@ -262,7 +298,7 @@ mod tests {
         for i in 0..50u64 {
             let v = make_vec(
                 &(0..4)
-                    .map(|b| (b, i as f64 * 0.02 + b as f64 * 0.1))
+                    .map(|b| (b, (i as f64).mul_add(0.02, b as f64 * 0.1)))
                     .collect::<Vec<_>>(),
             );
             table.insert(
@@ -271,8 +307,7 @@ mod tests {
             );
         }
         let query = make_vec(&[(0, 0.5), (1, 0.2), (2, 0.4)]);
-        let candidates: Vec<_> = table.candidates(&query).collect();
-        println!("LSH candidates: {}", candidates.len());
+        println!("LSH candidates: {}", table.candidates(&query).count());
     }
 
     #[test]

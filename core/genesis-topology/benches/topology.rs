@@ -6,18 +6,91 @@
     clippy::uninlined_format_args
 )]
 
+use std::time::{Duration, Instant};
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use genesis_math::SparseCliffordVector;
 use genesis_topology::{
-    geometric_distance, CliffordHashTable, CohomologyValidator, HnswGraph, ManifoldCollector,
-    RipsComplex,
+    benchmark_rank_by_gaussian_elimination, benchmark_xor_row_elimination, geometric_distance,
+    CliffordHashTable, CohomologyValidator, HnswGraph, ManifoldCollector, RipsComplex,
 };
 use genesis_types::NodeId;
-use std::time::{Duration, Instant};
 
 fn make_vec(id: u64) -> SparseCliffordVector {
-    let s = id as f64 * 0.01 + 0.05;
+    let s = (id as f64).mul_add(0.01, 0.05);
     SparseCliffordVector::from_iter((0..4).map(|b| (b, s * (b as f64 + 1.0)))).unwrap()
+}
+
+fn bench_rank_by_gaussian_elimination_throughput(c: &mut Criterion) {
+    c.bench_function("rank_by_gaussian_elimination_throughput", |b| {
+        b.iter(|| {
+            black_box(benchmark_rank_by_gaussian_elimination(
+                128,
+                256,
+                0xA5A5_1234_D3C1_9E37,
+            ))
+        })
+    });
+}
+
+fn bench_h1_query_loop_latency(c: &mut Criterion) {
+    let mut g = HnswGraph::new(16);
+    for i in 0..3_000u64 {
+        let v = make_vec(i);
+        g.insert(
+            NodeId::try_new(i).expect("NodeId válido por construcción"),
+            &v,
+        )
+        .unwrap();
+    }
+    let complex = RipsComplex::build(&g, 0.5);
+
+    c.bench_function("h1_query_loop_latency", |b| {
+        b.iter_custom(|iters| {
+            let start = Instant::now();
+            for _ in 0..iters {
+                black_box(CohomologyValidator::check_h1(black_box(&complex)));
+            }
+            start.elapsed()
+        })
+    });
+}
+
+fn bench_hnsw_layer0_neighbor_scan(c: &mut Criterion) {
+    let mut g = HnswGraph::new(16);
+    for i in 0..10_000u64 {
+        let v = make_vec(i);
+        g.insert(
+            NodeId::try_new(i).expect("NodeId válido por construcción"),
+            &v,
+        )
+        .unwrap();
+    }
+    let soa = g.layer0_soa();
+
+    c.bench_function("hnsw_layer0_neighbor_scan", |b| {
+        b.iter(|| {
+            let mut sum = 0.0_f64;
+            for &(start, end) in &soa.neighbor_offsets {
+                for idx in start..end {
+                    sum += soa.neighbor_distances[idx];
+                }
+            }
+            black_box(sum)
+        })
+    });
+}
+
+fn bench_xor_row_elimination_throughput(c: &mut Criterion) {
+    c.bench_function("xor_row_elimination_throughput", |b| {
+        b.iter(|| {
+            black_box(benchmark_xor_row_elimination(
+                256,
+                1024,
+                0xDEAD_BEEF_CAFE_BABE,
+            ))
+        })
+    });
 }
 
 fn bench_hnsw_insert_1000(c: &mut Criterion) {
@@ -208,6 +281,10 @@ fn bench_lsh_candidates_adversarial_percentiles(c: &mut Criterion) {
 
 criterion_group!(
     benches,
+    bench_rank_by_gaussian_elimination_throughput,
+    bench_h1_query_loop_latency,
+    bench_hnsw_layer0_neighbor_scan,
+    bench_xor_row_elimination_throughput,
     bench_hnsw_insert_1000,
     bench_hnsw_search_k10_in_1000,
     bench_geometric_distance_pair,

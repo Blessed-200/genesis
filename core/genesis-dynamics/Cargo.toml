@@ -16,9 +16,11 @@ genesis-math     = { workspace = true }
 genesis-topology = { workspace = true }
 num-complex      = { workspace = true }
 rayon            = { workspace = true }
+smallvec         = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+proptest = { workspace = true }
 
 [[bench]]
 name    = "dynamics"

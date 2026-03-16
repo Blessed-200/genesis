@@ -1,8 +1,9 @@
 #![allow(clippy::doc_markdown)]
 
-use crate::kuramoto::QuantumKuramotoNetwork;
 use genesis_types::NodeId;
 use rayon::prelude::*;
+
+use crate::kuramoto::QuantumKuramotoNetwork;
 
 /// Numerically-stable sine approximation for Kuramoto phases (BN-poly).
 ///
@@ -40,7 +41,7 @@ pub(crate) fn poly_sin(x: f64) -> f64 {
     //   Kuramoto phases beyond 2^20 are physically exceptional; libm cost is acceptable.
     //
     // AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
-    const FAST_THRESHOLD: f64 = (1u64 << 20) as f64; // 1_048_576
+    const FAST_THRESHOLD: f64 = 1_048_576.0; // 1_048_576
     if x.abs() >= FAST_THRESHOLD {
         return x.sin(); // libm Payne-Hanek: < 1 ULP
     }
@@ -49,7 +50,7 @@ pub(crate) fn poly_sin(x: f64) -> f64 {
     const C1: f64 = FRAC_PI_2;
     const C2: f64 = 0.0;
     let k = (x / FRAC_PI_2).round();
-    let y = x - k * C1 - k * C2;
+    let y = (-k).mul_add(C2, (-k).mul_add(C1, x));
     let octant = (k as i64).rem_euclid(4);
     let y2 = y * y;
     match octant {
@@ -70,7 +71,7 @@ pub(crate) fn poly_sin(x: f64) -> f64 {
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) fn poly_cos(x: f64) -> f64 {
     // Same two-range strategy as poly_sin (see doc there).
-    const FAST_THRESHOLD: f64 = (1u64 << 20) as f64;
+    const FAST_THRESHOLD: f64 = 1_048_576.0;
     if x.abs() >= FAST_THRESHOLD {
         return x.cos();
     }
@@ -78,7 +79,7 @@ pub(crate) fn poly_cos(x: f64) -> f64 {
     const C1: f64 = FRAC_PI_2;
     const C2: f64 = 0.0;
     let k = (x / FRAC_PI_2).round();
-    let y = x - k * C1 - k * C2;
+    let y = (-k).mul_add(C2, (-k).mul_add(C1, x));
     let octant = (k as i64).rem_euclid(4);
     let y2 = y * y;
     match octant {
@@ -91,25 +92,42 @@ pub(crate) fn poly_cos(x: f64) -> f64 {
 
 /// Minimax polynomial kernel for sin(y) where y ∈ [-π/4, π/4].
 /// Degree-9 Horner form. Error < 5e-13.
-#[inline(always)]
+#[inline]
 fn sin_kernel(y: f64, y2: f64) -> f64 {
-    y * (1.0
-        + y2 * (-1.666_666_666_666_666_6e-1
-            + y2 * (8.333_333_333_332_249e-3
-                + y2 * (-1.984_126_982_985_795e-4
-                    + y2 * (2.755_731_370_707_006_8e-6 + y2 * -2.505_210_838_544_172_5e-8)))))
+    let poly = y2.mul_add(
+        y2.mul_add(
+            y2.mul_add(
+                y2.mul_add(
+                    y2.mul_add(-2.505_210_838_544_172_5e-8, 2.755_731_370_707_006_8e-6),
+                    -1.984_126_982_985_795e-4,
+                ),
+                8.333_333_333_332_249e-3,
+            ),
+            -1.666_666_666_666_666_6e-1,
+        ),
+        1.0,
+    );
+    y * poly
 }
 
 /// Minimax polynomial kernel for cos(y) where y ∈ [-π/4, π/4].
 /// Degree-10 Horner form. Error < 5e-13.
-#[inline(always)]
-fn cos_kernel(_y: f64, y2: f64) -> f64 {
-    1.0 + y2
-        * (-4.999_999_999_999_998e-1
-            + y2 * (4.166_666_666_666_667e-2
-                + y2 * (-1.388_888_888_888_735e-3
-                    + y2 * (2.480_158_730_159_014e-5
-                        + y2 * (-2.755_731_922_428_758e-7 + y2 * 2.087_675_698_786_810_2e-9)))))
+#[inline]
+const fn cos_kernel(_y: f64, y2: f64) -> f64 {
+    y2.mul_add(
+        y2.mul_add(
+            y2.mul_add(
+                y2.mul_add(
+                    y2.mul_add(2.087_675_698_786_81e-9, -2.755_731_922_428_758e-7),
+                    2.480_158_730_159_014e-5,
+                ),
+                -1.388_888_888_888_735e-3,
+            ),
+            4.166_666_666_666_667e-2,
+        ),
+        -4.999_999_999_999_998e-1,
+    )
+    .mul_add(y2, 1.0)
 }
 
 /// Amplitude-weighted Kuramoto order parameter — adaptive serial/parallel (BN-08, perf fix).
@@ -150,19 +168,19 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
     fn reduce_slice(oscs: &[crate::oscillator::QuantumOscillator]) -> [(f64, f64, f64); 5] {
         let mut acc = [(0.0f64, 0.0f64, 0.0f64); 5];
         for osc in oscs {
-            for g in 0..5 {
+            for (g, grade_acc) in acc.iter_mut().enumerate().take(N_GRADES) {
                 let a = osc.amplitudes[g];
                 #[cfg(feature = "poly_trig")]
                 {
-                    acc[g].0 += a * poly_cos(osc.phases[g]);
-                    acc[g].1 += a * poly_sin(osc.phases[g]);
+                    grade_acc.0 = a.mul_add(poly_cos(osc.phases[g]), grade_acc.0);
+                    grade_acc.1 = a.mul_add(poly_sin(osc.phases[g]), grade_acc.1);
                 }
                 #[cfg(not(feature = "poly_trig"))]
                 {
-                    acc[g].0 += a * osc.phases[g].cos();
-                    acc[g].1 += a * osc.phases[g].sin();
+                    grade_acc.0 = a.mul_add(osc.phases[g].cos(), grade_acc.0);
+                    grade_acc.1 = a.mul_add(osc.phases[g].sin(), grade_acc.1);
                 }
-                acc[g].2 += a;
+                grade_acc.2 += a;
             }
         }
         acc
@@ -177,19 +195,19 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
             .fold(
                 || [(0.0f64, 0.0f64, 0.0f64); N_GRADES],
                 |mut acc, osc| {
-                    for g in 0..N_GRADES {
+                    for (g, grade_acc) in acc.iter_mut().enumerate().take(N_GRADES) {
                         let a = osc.amplitudes[g];
                         #[cfg(feature = "poly_trig")]
                         {
-                            acc[g].0 += a * poly_cos(osc.phases[g]);
-                            acc[g].1 += a * poly_sin(osc.phases[g]);
+                            grade_acc.0 = a.mul_add(poly_cos(osc.phases[g]), grade_acc.0);
+                            grade_acc.1 = a.mul_add(poly_sin(osc.phases[g]), grade_acc.1);
                         }
                         #[cfg(not(feature = "poly_trig"))]
                         {
-                            acc[g].0 += a * osc.phases[g].cos();
-                            acc[g].1 += a * osc.phases[g].sin();
+                            grade_acc.0 = a.mul_add(osc.phases[g].cos(), grade_acc.0);
+                            grade_acc.1 = a.mul_add(osc.phases[g].sin(), grade_acc.1);
                         }
-                        acc[g].2 += a;
+                        grade_acc.2 += a;
                     }
                     acc
                 },
@@ -197,10 +215,10 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
             .reduce(
                 || [(0.0f64, 0.0f64, 0.0f64); N_GRADES],
                 |mut a, b| {
-                    for g in 0..N_GRADES {
-                        a[g].0 += b[g].0;
-                        a[g].1 += b[g].1;
-                        a[g].2 += b[g].2;
+                    for (grade_a, grade_b) in a.iter_mut().zip(b.iter()).take(N_GRADES) {
+                        grade_a.0 += grade_b.0;
+                        grade_a.1 += grade_b.1;
+                        grade_a.2 += grade_b.2;
                     }
                     a
                 },
@@ -239,8 +257,8 @@ pub fn synchrony_order_hubs(network: &QuantumKuramotoNetwork, hub_indices: &[usi
         for &idx in hub_indices {
             if let Some(osc) = oscs.get(idx) {
                 let a = osc.amplitudes[g];
-                sc += a * osc.phases[g].cos();
-                ss += a * osc.phases[g].sin();
+                sc = a.mul_add(osc.phases[g].cos(), sc);
+                ss = a.mul_add(osc.phases[g].sin(), ss);
                 sa += a;
             }
         }
@@ -588,11 +606,12 @@ mod tests {
 // ── Tests for dot_bivectors and adaptive coupling ─────────────────────────────
 #[cfg(test)]
 mod adaptive_tests {
+    use genesis_math::SparseCliffordVector;
+    use genesis_types::NodeId;
+
     use super::{poly_cos, poly_sin};
     use crate::kuramoto::QuantumKuramotoNetwork;
     use crate::oscillator::QuantumOscillator;
-    use genesis_math::SparseCliffordVector;
-    use genesis_types::NodeId;
 
     fn id(n: u64) -> NodeId {
         NodeId::try_new(n).unwrap()
@@ -841,7 +860,7 @@ mod adaptive_tests {
         for &x in test_vals {
             let s = poly_sin(x);
             let c = poly_cos(x);
-            let identity = s * s + c * c;
+            let identity = s.mul_add(s, c * c);
             assert!(
                 (identity - 1.0).abs() < 1e-12,
                 "sin²+cos² = {identity:.15} ≠ 1.0 for x={x:.3e}"

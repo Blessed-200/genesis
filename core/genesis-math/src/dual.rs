@@ -6,6 +6,50 @@ use crate::basis::TOTAL_BLADES;
 use crate::multivector::SparseCliffordVector;
 use crate::sign::CAYLEY_SIGN;
 
+/// Pseudoscalar blade index `e₀₁₂₃` in G(1,3).
+const PSEUDOSCALAR_INDEX: usize = 0b1111;
+
+/// Right Hodge dual `⋆A = A I⁻¹`, with `I = e₀₁₂₃`.
+///
+/// In G(1,3), `I² = -1`, therefore `I⁻¹ = -I`. This implementation performs
+/// the multiplication directly on sparse active blades (stack-only, zero alloc).
+///
+/// AX-ID: AXIOMA-001, H_estructura (LEY_FUNDACIONAL §3.1)
+#[must_use]
+pub fn hodge_dual(value: &SparseCliffordVector) -> SparseCliffordVector {
+    let mut out = [0.0_f64; TOTAL_BLADES];
+    let mut mask = value.active_mask;
+
+    while mask != 0 {
+        let i = mask.trailing_zeros() as usize;
+        let k = i ^ PSEUDOSCALAR_INDEX;
+        out[k] += -value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);
+        mask &= mask - 1;
+    }
+
+    SparseCliffordVector::from_dense_buf(&out)
+}
+
+/// Inverse right Hodge dual `⋆⁻¹A = A I` with `I = e₀₁₂₃`.
+///
+/// Used to map dual-space constructions back into primal-space blades.
+///
+/// AX-ID: AXIOMA-001, H_estructura (LEY_FUNDACIONAL §3.1)
+#[must_use]
+pub fn hodge_undual(value: &SparseCliffordVector) -> SparseCliffordVector {
+    let mut out = [0.0_f64; TOTAL_BLADES];
+    let mut mask = value.active_mask;
+
+    while mask != 0 {
+        let i = mask.trailing_zeros() as usize;
+        let k = i ^ PSEUDOSCALAR_INDEX;
+        out[k] += value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);
+        mask &= mask - 1;
+    }
+
+    SparseCliffordVector::from_dense_buf(&out)
+}
+
 /// Scalar dual number `value + grad ε` for forward AD.
 /// Scalar dual number `f + ε·f'` for forward-mode automatic differentiation.
 ///
@@ -166,8 +210,10 @@ pub fn geometric_product_dual(
             let sign = f64::from(sign_row[rhs_index]);
 
             result[result_index].value += sign * (lhs_coeff.value * rhs_coeff.value);
-            result[result_index].grad +=
-                sign * (lhs_coeff.grad * rhs_coeff.value + lhs_coeff.value * rhs_coeff.grad);
+            result[result_index].grad += sign
+                * lhs_coeff
+                    .grad
+                    .mul_add(rhs_coeff.value, lhs_coeff.value * rhs_coeff.grad);
 
             rhs_mask &= rhs_mask - 1;
         }

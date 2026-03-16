@@ -2,6 +2,7 @@
 name    = "genesis-topology"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [features]
 hnsw-f16 = []
@@ -14,6 +15,7 @@ smallvec      = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+proptest  = { workspace = true }
 
 [[bench]]
 name    = "topology"

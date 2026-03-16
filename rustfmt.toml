@@ -2,5 +2,9 @@ edition = "2021"
 max_width = 100
 tab_spaces = 4
 use_small_heuristics = "Default"
-imports_granularity = "Module"
-group_imports = "StdExternalCrate"
+
+# VISION DE INGENIERÍA: Estas reglas mantienen el código de GÉNESIS 
+# con estándares de élite. Se comentan temporalmente hasta que 
+# Rustfmt Stable las soporte oficialmente, evitando ruidos en el CI.
+# imports_granularity = "Module"
+# group_imports = "StdExternalCrate"

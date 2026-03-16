@@ -57,6 +57,10 @@ pub mod kuramoto;
 ///
 /// AX-ID: AXIOMA-006
 pub mod oscillator;
+/// Phase semantics engine — interpretable cognitive field over oscillator dynamics.
+///
+/// AX-ID: AXIOMA-004, AXIOMA-006
+pub mod phase_semantics;
 /// Synchrony order parameters and cluster extraction from Kuramoto network.
 ///
 /// AX-ID: AXIOMA-006
@@ -70,4 +74,8 @@ pub use criticality::{
 pub use free_energy::{Belief, FisherEdgeMetric, FisherInfo, VFEMinimizer};
 pub use kuramoto::QuantumKuramotoNetwork;
 pub use oscillator::QuantumOscillator;
+pub use phase_semantics::{
+    CognitiveFieldState, MetaState, NetworkSemanticState, NodeSemanticState, PhaseRegion,
+    PhaseSemanticsEngine, SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
+};
 pub use synchrony::{synchronized_cluster, synchrony_order, synchrony_order_fast};

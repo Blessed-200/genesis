@@ -255,7 +255,7 @@ pub enum GenesisError {
     #[error("Evolution error: domain satiation reached — ingestion blocked for branch '{domain}'")]
     DomainSatiated {
         /// Hierarchical domain identifier whose ingestion channel is now locked.
-        domain: String,
+        domain: &'static str,
     },
 
     /// A Ricci flow step would produce a degenerate metric (det(g) ≤ 0),
@@ -379,6 +379,12 @@ pub enum GenesisError {
         /// Raw node identifier supplied by the caller.
         raw: u64,
     },
+
+    /// A caller supplied semantically invalid input for a fallible API.
+    ///
+    /// AX-ID: Cross-cutting input contract enforcement.
+    #[error("Invalid input: {0}")]
+    InvalidInput(&'static str),
 
     /// A `NodeId` exceeded the defensive maximum for `VFEMinimizer`'s direct index.
     ///
@@ -533,8 +539,9 @@ impl GenesisError {
             | Self::NodeNotFound { .. }
             | Self::ProofMissing { .. }
             | Self::ProofInvalid { .. }
-            | Self::InvariantViolation { .. } => ErrorPayloadTier::Tier1Invariant,
-            Self::DomainSatiated { .. } | Self::FunctorEmbeddingFailed { .. } => {
+            | Self::InvariantViolation { .. }
+            | Self::DomainSatiated { .. } => ErrorPayloadTier::Tier1Invariant,
+            Self::FunctorEmbeddingFailed { .. } | Self::InvalidInput(_) => {
                 ErrorPayloadTier::Tier2Operational
             }
         }
@@ -749,7 +756,7 @@ mod tests {
     #[test]
     fn domain_satiated_message_contains_domain() {
         let err = GenesisError::DomainSatiated {
-            domain: "physics::electromagnetism".to_string(),
+            domain: "physics::electromagnetism",
         };
         let msg = err.to_string();
         assert!(msg.contains("physics::electromagnetism"), "Message: {msg}");
@@ -803,10 +810,10 @@ mod tests {
         );
         assert_eq!(
             GenesisError::DomainSatiated {
-                domain: "physics::electromagnetism".to_string(),
+                domain: "physics::electromagnetism",
             }
             .payload_tier(),
-            ErrorPayloadTier::Tier2Operational
+            ErrorPayloadTier::Tier1Invariant
         );
     }
 }

@@ -1,23 +1,21 @@
-#![allow(clippy::uninlined_format_args)]
-
 use core::num::NonZeroUsize;
 
-/// Acoplamiento crítico de Kuramoto para distribución Gaussiana de frecuencias.
+/// Acoplamiento crítico de Kuramoto para frecuencias Gaussianas.
+///
 /// Derivado analíticamente (validado Wolfram Fokker-Planck):
-///   `K_c` = 2√(2/π) · `T`
-/// El sistema solo genera sincronía macroscópica (cognición emergente) si `Γ_efectivo > K_c`.
+/// `K_c = 2√(2/π) · T`.
+/// El sistema solo genera sincronía macroscópica si `Γ_efectivo > K_c`.
+///
 /// AX-ID: `H_dinámica` (`LEY_FUNDACIONAL` §3.2)
 pub fn kuramoto_critical_coupling(temperature: f64) -> f64 {
-    temperature * 2.0 * (2.0 / core::f64::consts::PI).sqrt()
+    temperature.mul_add(2.0 * (2.0 / core::f64::consts::PI).sqrt(), 0.0)
 }
 
-/// Rango de `r_sync` donde el sistema opera en zona cognitiva viable.
-/// `r < SOC_R_SYNC_MIN`: caos dominante — sin cognición coherente.
-/// `r > SOC_R_SYNC_MAX`: sincronía excesiva — rigidez, sin creatividad.
-/// AX-ID: AXIOMA-005, AXIOMA-006
-/// Minimum synchrony order r for SOC regime (below → subcritical, frozen).
+/// Límite inferior de `r_sync` para la zona cognitiva viable.
 ///
-/// AX-ID: AXIOMA-005
+/// `r < SOC_R_SYNC_MIN` indica régimen subcrítico (caos dominante).
+///
+/// AX-ID: AXIOMA-005, AXIOMA-006
 pub const SOC_R_SYNC_MIN: f64 = 0.3;
 /// Maximum synchrony order r for SOC regime (above → supercritical, rigid).
 ///
@@ -83,8 +81,8 @@ fn ks_p_value(z: f64) -> f64 {
     let mut sum = 0.0f64;
     let mut prev_sum = f64::NAN; // NAN ensures first iteration never triggers break
     for k in 1_u32..=20 {
-        let k_f = k as f64;
-        let term = (-2.0 * k_f * k_f * z * z).exp();
+        let k_f = f64::from(k);
+        let term = (-2.0 * (k_f * k_f).mul_add(z * z, 0.0)).exp();
         if k % 2 == 1 {
             sum += term;
         } else {
@@ -194,10 +192,8 @@ impl CriticalityMonitor {
     ///
     /// AX-ID: AXIOMA-005
     pub fn needs_adjustment(&self) -> bool {
-        match self.tau_exponent() {
-            Some(tau) => !(1.5..=2.5).contains(&tau),
-            None => false,
-        }
+        self.tau_exponent()
+            .is_some_and(|tau| !(1.5..=2.5).contains(&tau))
     }
 
     /// El sistema está congelado: todas las avalanchas son tamaño ≤ 1.
@@ -334,14 +330,14 @@ mod tests {
     fn criticality_tau_in_valid_range_after_100_avalanches() {
         let mut monitor = CriticalityMonitor::new(1000);
         // Generar avalanchas con τ ≈ 2.0 (dentro del rango válido [1.5, 2.5])
-        for s in generate_power_law_avalanches(100, 2.0, 0xdeadbeef) {
+        for s in generate_power_law_avalanches(100, 2.0, 0xdead_beef) {
             monitor.record_avalanche(s);
         }
         let tau = monitor
             .tau_exponent()
             .expect("debe estimar τ con 100 avalanchas");
         assert!(
-            tau >= 1.0 && tau <= 5.0,
+            (1.0..=5.0).contains(&tau),
             "τ estimado = {:.3} debe ser positivo y finito",
             tau
         );

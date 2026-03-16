@@ -16,9 +16,11 @@
 //! PROHIBITED: implementing memories as external lookup tables outside the attractor landscape.
 //! All memory lives in attractor topology. (AXIOMA-004)
 
-use crate::free_energy::VFEMinimizer;
-use genesis_types::NodeId;
 use std::collections::{BTreeSet, HashMap};
+
+use genesis_types::NodeId;
+
+use crate::{free_energy::VFEMinimizer, phase_semantics::PhaseSemanticsEngine};
 
 /// Ordering wrapper for `BTreeSet<AttractorEntry>`.
 /// Primary: energy ascending (minimum energy = most preferred attractor).
@@ -156,6 +158,60 @@ impl AttractorLandscape {
         best.map(|(id, _)| id)
     }
 
+    /// Descend to the minimum semantic-aware objective:
+    /// `VFE + λ1·semantic_incoherence + λ2·phase_instability`.
+    ///
+    /// AX-ID: AXIOMA-004, AXIOMA-006, `H_información`, `H_dinámica`
+    pub fn descend_with_semantics(
+        &self,
+        _current: NodeId,
+        vfe: &VFEMinimizer,
+        semantics: &PhaseSemanticsEngine,
+        lambda_incoherence: f64,
+        lambda_instability: f64,
+    ) -> Option<NodeId> {
+        let mut best: Option<(NodeId, f64)> = None;
+        for entry in &self.ordered_landscape {
+            let base = vfe.compute_vfe(entry.id, None);
+            let incoherence = semantics.semantic_incoherence(entry.id);
+            let instability = semantics.phase_instability(entry.id);
+            let objective = Self::semantic_objective(
+                base,
+                incoherence,
+                instability,
+                lambda_incoherence,
+                lambda_instability,
+            );
+            match best {
+                Some((_, best_obj)) if objective >= best_obj => {}
+                _ => best = Some((entry.id, objective)),
+            }
+        }
+        best.map(|(id, _)| id)
+    }
+
+    /// Computes semantic-aware objective using Fused Multiply-Add (FMA).
+    ///
+    /// Mathematical equivalence:
+    /// `VFE + λ1·incoherence + λ2·instability`.
+    ///
+    /// Uses nested [`f64::mul_add`] to reduce intermediate rounding error and
+    /// leverage CPU FMA instructions where available, while remaining `const`
+    /// evaluable for compile-time contexts.
+    ///
+    /// AX-ID: AXIOMA-004, AXIOMA-006, `H_información`, `H_dinámica`
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    const fn semantic_objective(
+        base: f64,
+        incoherence: f64,
+        instability: f64,
+        lambda_incoherence: f64,
+        lambda_instability: f64,
+    ) -> f64 {
+        lambda_instability.mul_add(instability, lambda_incoherence.mul_add(incoherence, base))
+    }
+
     /// Iterate attractors in ascending energy order.
     ///
     /// Deterministic iteration for CRATE-006 observer when building Ω.
@@ -184,6 +240,7 @@ impl Default for AttractorLandscape {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn id(n: u64) -> NodeId {
         NodeId::try_new(n).expect("NodeId válido")
@@ -254,6 +311,36 @@ mod tests {
     }
 
     #[test]
+    fn descend_with_semantics_penalizes_incoherence() {
+        use crate::{PhaseSemanticsEngine, QuantumKuramotoNetwork, QuantumOscillator};
+
+        let mut l = AttractorLandscape::new();
+        let mut vfe = VFEMinimizer::new();
+        let a = id(0);
+        let b = id(1);
+
+        vfe.add_node(a, [0.1, 0.0, 0.0, 0.0]);
+        vfe.add_node(b, [0.1, 0.0, 0.0, 0.0]);
+        l.register(a, 1.0);
+        l.register(b, 1.0);
+
+        let mut net = QuantumKuramotoNetwork::new(0.0);
+        let mut osc_a = QuantumOscillator::new(a, [0.0; 5]);
+        let mut osc_b = QuantumOscillator::new(b, [0.0; 5]);
+        osc_a.phases[0] = 0.1;
+        osc_b.phases[0] = 3.5;
+        net.add_oscillator(osc_a).expect("add a");
+        net.add_oscillator(osc_b).expect("add b");
+        net.set_coupling(a, b, 1.0);
+
+        let mut semantics = PhaseSemanticsEngine::new();
+        semantics.update_from_network(&net, &[(a, 0.1), (b, 0.1)]);
+
+        let target = l.descend_with_semantics(a, &vfe, &semantics, 10.0, 10.0);
+        assert_eq!(target, Some(b));
+    }
+
+    #[test]
     fn attractor_register_is_log_n_no_linear_scan() {
         // Register 10_000 attractors and verify count — if O(N) retain was used
         // this would be noticeably slow. BTreeSet guarantees O(log N).
@@ -271,5 +358,27 @@ mod tests {
             10_000,
             "no duplicates after bulk update"
         );
+    }
+
+    proptest! {
+        #[allow(clippy::suboptimal_flops)]
+        #[test]
+        fn semantic_objective_matches_naive_expression(
+            base in -1.0e3_f64..1.0e3,
+            incoherence in 0.0_f64..10.0,
+            instability in 0.0_f64..10.0,
+            lambda_incoherence in 0.0_f64..10.0,
+            lambda_instability in 0.0_f64..10.0,
+        ) {
+            let fma = AttractorLandscape::semantic_objective(
+                base,
+                incoherence,
+                instability,
+                lambda_incoherence,
+                lambda_instability,
+            );
+            let naive = base + lambda_incoherence * incoherence + lambda_instability * instability;
+            prop_assert!((fma - naive).abs() < 1e-12);
+        }
     }
 }

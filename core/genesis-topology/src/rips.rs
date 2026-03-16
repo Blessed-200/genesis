@@ -1,11 +1,11 @@
-use crate::geodesic::geometric_distance;
-use crate::hnsw::HnswGraph;
 /// AX-ID: AXIOMA-007, AXIOMA-009
 /// Vietoris-Rips complex up to dimension 2.
 /// Used by `CohomologyValidator` to compute H¹.
 /// No external libraries. No persistent homology.
-use fixedbitset::FixedBitSet;
 use genesis_types::NodeId;
+
+use crate::geodesic::geometric_distance;
+use crate::hnsw::HnswGraph;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Edge {
@@ -47,10 +47,10 @@ impl RipsComplex {
     #[allow(clippy::similar_names)]
     pub fn build(graph: &HnswGraph, epsilon: f64) -> Self {
         let node_ids: Vec<NodeId> = graph.nodes().collect();
-        let n = node_ids.len();
+        let node_count = node_ids.len();
         let dim0 = node_ids.iter().copied().map(|id| [id]).collect();
 
-        if n == 0 {
+        if node_count == 0 {
             return Self {
                 dim0,
                 dim1: Vec::new(),
@@ -69,7 +69,7 @@ impl RipsComplex {
         }
 
         // Compact adjacency by internal node index.
-        let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); node_count];
         let mut edges: Vec<Edge> = Vec::new();
 
         for (u_idx, &u) in node_ids.iter().enumerate() {
@@ -104,23 +104,39 @@ impl RipsComplex {
         edges.dedup();
         let dim1 = edges.iter().map(|e| [e.u, e.v]).collect();
 
-        // Triangle generation with reusable bitset membership probe.
-        let mut tri_marks = FixedBitSet::with_capacity(n);
+        // Triangle generation using two-pointer intersection over sorted
+        // neighbour lists. This avoids per-edge bitset clear/fill churn and
+        // keeps memory accesses linear and branch-stable.
         let mut triangles: Vec<Triangle> = Vec::new();
 
         for (u_idx, u_nb) in adjacency.iter().enumerate() {
             for &v_idx in u_nb.iter().filter(|&&v_idx| v_idx > u_idx) {
-                tri_marks.clear();
-                for &w_idx in adjacency[v_idx].iter().filter(|&&w_idx| w_idx > v_idx) {
-                    tri_marks.insert(w_idx);
-                }
-                for &w_idx in u_nb.iter().filter(|&&w_idx| w_idx > v_idx) {
-                    if tri_marks.contains(w_idx) {
-                        triangles.push(Triangle {
-                            u: node_ids[u_idx],
-                            v: node_ids[v_idx],
-                            w: node_ids[w_idx],
-                        });
+                let v_nb = &adjacency[v_idx];
+                let mut left_cursor = 0usize;
+                let mut right_cursor = 0usize;
+                while left_cursor < u_nb.len() && right_cursor < v_nb.len() {
+                    let left_neighbor = u_nb[left_cursor];
+                    let right_neighbor = v_nb[right_cursor];
+                    if left_neighbor <= v_idx {
+                        left_cursor += 1;
+                        continue;
+                    }
+                    if right_neighbor <= v_idx {
+                        right_cursor += 1;
+                        continue;
+                    }
+                    match left_neighbor.cmp(&right_neighbor) {
+                        std::cmp::Ordering::Equal => {
+                            triangles.push(Triangle {
+                                u: node_ids[u_idx],
+                                v: node_ids[v_idx],
+                                w: node_ids[left_neighbor],
+                            });
+                            left_cursor += 1;
+                            right_cursor += 1;
+                        }
+                        std::cmp::Ordering::Less => left_cursor += 1,
+                        std::cmp::Ordering::Greater => right_cursor += 1,
                     }
                 }
             }
@@ -149,7 +165,7 @@ impl RipsComplex {
     }
 
     /// Number of simplices of each dimension.
-    pub fn counts(&self) -> (usize, usize, usize) {
+    pub const fn counts(&self) -> (usize, usize, usize) {
         (self.dim0.len(), self.dim1.len(), self.dim2.len())
     }
 }
@@ -182,13 +198,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::hnsw::HnswGraph;
     use genesis_math::SparseCliffordVector;
     use genesis_types::NodeId;
 
+    use super::*;
+    use crate::hnsw::HnswGraph;
+
     fn make_vec(id: u64) -> SparseCliffordVector {
-        let s = id as f64 * 0.1 + 0.05;
+        let s = (id as f64).mul_add(0.1, 0.05);
         SparseCliffordVector::from_iter((0..4).map(|b| (b, s * (b as f64 + 1.0)))).unwrap()
     }
 

@@ -2,10 +2,8 @@
 
 use std::time::Instant;
 
-use genesis_math::{
-    experimental::kernel_dense_g13::dense_geometric_product_g13, sparse_geometric_product,
-    SparseCliffordVector,
-};
+use genesis_math::experimental::kernel_dense_g13::dense_geometric_product_g13;
+use genesis_math::{sparse_geometric_product, SparseCliffordVector};
 
 const BATCH: usize = 262_144;
 const REPEATS: usize = 16;

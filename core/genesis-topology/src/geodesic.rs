@@ -70,8 +70,9 @@ pub fn fast_bivector_distance_from_dense(a_dense: &[f64; 16], b: &SparseClifford
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use genesis_math::SparseCliffordVector;
+
+    use super::*;
 
     fn make_vec(pairs: &[(usize, f64)]) -> SparseCliffordVector {
         SparseCliffordVector::from_iter(pairs.iter().copied()).unwrap()
@@ -91,7 +92,7 @@ mod tests {
             .map(|(i, &b)| (b, (i as f64 + 2.0) * 0.2))
             .collect();
         for shift in 0..100_u64 {
-            let s = shift as f64 * 0.01 + 0.1;
+            let s = (shift as f64).mul_add(0.01, 0.1);
             let a = make_vec(&data.iter().map(|&(i, v)| (i, v * s)).collect::<Vec<_>>());
             let b = make_vec(
                 &data2
@@ -150,7 +151,7 @@ mod tests {
             .collect();
         #[allow(deprecated)]
         for shift in 0..100_u64 {
-            let s = shift as f64 * 0.01 + 0.1;
+            let s = (shift as f64).mul_add(0.01, 0.1);
             let a = make_vec(&data.iter().map(|&(i, v)| (i, v * s)).collect::<Vec<_>>());
             let b = make_vec(
                 &data2

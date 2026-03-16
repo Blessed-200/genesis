@@ -85,16 +85,14 @@ pub use constants::{
     SYNCHRONY_COLLAPSE_THRESHOLD,
     WORMHOLE_CURVATURE_THRESHOLD,
 };
-
 // — Errors —
 pub use error::GenesisError;
-
-// — Multivector Types —
-pub use multivector_types::DerivedMetadata;
-
 // — Fisher Edge Metric —
 pub use fisher_edge::FisherEdgeMetric;
-
+// — Multivector Types —
+pub use multivector_types::DerivedMetadata;
+// — Proof System —
+pub use proof::{AxiomGuard, AxiomID, Mutation, Proof, WitnessBuilder};
 // — Signals —
 pub use signal::{
     BladeIndex, Certified, CognitiveDomain, ConsciousnessDomain, DomainConsolidationSignal,
@@ -102,9 +100,6 @@ pub use signal::{
     Saturated, SpikeComponents, SpikeComponentsError, SpikeEvent, Timestamp, TopologyDomain,
     SPIKE_MAX_COMPONENTS,
 };
-
-// — Proof System —
-pub use proof::{AxiomGuard, AxiomID, Mutation, Proof, WitnessBuilder};
 
 /// Curated constants grouped by semantic domain.
 pub mod domains {

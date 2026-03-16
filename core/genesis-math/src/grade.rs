@@ -189,7 +189,7 @@ pub fn even_grade(v: &SparseCliffordVector) -> SparseCliffordVector {
     let mut mask = v.active_mask;
     while mask != 0 {
         let i = mask.trailing_zeros() as usize;
-        if (GRADE_TABLE[i] % 2) == 0 {
+        if GRADE_TABLE[i].is_multiple_of(2) {
             buf[i] = v.coeffs[i];
         }
         mask &= mask - 1;
@@ -241,7 +241,7 @@ pub fn reverse(v: &SparseCliffordVector) -> SparseCliffordVector {
 ///
 /// Bit k set ↔ at least one blade of grade k is active.
 /// G(1,3) has grades 0..=4 → fits in `u8`. Zero allocation.
-pub fn grades_present(v: &SparseCliffordVector) -> u8 {
+pub const fn grades_present(v: &SparseCliffordVector) -> u8 {
     // active_mask already encodes which blades are present.
     let mut result = 0u8;
     let mut mask = v.active_mask;
@@ -254,7 +254,7 @@ pub fn grades_present(v: &SparseCliffordVector) -> u8 {
 }
 
 /// Returns the maximum grade present, or 0 for the zero multivector.
-pub fn max_grade(v: &SparseCliffordVector) -> u8 {
+pub const fn max_grade(v: &SparseCliffordVector) -> u8 {
     let mut best = 0u8;
     let mut mask = v.active_mask;
     while mask != 0 {
@@ -269,7 +269,7 @@ pub fn max_grade(v: &SparseCliffordVector) -> u8 {
 }
 
 /// Returns the minimum grade present, or 0 for the zero multivector.
-pub fn min_grade(v: &SparseCliffordVector) -> u8 {
+pub const fn min_grade(v: &SparseCliffordVector) -> u8 {
     if v.active_mask == 0 {
         return 0;
     }
@@ -287,7 +287,7 @@ pub fn min_grade(v: &SparseCliffordVector) -> u8 {
 }
 
 /// True if all active blades have the same grade.
-pub fn is_homogeneous(v: &SparseCliffordVector) -> bool {
+pub const fn is_homogeneous(v: &SparseCliffordVector) -> bool {
     if v.active_mask == 0 {
         return true;
     }
@@ -380,7 +380,7 @@ mod tests {
         let norm_sq_a = a.clifford_norm_sq;
 
         // Boosted: A' = (3ch+sh)e₀ + (3sh+ch)e₁
-        let a_boosted = mv(&[(1, 3.0 * ch + sh), (2, 3.0 * sh + ch)]);
+        let a_boosted = mv(&[(1, 3.0f64.mul_add(ch, sh)), (2, 3.0f64.mul_add(sh, ch))]);
         let norm_sq_boosted = a_boosted.clifford_norm_sq;
 
         assert!(

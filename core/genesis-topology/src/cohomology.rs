@@ -1,82 +1,164 @@
-use crate::rips::RipsComplex;
 /// AX-ID: AXIOMA-007, AXIOMA-009
 /// Cohomology validator: computes H¹ = ker(∂₁) / im(∂₂) over Z₂.
 /// All arithmetic in Z₂ (bit operations). No external linear algebra libraries.
 /// Boundary matrices stored as bitmaps (Vec<u64> packed rows).
 use std::cell::RefCell;
 
+// Política de mantenimiento para validación cohomológica crítica.
+//
+// - `#[inline(always)]` está prohibido salvo excepción documentada con
+//   benchmark reproducible, motivo arquitectónico y riesgo explícito.
+// - Cuando una optimización dependa de `cfg`, debe declarar rama complementaria
+//   `not(...)` para mantener cobertura de símbolos del codec entre perfiles.
+//
+// AX-ID: AXIOMA-007, AXIOMA-009, H_restricción (LEY_FUNDACIONAL §5.6)
+
+use crate::rips::RipsComplex;
+
 /// Packed Z₂ matrix: rows × cols, each row stored as ceil(cols/64) u64 words.
 struct Z2Matrix {
     rows: usize,
     cols: usize,
+    /// Cached packing width.
+    ///
+    /// Structural invariants:
+    /// - `data.len() == rows * words_per_row`
+    /// - `words_per_row == cols.div_ceil(64)`
+    /// - `cols` only changes through `set_cols` so packed layout remains consistent.
+    words_per_row: usize,
     data: Vec<u64>,
 }
 
 impl Z2Matrix {
     fn new(rows: usize, cols: usize) -> Self {
         let words_per_row = cols.div_ceil(64);
-        Self {
+        let matrix = Self {
             rows,
             cols,
+            words_per_row,
             data: vec![0u64; rows * words_per_row],
-        }
+        };
+
+        debug_assert_eq!(matrix.words_per_row, cols.div_ceil(64));
+        debug_assert_matrix_invariants(&matrix);
+
+        matrix
     }
 
-    fn words_per_row(&self) -> usize {
-        self.cols.div_ceil(64)
-    }
-
-    fn get(&self, row: usize, col: usize) -> bool {
-        let wpr = self.words_per_row();
-        let word = self.data[row * wpr + col / 64];
-        (word >> (col % 64)) & 1 == 1
+    #[cfg(test)]
+    fn set_cols(&mut self, cols: usize) {
+        self.cols = cols;
+        self.words_per_row = cols.div_ceil(64);
+        self.data.resize(self.rows * self.words_per_row, 0);
+        debug_assert_matrix_invariants(self);
     }
 
     fn set(&mut self, row: usize, col: usize, val: bool) {
-        let wpr = self.words_per_row();
+        if row >= self.rows || col >= self.cols {
+            index_oob_error(row, col, self.rows, self.cols);
+        }
+        let wpr = self.words_per_row;
         let idx = row * wpr + col / 64;
         if val {
             self.data[idx] |= 1u64 << (col % 64);
         } else {
             self.data[idx] &= !(1u64 << (col % 64));
         }
-    }
-
-    fn xor_row(&mut self, dst: usize, src: usize) {
-        let wpr = self.words_per_row();
-        for w in 0..wpr {
-            let s = self.data[src * wpr + w];
-            self.data[dst * wpr + w] ^= s;
-        }
+        debug_assert_matrix_invariants(self);
     }
 
     fn rank_by_gaussian_elimination(&mut self) -> usize {
+        debug_assert_matrix_invariants(self);
         if self.rows == 0 || self.cols == 0 {
             return 0;
         }
+
+        let wpr = self.words_per_row;
         let mut rank = 0usize;
         let mut r = 0usize;
+        let mut pivot_row_buf = vec![0_u64; wpr];
+
+        debug_assert_eq!(self.data.len(), self.rows * wpr);
 
         for c in 0..self.cols {
-            let pivot = (r..self.rows).find(|&row| self.get(row, c));
+            if r >= self.rows {
+                break;
+            }
+
+            let pivot_word = c / 64;
+            let pivot_bit = 1u64 << (c % 64);
+
+            let mut pivot = None;
+            for row in r..self.rows {
+                let idx = row * wpr + pivot_word;
+                if (self.data[idx] & pivot_bit) != 0 {
+                    pivot = Some(row);
+                    break;
+                }
+            }
+
             if let Some(p) = pivot {
                 if p != r {
-                    let wpr = self.words_per_row();
-                    for w in 0..wpr {
-                        self.data.swap(p * wpr + w, r * wpr + w);
+                    let p_start = p * wpr;
+                    let r_start = r * wpr;
+                    if p_start < r_start {
+                        let (left, right) = self.data.split_at_mut(r_start);
+                        let p_row = &mut left[p_start..p_start + wpr];
+                        let r_row = &mut right[..wpr];
+                        p_row.swap_with_slice(r_row);
+                    } else {
+                        let (left, right) = self.data.split_at_mut(p_start);
+                        let r_row = &mut left[r_start..r_start + wpr];
+                        let p_row = &mut right[..wpr];
+                        r_row.swap_with_slice(p_row);
                     }
                 }
+
+                let pivot_start = r * wpr;
+                pivot_row_buf.copy_from_slice(&self.data[pivot_start..pivot_start + wpr]);
+
                 for row in 0..self.rows {
-                    if row != r && self.get(row, c) {
-                        self.xor_row(row, r);
+                    if row == r {
+                        continue;
+                    }
+                    let row_pivot_idx = row * wpr + pivot_word;
+                    if (self.data[row_pivot_idx] & pivot_bit) != 0 {
+                        let dst = row * wpr;
+                        let dst_row = &mut self.data[dst + pivot_word..dst + wpr];
+                        let pivot_tail = &pivot_row_buf[pivot_word..wpr];
+                        for (dst_word, pivot_word_value) in
+                            dst_row.iter_mut().zip(pivot_tail.iter())
+                        {
+                            *dst_word ^= *pivot_word_value;
+                        }
                     }
                 }
+
                 rank += 1;
                 r += 1;
             }
         }
+
+        debug_assert_matrix_invariants(self);
         rank
     }
+}
+
+fn debug_assert_matrix_invariants(matrix: &Z2Matrix) {
+    debug_assert_eq!(matrix.words_per_row, matrix.cols.div_ceil(64));
+    debug_assert_eq!(matrix.data.len(), matrix.rows * matrix.words_per_row);
+}
+
+#[cold]
+#[inline(never)]
+fn index_oob_error(row: usize, col: usize, rows: usize, cols: usize) -> ! {
+    panic!("Z2Matrix index out of bounds: row={row}, col={col}, rows={rows}, cols={cols}");
+}
+
+#[cold]
+#[inline(never)]
+fn invalid_topology_state(message: &'static str) -> ! {
+    panic!("invalid topology state: {message}");
 }
 
 #[derive(Default)]
@@ -89,6 +171,7 @@ struct HomologyWorkspace {
 struct H1CacheKey {
     ptr: *const RipsComplex,
     counts: (usize, usize, usize),
+    fingerprint: u64,
 }
 
 #[derive(Default)]
@@ -100,7 +183,7 @@ struct H1Cache {
 }
 
 impl H1Cache {
-    fn invalidate(&mut self) {
+    const fn invalidate(&mut self) {
         self.key = None;
         self.cached_result = None;
     }
@@ -167,6 +250,7 @@ thread_local! {
 #[cfg(test)]
 thread_local! {
     static FULL_REBUILD_COUNT: RefCell<usize> = const { RefCell::new(0) };
+    static FINGERPRINT_COUNT: RefCell<usize> = const { RefCell::new(0) };
 }
 
 #[cfg(test)]
@@ -178,11 +262,50 @@ fn note_full_rebuild() {
 }
 
 #[cfg(not(test))]
-fn note_full_rebuild() {}
+const fn note_full_rebuild() {}
 
-fn edge_key(a: usize, b: usize) -> u64 {
+#[cfg(test)]
+fn note_fingerprint() {
+    FINGERPRINT_COUNT.with(|counter| {
+        let mut value = counter.borrow_mut();
+        *value += 1;
+    });
+}
+
+#[cfg(not(test))]
+const fn note_fingerprint() {}
+
+const fn edge_key(a: usize, b: usize) -> u64 {
     let (x, y) = if a <= b { (a, b) } else { (b, a) };
     ((x as u64) << 32) | y as u64
+}
+
+#[inline]
+fn complex_fingerprint(complex: &RipsComplex) -> u64 {
+    // AX-ID: AXIOMA-009
+    // 64-bit rolling mix over 1- and 2-simplices to robustly invalidate cache
+    // when topology mutates without count changes.
+    note_fingerprint();
+
+    let mut acc = 0x9E37_79B9_7F4A_7C15u64;
+    for edge in complex.simplices_of_dim(1) {
+        let a = edge[0].get();
+        let b = edge[1].get();
+        let k = a.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ b.wrapping_mul(0x94D0_49BB_1331_11EB);
+        acc ^= k.rotate_left(17);
+        acc = acc.rotate_left(13).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    for tri in complex.simplices_of_dim(2) {
+        let a = tri[0].get();
+        let b = tri[1].get();
+        let c = tri[2].get();
+        let k = a.wrapping_mul(0xD6E8_FEB8_6659_FD93)
+            ^ b.wrapping_mul(0xA5A3_58F4_7A6B_CDEF)
+            ^ c.wrapping_mul(0x8D58_AC26_A2F4_9E27);
+        acc ^= k.rotate_left(29);
+        acc = acc.rotate_left(11).wrapping_mul(0x94D0_49BB_1331_11EB);
+    }
+    acc
 }
 
 fn prepare_vertex_index(complex: &RipsComplex, ws: &mut HomologyWorkspace) -> usize {
@@ -229,7 +352,7 @@ fn build_d1(complex: &RipsComplex, ws: &HomologyWorkspace, n_v: usize) -> Z2Matr
     m
 }
 
-fn build_d2(complex: &RipsComplex, ws: &mut HomologyWorkspace) -> Z2Matrix {
+fn build_d2(complex: &RipsComplex, ws: &mut HomologyWorkspace, n_v: usize) -> Z2Matrix {
     let n_e = complex.simplices_of_dim(1).count();
     let n_t = complex.simplices_of_dim(2).count();
     if n_e == 0 || n_t == 0 {
@@ -244,20 +367,53 @@ fn build_d2(complex: &RipsComplex, ws: &mut HomologyWorkspace) -> Z2Matrix {
     }
     ws.edge_lookup.sort_unstable_by_key(|&(key, _)| key);
 
-    let mut m = Z2Matrix::new(n_e, n_t);
-    for (col, tri) in complex.simplices_of_dim(2).enumerate() {
-        let a = ws.id_to_vertex[tri[0].get() as usize];
-        let b = ws.id_to_vertex[tri[1].get() as usize];
-        let c = ws.id_to_vertex[tri[2].get() as usize];
+    const DENSE_EDGE_MAP_BYTES_LIMIT: usize = 16 * 1024 * 1024;
+    let dense_slots = n_v.saturating_mul(n_v);
+    let dense_lookup = if dense_slots > 0
+        && dense_slots <= DENSE_EDGE_MAP_BYTES_LIMIT / std::mem::size_of::<u32>()
+    {
+        let mut table = vec![u32::MAX; dense_slots];
+        for &(key, row) in &ws.edge_lookup {
+            let a = (key >> 32) as usize;
+            let b = (key & 0xFFFF_FFFF) as usize;
+            table[a * n_v + b] = row as u32;
+        }
+        Some(table)
+    } else {
+        None
+    };
 
-        for key in [edge_key(a, b), edge_key(a, c), edge_key(b, c)] {
-            if let Ok(pos) = ws.edge_lookup.binary_search_by_key(&key, |&(k, _)| k) {
-                let row = ws.edge_lookup[pos].1;
-                m.set(row, col, true);
+    let mut boundary_matrix = Z2Matrix::new(n_e, n_t);
+    for (col, tri) in complex.simplices_of_dim(2).enumerate() {
+        let vertex_a = ws.id_to_vertex[tri[0].get() as usize];
+        let vertex_b = ws.id_to_vertex[tri[1].get() as usize];
+        let vertex_c = ws.id_to_vertex[tri[2].get() as usize];
+
+        for (edge_start, edge_end) in [
+            (vertex_a, vertex_b),
+            (vertex_a, vertex_c),
+            (vertex_b, vertex_c),
+        ] {
+            let (min_vertex, max_vertex) = if edge_start <= edge_end {
+                (edge_start, edge_end)
+            } else {
+                (edge_end, edge_start)
+            };
+            if let Some(table) = dense_lookup.as_ref() {
+                let idx = min_vertex * n_v + max_vertex;
+                let row = table[idx];
+                if row != u32::MAX {
+                    boundary_matrix.set(row as usize, col, true);
+                }
+            } else {
+                let key = edge_key(min_vertex, max_vertex);
+                if let Ok(pos) = ws.edge_lookup.binary_search_by_key(&key, |&(k, _)| k) {
+                    boundary_matrix.set(ws.edge_lookup[pos].1, col, true);
+                }
             }
         }
     }
-    m
+    boundary_matrix
 }
 
 fn check_h1_full(complex: &RipsComplex, ws: &mut HomologyWorkspace, n_v: usize) -> bool {
@@ -269,7 +425,7 @@ fn check_h1_full(complex: &RipsComplex, ws: &mut HomologyWorkspace, n_v: usize) 
     let rank_ker_d1 = n_edges.saturating_sub(rank_d1);
 
     let rank_im_d2 = {
-        let mut d2 = build_d2(complex, ws);
+        let mut d2 = build_d2(complex, ws, n_v);
         d2.rank_by_gaussian_elimination()
     };
 
@@ -288,9 +444,15 @@ fn detect_graph_cycle_incremental(
     }
 
     cache.prepare_union_find(n_v);
+    let id_to_vertex = ws.id_to_vertex.as_slice();
     for edge in complex.simplices_of_dim(1) {
-        let u = ws.id_to_vertex[edge[0].get() as usize];
-        let v = ws.id_to_vertex[edge[1].get() as usize];
+        let raw_u = edge[0].get() as usize;
+        let raw_v = edge[1].get() as usize;
+        if raw_u >= id_to_vertex.len() || raw_v >= id_to_vertex.len() {
+            invalid_topology_state("edge endpoint missing in vertex index");
+        }
+        let u = id_to_vertex[raw_u];
+        let v = id_to_vertex[raw_v];
         if u == usize::MAX || v == usize::MAX {
             continue;
         }
@@ -300,6 +462,64 @@ fn detect_graph_cycle_incremental(
     }
 
     false
+}
+
+/// Benchmark helper that executes Z₂ Gaussian elimination over a deterministic
+/// packed matrix and returns the computed rank.
+///
+/// AX-ID: AXIOMA-007, H_estructura (LEY_FUNDACIONAL §3.1)
+pub fn benchmark_rank_by_gaussian_elimination(rows: usize, cols: usize, seed: u64) -> usize {
+    if rows == 0 || cols == 0 {
+        return 0;
+    }
+
+    let mut matrix = Z2Matrix::new(rows, cols);
+    let mut state = seed ^ 0x9E37_79B9_7F4A_7C15;
+    for row in 0..rows {
+        for col in 0..cols {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            if (state & 1) != 0 {
+                matrix.set(row, col, true);
+            }
+        }
+    }
+
+    matrix.rank_by_gaussian_elimination()
+}
+
+/// Benchmark helper for branch-minimal row XOR elimination throughput over
+/// packed Z₂ row buffers.
+///
+/// AX-ID: AXIOMA-007, H_dinámica (LEY_FUNDACIONAL §3.2)
+pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, seed: u64) -> u64 {
+    if words_per_row == 0 || iterations == 0 {
+        return 0;
+    }
+
+    let mut state = seed ^ 0x94D0_49BB_1331_11EB;
+    let mut dst = vec![0_u64; words_per_row];
+    let mut pivot = vec![0_u64; words_per_row];
+
+    for word in 0..words_per_row {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        dst[word] = state;
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        pivot[word] = state.rotate_left(11);
+    }
+
+    for _ in 0..iterations {
+        for (dst_word, pivot_word) in dst.iter_mut().zip(pivot.iter()) {
+            *dst_word ^= *pivot_word;
+        }
+    }
+
+    dst.iter().fold(0_u64, |acc, &word| acc ^ word)
 }
 
 /// Cohomology validator.
@@ -314,15 +534,26 @@ impl CohomologyValidator {
         if n_edges == 0 {
             return true;
         }
-
-        let key = H1CacheKey {
-            ptr: complex as *const _,
-            counts: complex.counts(),
-        };
+        let ptr = std::ptr::from_ref(complex);
+        let counts = complex.counts();
 
         H1_CACHE.with(|cache_cell| {
             HOMOLOGY_WORKSPACE.with(|ws_cell| {
                 let mut cache = cache_cell.borrow_mut();
+
+                if let Some(key) = cache.key {
+                    if key.ptr == ptr && key.counts == counts {
+                        if let Some(cached) = cache.cached_result {
+                            return cached;
+                        }
+                    }
+                }
+
+                let key = H1CacheKey {
+                    ptr,
+                    counts,
+                    fingerprint: complex_fingerprint(complex),
+                };
 
                 if cache.key != Some(key) {
                     cache.invalidate();
@@ -351,15 +582,16 @@ impl CohomologyValidator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::hnsw::HnswGraph;
-    use crate::rips::RipsComplex;
     use genesis_math::SparseCliffordVector;
     use genesis_types::NodeId;
 
+    use super::*;
+    use crate::hnsw::HnswGraph;
+    use crate::rips::RipsComplex;
+
     fn make_seeded_vec(node_id: u64, seed: u64) -> SparseCliffordVector {
-        let a = ((seed >> 8) & 0xFF) as f64 * 0.001 + 0.05;
-        let b = ((seed >> 24) & 0xFF) as f64 * 0.001 + 0.1;
+        let a = (((seed >> 8) & 0xFF) as f64).mul_add(0.001, 0.05);
+        let b = (((seed >> 24) & 0xFF) as f64).mul_add(0.001, 0.1);
         SparseCliffordVector::from_iter((0..4).map(|idx| {
             let scale = (idx as f64 + 1.0) * 0.2;
             (idx, scale * (a * node_id as f64 + b))
@@ -390,8 +622,16 @@ mod tests {
         FULL_REBUILD_COUNT.with(|counter| *counter.borrow())
     }
 
+    fn reset_fingerprint_count() {
+        FINGERPRINT_COUNT.with(|counter| *counter.borrow_mut() = 0);
+    }
+
+    fn fingerprint_count() -> usize {
+        FINGERPRINT_COUNT.with(|counter| *counter.borrow())
+    }
+
     fn make_vec(id: u64) -> SparseCliffordVector {
-        let s = id as f64 * 0.15 + 0.05;
+        let s = (id as f64).mul_add(0.15, 0.05);
         SparseCliffordVector::from_iter((0..4).map(|b| (b, s * (b as f64 + 1.0)))).unwrap()
     }
 
@@ -431,6 +671,35 @@ mod tests {
     }
 
     #[test]
+    fn z2_matrix_invariant_holds_after_gaussian_elimination() {
+        let mut m = Z2Matrix::new(5, 130);
+        m.set(0, 0, true);
+        m.set(1, 64, true);
+        m.set(2, 65, true);
+        m.set(3, 129, true);
+        m.set(4, 0, true);
+        m.set(4, 64, true);
+
+        let _ = m.rank_by_gaussian_elimination();
+
+        assert_eq!(m.words_per_row, m.cols.div_ceil(64));
+        assert_eq!(m.data.len(), m.rows * m.words_per_row);
+    }
+
+    #[test]
+    fn z2_matrix_set_cols_rebuilds_packed_layout_invariant() {
+        let mut m = Z2Matrix::new(3, 65);
+        m.set(0, 0, true);
+        m.set(1, 64, true);
+
+        m.set_cols(129);
+
+        assert_eq!(m.words_per_row, 3);
+        assert_eq!(m.words_per_row, m.cols.div_ceil(64));
+        assert_eq!(m.data.len(), m.rows * m.words_per_row);
+    }
+
+    #[test]
     fn h1_incremental_matches_full_on_1000_random_graphs() {
         let mut seed = 0xA5A5_5A5A_D3C1_9E37u64;
         for _ in 0..1000 {
@@ -445,13 +714,70 @@ mod tests {
                 .unwrap();
             }
 
-            let epsilon = 0.15 + (xorshift64(&mut seed) % 700) as f64 * 0.001;
+            let epsilon = ((xorshift64(&mut seed) % 700) as f64).mul_add(0.001, 0.15);
             let complex = RipsComplex::build(&g, epsilon);
 
             let incremental = CohomologyValidator::check_h1(&complex);
             let full = check_h1_full_for_test(&complex);
             assert_eq!(incremental, full);
         }
+    }
+
+    #[test]
+    fn h1_cache_invalidates_on_same_counts_with_different_topology() {
+        let mut g1 = HnswGraph::new(8);
+        let mut g2 = HnswGraph::new(8);
+        for i in 0..4u64 {
+            let id = NodeId::try_new(i).expect("NodeId válido por construcción");
+            g1.insert(id, &make_vec(i)).unwrap();
+            g2.insert(id, &make_vec(i + 100)).unwrap();
+        }
+
+        let c1 = RipsComplex::build(&g1, 0.001);
+        let _ = CohomologyValidator::check_h1(&c1);
+        let key1 = H1CacheKey {
+            ptr: std::ptr::from_ref(&c1),
+            counts: c1.counts(),
+            fingerprint: complex_fingerprint(&c1),
+        };
+
+        let c2 = RipsComplex::build(&g2, 10.0);
+        let _ = CohomologyValidator::check_h1(&c2);
+        let key2 = H1CacheKey {
+            ptr: std::ptr::from_ref(&c2),
+            counts: c2.counts(),
+            fingerprint: complex_fingerprint(&c2),
+        };
+
+        assert_ne!(key1.fingerprint, key2.fingerprint);
+    }
+
+    #[test]
+    fn h1_cache_hit_avoids_fingerprint_rescan() {
+        H1_CACHE.with(|cache| cache.borrow_mut().invalidate());
+        reset_fingerprint_count();
+
+        let mut hnsw = HnswGraph::new(8);
+        let vectors = [
+            SparseCliffordVector::from_iter([(0, 0.0), (1, 0.0), (2, 0.0), (3, 0.0)]).unwrap(),
+            SparseCliffordVector::from_iter([(0, 0.1), (1, 0.0), (2, 0.0), (3, 0.0)]).unwrap(),
+            SparseCliffordVector::from_iter([(0, 0.1), (1, 0.1), (2, 0.0), (3, 0.0)]).unwrap(),
+            SparseCliffordVector::from_iter([(0, 0.0), (1, 0.1), (2, 0.0), (3, 0.0)]).unwrap(),
+        ];
+
+        for (i, vec) in vectors.iter().enumerate() {
+            hnsw.insert(NodeId::try_new(i as u64).unwrap(), vec)
+                .unwrap();
+        }
+
+        let complex = RipsComplex::build(&hnsw, 0.2);
+        let first = CohomologyValidator::check_h1(&complex);
+        let first_count = fingerprint_count();
+        let second = CohomologyValidator::check_h1(&complex);
+
+        assert_eq!(first, second);
+        assert_eq!(first_count, 1);
+        assert_eq!(fingerprint_count(), 1);
     }
 
     #[test]

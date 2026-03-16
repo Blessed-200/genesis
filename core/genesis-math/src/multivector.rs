@@ -252,7 +252,7 @@ impl SparseCliffordVector {
 
     /// Internal constructor when coefficients and metadata are already consolidated.
     #[inline]
-    pub(crate) fn from_dense_with_metadata(
+    pub(crate) const fn from_dense_with_metadata(
         coeffs: [f64; TOTAL_BLADES],
         active_mask: u16,
         max_abs_coeff: f64,
@@ -273,7 +273,7 @@ impl SparseCliffordVector {
 
     /// Coefficient of the scalar blade (bitmask 0, grade 0).
     #[inline]
-    pub fn scalar_part(&self) -> f64 {
+    pub const fn scalar_part(&self) -> f64 {
         self.coeffs[0]
     }
 
@@ -329,6 +329,87 @@ impl SparseCliffordVector {
     #[inline]
     pub fn reverse(&self) -> Self {
         reverse(self)
+    }
+
+    /// Exterior product `A ∧ B` (antisymmetric span composition).
+    ///
+    /// AX-ID: AXIOMA-001, AXIOMA-006, H_estructura (LEY_FUNDACIONAL §3.1)
+    #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
+    #[inline]
+    pub fn wedge(&self, rhs: &Self) -> Self {
+        crate::semantic::wedge(self, rhs)
+    }
+
+    /// Regressive product `A ∩ B` derived through Hodge duality.
+    ///
+    /// AX-ID: AXIOMA-001, AXIOMA-006, H_estructura (LEY_FUNDACIONAL §3.1)
+    #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
+    #[inline]
+    pub fn meet(&self, rhs: &Self) -> Self {
+        crate::semantic::meet(self, rhs)
+    }
+
+    /// Join/union product `A ∪ B` derived through De Morgan duality.
+    ///
+    /// AX-ID: AXIOMA-001, AXIOMA-006, H_estructura (LEY_FUNDACIONAL §3.1)
+    #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
+    #[inline]
+    pub fn join(&self, rhs: &Self) -> Self {
+        crate::semantic::join(self, rhs)
+    }
+
+    /// Left contraction `A ⌟ B` with grade-filtered geometric projection.
+    ///
+    /// AX-ID: AXIOMA-001, H_estructura (LEY_FUNDACIONAL §3.1)
+    #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
+    #[inline]
+    pub fn left_contraction(&self, rhs: &Self) -> Self {
+        crate::semantic::left_contraction(self, rhs)
+    }
+
+    /// Right contraction `A ⌞ B` with grade-filtered geometric projection.
+    ///
+    /// AX-ID: AXIOMA-001, H_estructura (LEY_FUNDACIONAL §3.1)
+    #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
+    #[inline]
+    pub fn right_contraction(&self, rhs: &Self) -> Self {
+        crate::semantic::right_contraction(self, rhs)
+    }
+
+    /// Lie commutator `[A,B] = 0.5 * (AB − BA)`.
+    ///
+    /// AX-ID: AXIOMA-001, AXIOMA-006, H_estructura (LEY_FUNDACIONAL §3.1)
+    #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
+    #[inline]
+    pub fn commutator(&self, rhs: &Self) -> Self {
+        crate::semantic::commutator(self, rhs)
+    }
+
+    /// True when `self` satisfies the rotor unit constraint `R * R̃ ≈ 1`.
+    ///
+    /// AX-ID: AXIOMA-001, AXIOMA-002, H_dinámica (LEY_FUNDACIONAL §3.2)
+    #[must_use]
+    #[inline]
+    pub fn is_unit_rotor(&self) -> bool {
+        crate::semantic::is_unit_rotor(self)
+    }
+
+    /// Rotor sandwich composition `R X R̃` in G(1,3).
+    ///
+    /// AX-ID: AXIOMA-001, AXIOMA-002, H_dinámica (LEY_FUNDACIONAL §3.2)
+    #[must_use = "retorna un nuevo multivector cuando supera el gate energético"]
+    #[inline]
+    pub fn rotor_sandwich(&self, rotor: &Self) -> Option<Self> {
+        crate::semantic::rotor_sandwich(rotor, self)
+    }
+
+    /// Checked rotor sandwich composition requiring a unit rotor.
+    ///
+    /// AX-ID: AXIOMA-001, AXIOMA-002, H_dinámica (LEY_FUNDACIONAL §3.2)
+    #[must_use = "retorna un nuevo multivector cuando el rotor es unitario y supera el gate energético"]
+    #[inline]
+    pub fn rotor_sandwich_checked(&self, rotor: &Self) -> Option<Self> {
+        crate::semantic::rotor_sandwich_checked(rotor, self)
     }
 
     // ── Metric scalar product ─────────────────────────────────────────────────
@@ -610,7 +691,7 @@ pub(crate) const METRIC_WEIGHTS: [f64; TOTAL_BLADES] = {
 /// fronteras entre regiones de grado semántico distinto.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
-#[inline(always)]
+#[inline]
 pub fn fast_metric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) -> f64 {
     // CS gate: evitar conexiones entre estados de energía sub-Planck
     if a.max_abs_coeff * b.max_abs_coeff < COGNITIVE_PLANCK_CONSTANT {
@@ -628,9 +709,9 @@ pub fn fast_metric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) 
             mask &= mask - 1;
         }
     } else {
-        for i in 0..TOTAL_BLADES {
+        for (i, weight) in METRIC_WEIGHTS.iter().enumerate().take(TOTAL_BLADES) {
             let d = a.coeffs[i] - b.coeffs[i];
-            sum += d * d * METRIC_WEIGHTS[i];
+            sum += d * d * *weight;
         }
     }
     sum.sqrt()
@@ -651,15 +732,15 @@ pub fn fast_metric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) 
 /// no ausencia de señal real.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
-#[inline(always)]
+#[inline]
 pub fn fast_metric_distance_from_dense(
     a_dense: &[f64; TOTAL_BLADES],
     b: &SparseCliffordVector,
 ) -> f64 {
     let mut sum = 0.0f64;
-    for i in 0..TOTAL_BLADES {
+    for (i, weight) in METRIC_WEIGHTS.iter().enumerate().take(TOTAL_BLADES) {
         let d = a_dense[i] - b.coeffs[i];
-        sum += d * d * METRIC_WEIGHTS[i];
+        sum += d * d * *weight;
     }
     sum.sqrt()
 }
@@ -943,8 +1024,11 @@ mod tests {
         let (ch, sh) = (eta.cosh(), eta.sinh());
         // A = 3e₀ + e₁ (blade indices 1 and 2)
         let a = SparseCliffordVector::from_iter([(1, 3.0), (2, 1.0)]).unwrap();
-        let a_boosted =
-            SparseCliffordVector::from_iter([(1, 3.0 * ch + sh), (2, 3.0 * sh + ch)]).unwrap();
+        let a_boosted = SparseCliffordVector::from_iter([
+            (1, 3.0f64.mul_add(ch, sh)),
+            (2, 3.0f64.mul_add(sh, ch)),
+        ])
+        .unwrap();
         assert!(
             (a.clifford_norm_sq - a_boosted.clifford_norm_sq).abs() < 1e-10,
             "Clifford norm_sq must be Lorentz-invariant: {} vs {}",
