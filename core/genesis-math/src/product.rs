@@ -579,8 +579,8 @@ unsafe fn geometric_product_aarch64_neon_dense(
             // SAFETY: vdupq_n_f64 and vsetq_lane_f64 are register-only NEON ops;
             // no memory access. Values are finite f64 multiplied by ±1 (CAYLEY_SIGN).
             let lhs = unsafe {
-                let v0 = a_coeffs[idx0] * f64::from(CAYLEY_SIGN[idx0][j]);
-                let v1 = a_coeffs[idx1] * f64::from(CAYLEY_SIGN[idx1][j]);
+                let v0 = a_coeffs[idx0] * CAYLEY_SIGN_F64[idx0][j];
+                let v1 = a_coeffs[idx1] * CAYLEY_SIGN_F64[idx1][j];
                 let r = vdupq_n_f64(v0);
                 vsetq_lane_f64::<1>(v1, r)
             };
