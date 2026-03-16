@@ -68,8 +68,8 @@ pub use product::{
     sparse_geometric_product_with_mode, BivectorProduct, GeometricProductMode,
 };
 pub use semantic::{
-    commutator, is_unit_rotor, join, left_contraction, meet, right_contraction, rotor_sandwich,
-    rotor_sandwich_checked, wedge,
+    commutator, exp_bivector, is_unit_rotor, join, left_contraction, log_rotor, meet,
+    right_contraction, rotor_sandwich, rotor_sandwich_checked, slerp_rotor, wedge,
 };
 pub use sign::{compute_clifford_sign, fast_cayley_product, BladeIndex, Sign, CAYLEY_SIGN};
 

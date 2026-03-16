@@ -278,11 +278,161 @@ pub fn rotor_sandwich_checked(
     rotor_sandwich(rotor, target)
 }
 
+/// Exponential map from bivector to rotor in G(1,3).
+///
+/// `e^B = cos(θ) + sin(θ)/θ · B` for timelike (`B²<0`), `θ=√(-B²)`.
+/// `e^B = cosh(θ) + sinh(θ)/θ · B` for spacelike (`B²>0`), `θ=√(B²)`.
+/// `e^B = 1 + B` for null (`B²≈0`).
+///
+/// Returns `None` if input contains non-grade-2 blades.
+///
+/// AX-ID: AXIOMA-001, AXIOMA-002, H_dinámica (LEY_FUNDACIONAL §3.2)
+#[must_use]
+pub fn exp_bivector(b: &SparseCliffordVector) -> Option<SparseCliffordVector> {
+    use crate::basis::GRADE_TABLE;
+
+    let mut mask = b.active_mask;
+    while mask != 0 {
+        let i = mask.trailing_zeros() as usize;
+        if GRADE_TABLE[i] != 2 {
+            return None;
+        }
+        mask &= mask - 1;
+    }
+
+    let b_sq = b.clifford_norm_sq;
+    let mut out = [0.0f64; 16];
+    if b_sq.abs() < genesis_types::COGNITIVE_PLANCK_CONSTANT {
+        out[0] = 1.0;
+        let mut m = b.active_mask;
+        while m != 0 {
+            let i = m.trailing_zeros() as usize;
+            out[i] = b.coeffs[i];
+            m &= m - 1;
+        }
+    } else if b_sq < 0.0 {
+        let theta = (-b_sq).sqrt();
+        let cos_t = theta.cos();
+        let sinc_t = theta.sin() / theta;
+        out[0] = cos_t;
+        let mut m = b.active_mask;
+        while m != 0 {
+            let i = m.trailing_zeros() as usize;
+            out[i] = sinc_t * b.coeffs[i];
+            m &= m - 1;
+        }
+    } else {
+        let theta = b_sq.sqrt();
+        let cosh_t = theta.cosh();
+        let sinhc_t = theta.sinh() / theta;
+        out[0] = cosh_t;
+        let mut m = b.active_mask;
+        while m != 0 {
+            let i = m.trailing_zeros() as usize;
+            out[i] = sinhc_t * b.coeffs[i];
+            m &= m - 1;
+        }
+    }
+    Some(SparseCliffordVector::from_dense_buf(&out))
+}
+
+/// Logarithm map from unit rotor to generating bivector in G(1,3).
+///
+/// Inverse of [`exp_bivector`]. Returns `None` if input is not a unit rotor.
+///
+/// AX-ID: AXIOMA-001, AXIOMA-002, H_dinámica (LEY_FUNDACIONAL §3.2)
+#[must_use]
+pub fn log_rotor(r: &SparseCliffordVector) -> Option<SparseCliffordVector> {
+    if r.active_mask == 0 {
+        return None;
+    }
+    let s = r.scalar_part();
+    let biv = crate::grade::grade_project(r, 2);
+    let b_norm_sq = biv.clifford_norm_sq;
+    if b_norm_sq.abs() < genesis_types::COGNITIVE_PLANCK_CONSTANT {
+        return Some(SparseCliffordVector::zero());
+    }
+
+    let mut out = [0.0f64; 16];
+    if b_norm_sq < 0.0 {
+        let sin_t = (-b_norm_sq).sqrt();
+        let theta = s.clamp(-1.0, 1.0).acos();
+        let scale = if sin_t.abs() > genesis_types::COGNITIVE_PLANCK_CONSTANT {
+            theta / sin_t
+        } else {
+            1.0
+        };
+        let mut m = biv.active_mask;
+        while m != 0 {
+            let i = m.trailing_zeros() as usize;
+            out[i] = scale * biv.coeffs[i];
+            m &= m - 1;
+        }
+    } else {
+        let sinh_t = b_norm_sq.sqrt();
+        let theta = s.max(1.0).acosh();
+        let scale = if sinh_t.abs() > genesis_types::COGNITIVE_PLANCK_CONSTANT {
+            theta / sinh_t
+        } else {
+            1.0
+        };
+        let mut m = biv.active_mask;
+        while m != 0 {
+            let i = m.trailing_zeros() as usize;
+            out[i] = scale * biv.coeffs[i];
+            m &= m - 1;
+        }
+    }
+    Some(SparseCliffordVector::from_dense_buf(&out))
+}
+
+/// Spherical linear interpolation between two unit rotors.
+///
+/// `slerp(R0, R1, 0.0) = R0`, `slerp(R0, R1, 1.0) = R1`.
+/// Returns `None` if `t ∉ [0,1]` or either input is not a unit rotor.
+///
+/// AX-ID: AXIOMA-001, AXIOMA-002, H_dinámica (LEY_FUNDACIONAL §3.2)
+#[must_use]
+pub fn slerp_rotor(
+    r0: &SparseCliffordVector,
+    r1: &SparseCliffordVector,
+    t: f64,
+) -> Option<SparseCliffordVector> {
+    if !(0.0..=1.0).contains(&t) {
+        return None;
+    }
+    if !is_unit_rotor(r0) || !is_unit_rotor(r1) {
+        return None;
+    }
+    if t == 0.0 {
+        return Some(*r0);
+    }
+    if t == 1.0 {
+        return Some(*r1);
+    }
+
+    let r0_inv = crate::grade::reverse(r0);
+    let delta = crate::product::sparse_geometric_product(&r0_inv, r1)?;
+    let log_delta = log_rotor(&delta)?;
+
+    let mut scaled = [0.0f64; 16];
+    let mut m = log_delta.active_mask;
+    while m != 0 {
+        let i = m.trailing_zeros() as usize;
+        scaled[i] = t * log_delta.coeffs[i];
+        m &= m - 1;
+    }
+
+    let scaled_biv = SparseCliffordVector::from_dense_buf(&scaled);
+    let exp_part = exp_bivector(&scaled_biv)?;
+    crate::product::sparse_geometric_product(r0, &exp_part)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        commutator, is_unit_rotor, join, meet, rotor_sandwich, rotor_sandwich_checked, wedge,
-        TOTAL_BLADES,
+        commutator, exp_bivector, is_unit_rotor, join, log_rotor, meet, rotor_sandwich,
+        rotor_sandwich_checked, slerp_rotor, wedge, TOTAL_BLADES,
     };
     use crate::{grade_project_ct, hodge_dual, hodge_undual, SparseCliffordVector};
 
@@ -392,5 +542,33 @@ mod tests {
             assert!((comm.coeffs[i] - grade2.coeffs[i]).abs() < 1e-12);
         }
         assert_ne!(comm.active_mask, 0);
+    }
+
+    #[test]
+    fn exp_bivector_null_gives_identity_plus_b() {
+        let zero_biv = SparseCliffordVector::zero();
+        let result = exp_bivector(&zero_biv).unwrap();
+        assert!((result.scalar_part() - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn exp_then_log_roundtrip_for_small_bivector() {
+        let b = SparseCliffordVector::from_iter([(0b0110usize, 0.3)]).unwrap();
+        let r = exp_bivector(&b).unwrap();
+        let b_recovered = log_rotor(&r).unwrap();
+        assert!((b_recovered.coeffs[0b0110] - 0.3).abs() < 1e-10);
+    }
+
+    #[test]
+    fn slerp_rotor_endpoints() {
+        use core::f64::consts::FRAC_PI_4;
+
+        let r0 = SparseCliffordVector::from_iter([(0, 1.0)]).unwrap();
+        let r1 = SparseCliffordVector::from_iter([(0, FRAC_PI_4.cos()), (0b0110, FRAC_PI_4.sin())])
+            .unwrap();
+        let at0 = slerp_rotor(&r0, &r1, 0.0).unwrap();
+        let at1 = slerp_rotor(&r0, &r1, 1.0).unwrap();
+        assert!((at0.scalar_part() - r0.scalar_part()).abs() < 1e-10);
+        assert!((at1.scalar_part() - r1.scalar_part()).abs() < 1e-10);
     }
 }

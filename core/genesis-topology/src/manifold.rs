@@ -588,27 +588,21 @@ fn prepare_laplacian_data(
     seen_marks: &mut [u32],
     mut seen_generation: u32,
 ) -> (f64, u32) {
-    // FIX-F.1: Assert that NodeIds are dense and contiguous from 0.
-    // prepare_laplacian_data uses loop `for i in 0..n` mapping index → NodeId by convention.
-    // If NodeIds are sparse (e.g. IDs 0, 10, 100), degrees/adj would be computed for
-    // non-existent nodes, producing λ₂ = 0 or panics on sparse graphs.
-    // This debug_assert catches violations early. In production (release build), the
-    // assert is removed but the behaviour with non-sequential IDs is documented as
-    // unsupported — callers must ensure dense IDs (CRATE-002 invariant).
-    debug_assert!(
-        graph
-            .nodes()
-            .enumerate()
-            .all(|(i, id)| id.get() == i as u64),
-        "prepare_laplacian_data requires dense NodeIds 0..N. Got non-sequential IDs. \
-         Ensure ManifoldCollector assigns sequential IDs starting from 0."
-    );
+    let node_ids_raw: Vec<u64> = graph
+        .nodes()
+        .map(NodeId::get)
+        .filter(|&raw| raw != u64::MAX && usize::try_from(raw).is_ok())
+        .collect();
+    let max_id = node_ids_raw.iter().copied().max().unwrap_or(0) as usize;
+    let mut id_to_dense = vec![usize::MAX; max_id.saturating_add(1)];
+    for (dense_idx, &raw) in node_ids_raw.iter().enumerate() {
+        id_to_dense[raw as usize] = dense_idx;
+    }
+
     adj_flat.clear();
     degrees.fill(0.0);
 
-    for i in 0..n as u64 {
-        #[allow(clippy::cast_possible_truncation)]
-        let idx = i as usize;
+    for (idx, &raw_id) in node_ids_raw.iter().enumerate().take(n) {
         let start = adj_flat.len();
         seen_generation = seen_generation.wrapping_add(1);
         if seen_generation == 0 {
@@ -617,16 +611,27 @@ fn prepare_laplacian_data(
         }
 
         let pushed = graph.extend_neighbors_dedup(
-            NodeId::try_new(i).expect("NodeId válido por construcción"),
+            NodeId::try_new(raw_id).expect("NodeId válido por construcción"),
             seen_marks,
             seen_generation,
             adj_flat,
         );
+        let end = adj_flat.len();
+        for nb in &mut adj_flat[start..end] {
+            let raw_nb = *nb;
+            if raw_nb >= id_to_dense.len() {
+                continue;
+            }
+            let dense_nb = id_to_dense[raw_nb];
+            if dense_nb != usize::MAX {
+                *nb = dense_nb;
+            }
+        }
         #[allow(clippy::cast_precision_loss)]
         {
             degrees[idx] = pushed as f64;
         }
-        adj_offsets[idx] = (start, adj_flat.len());
+        adj_offsets[idx] = (start, end);
     }
 
     if degrees.iter().sum::<f64>() == 0.0 {
@@ -1096,6 +1101,25 @@ mod tests {
         let l2 = m.compute_lambda2();
         assert!(l2 >= 0.0, "lambda2 nunca negativa");
         assert!(l2 < 10.0, "lambda2 acotada por grado máximo");
+    }
+
+    #[test]
+    fn lambda2_with_non_consecutive_node_ids_is_positive_and_finite() {
+        let mut m = ManifoldCollector::new(16);
+        for i in 0..5u64 {
+            m.insert(
+                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                &make_vec(i),
+            )
+            .unwrap();
+        }
+
+        m.remove_node(NodeId::try_new(2).expect("NodeId válido por construcción"))
+            .unwrap();
+
+        let lambda2 = m.compute_lambda2();
+        assert!(lambda2.is_finite(), "lambda2 debe ser finita");
+        assert!(lambda2 > 0.0, "lambda2 debe ser positiva, obtenido {lambda2}");
     }
 
     #[test]
