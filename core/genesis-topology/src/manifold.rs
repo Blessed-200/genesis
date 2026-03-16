@@ -309,12 +309,8 @@ impl ManifoldCollector {
         self.hyperbolic_coords
             .retain(|&(raw_id, _)| raw_id != id.get());
 
-        // Step 3: Invalidate H¹ state for this node.
-        // IncrementalH1State does not yet have a remove_node API
-        // (H¹ rebuild on next add_triangle call is acceptable for now).
-        // The union-find will become stale but will self-correct when
-        // edges are re-evaluated. TODO: add H1State::remove_node in CRATE-002 hardening.
-        self.h1_state.add_node(); // no-op if already present; harmless tombstone
+        // Step 3: Remove node-related H¹ state.
+        self.h1_state.remove_node(id);
 
         Ok(())
     }
@@ -1267,6 +1263,32 @@ mod tests {
             "update no debe crear duplicado"
         );
         assert_eq!(m.hyperbolic_coord(NodeId::try_new(0).unwrap()), Some(c2));
+    }
+
+    #[test]
+    fn remove_node_prunes_hyperbolic_and_h1_links() {
+        let mut m = ManifoldCollector::new(16);
+        for i in 0..4u64 {
+            m.insert(NodeId::try_new(i).unwrap(), &make_vec(i)).unwrap();
+        }
+
+        let removed = NodeId::try_new(0).unwrap();
+        m.set_hyperbolic_coord(removed, HyperbolicCoord::new(0.2, 0.3).unwrap());
+        assert!(m.hyperbolic_coord(removed).is_some());
+
+        m.remove_node(removed).unwrap();
+
+        assert!(m.hyperbolic_coord(removed).is_none());
+        assert!(m
+            .h1_state_ref()
+            .persistent_cycles()
+            .iter()
+            .all(|record| record.nodes.iter().all(|n| n != &removed)));
+        assert!(m
+            .h1_state_ref()
+            .triangle_closures()
+            .iter()
+            .all(|record| record.nodes.iter().all(|n| n != &removed)));
     }
 
     /// Verifica la distancia hiperbólica al origen para un punto conocido.

@@ -416,6 +416,11 @@ const fn pack_edge_key(a: u64, b: u64) -> EdgeKey {
 }
 
 #[inline]
+const fn unpack_edge_key(key: EdgeKey) -> (u64, u64) {
+    ((key >> 64) as u64, key as u64)
+}
+
+#[inline]
 const fn edge_key(u: NodeId, v: NodeId) -> EdgeKey {
     let (a, b) = canonical_edge_endpoints(u, v);
     pack_edge_key(a, b)
@@ -564,6 +569,64 @@ impl IncrementalH1State {
                 }
             }
         }
+    }
+
+    /// Removes all H¹-state artifacts that involve `node`.
+    ///
+    /// The removal path is infrequent and uses a deterministic rebuild from
+    /// surviving edges. This preserves edge-idempotence and prevents stale
+    /// cycle/closure witnesses from referencing deleted nodes.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub fn remove_node(&mut self, node: NodeId) {
+        let removed = node.get();
+        let retained_edges: Vec<(u64, u64)> = self
+            .edge_map
+            .iter()
+            .filter_map(|&(key, _)| {
+                let (a, b) = unpack_edge_key(key);
+                (a != removed && b != removed).then_some((a, b))
+            })
+            .collect();
+
+        let cycles_touched = self
+            .persistent_cycles
+            .iter()
+            .any(|record| record.nodes.iter().any(|n| n.get() == removed));
+        let closures_touched = self
+            .triangle_closures
+            .iter()
+            .any(|record| record.nodes.iter().any(|n| n.get() == removed));
+
+        if retained_edges.len() == self.edge_map.len() && !cycles_touched && !closures_touched {
+            return;
+        }
+
+        let mut rebuilt = Self::new();
+        for _ in 0..self.uf.num_nodes {
+            rebuilt.add_node();
+        }
+        for (a, b) in retained_edges {
+            if let (Ok(u), Ok(v)) = (NodeId::try_new(a), NodeId::try_new(b)) {
+                rebuilt.add_edge(u, v);
+            }
+        }
+
+        rebuilt.triangle_closures = self
+            .triangle_closures
+            .iter()
+            .copied()
+            .filter(|record| !record.nodes.iter().any(|n| n.get() == removed))
+            .collect();
+
+        self.uf = rebuilt.uf;
+        self.d2 = rebuilt.d2;
+        self.edge_map = rebuilt.edge_map;
+        self.num_edges = rebuilt.num_edges;
+        self.ops_since_checkpoint = rebuilt.ops_since_checkpoint;
+        self.persistent_cycles = rebuilt.persistent_cycles;
+        self.triangle_closures = rebuilt.triangle_closures;
+        self.inference_step = self.inference_step.saturating_add(1);
     }
 
     fn lookup_edge(&self, u: NodeId, v: NodeId) -> Option<u32> {
@@ -868,5 +931,39 @@ mod tests {
         });
 
         assert!(state.h1_dim() <= 8);
+    }
+
+    #[test]
+    fn remove_node_prunes_incident_edges_and_witness_records() {
+        let mut state = IncrementalH1State::new();
+        for _ in 0..4 {
+            state.add_node();
+        }
+
+        let a = node(0);
+        let b = node(1);
+        let c = node(2);
+        let d = node(3);
+
+        state.add_edge(a, b);
+        state.add_edge(b, c);
+        state.add_edge(a, c);
+        state.add_triangle(a, b, c);
+        state.add_edge(a, d);
+
+        state.remove_node(a);
+
+        assert!(state.lookup_edge(a, b).is_none());
+        assert!(state.lookup_edge(a, c).is_none());
+        assert!(state.lookup_edge(a, d).is_none());
+        assert!(state.lookup_edge(b, c).is_some());
+        assert!(state
+            .persistent_cycles()
+            .iter()
+            .all(|record| record.nodes.iter().all(|n| n.get() != a.get())));
+        assert!(state
+            .triangle_closures()
+            .iter()
+            .all(|record| record.nodes.iter().all(|n| n.get() != a.get())));
     }
 }
