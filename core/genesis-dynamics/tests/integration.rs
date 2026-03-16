@@ -30,7 +30,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        System.dealloc(ptr, layout)
+        System.dealloc(ptr, layout);
     }
 }
 
@@ -157,10 +157,10 @@ fn heap_audit_update_cycle_performs_zero_allocations() {
     }
 
     for i in 0..n {
-        let next = (i + 1) % n;
+        let next_idx = (i + 1) % n;
         net.set_coupling(
             NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
-            NodeId::try_new(next as u64).expect("NodeId válido por construcción"),
+            NodeId::try_new(next_idx as u64).expect("NodeId válido por construcción"),
             0.15,
         );
     }
