@@ -380,9 +380,13 @@ unsafe fn select_lane_by_index(
     idx: usize,
 ) -> std::arch::x86_64::__m256d {
     match idx {
+        // SAFETY: branch guarantees lane is in 0..=3 for register a0.
         0..=3 => unsafe { broadcast_lane(a0, idx) },
+        // SAFETY: branch guarantees lane is in 0..=3 after subtracting 4.
         4..=7 => unsafe { broadcast_lane(a1, idx - 4) },
+        // SAFETY: branch guarantees lane is in 0..=3 after subtracting 8.
         8..=11 => unsafe { broadcast_lane(a2, idx - 8) },
+        // SAFETY: remaining branch is idx in 12..=15, so lane becomes 0..=3.
         _ => unsafe { broadcast_lane(a3, idx - 12) },
     }
 }
@@ -468,9 +472,13 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
 
     // Public API currently provides only f64 alignment, therefore unaligned loads are required.
     // AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+    // SAFETY: `a_coeffs` has 16 f64 values; slice [0..4] is in-bounds and loadu accepts unaligned pointers.
     let a0 = unsafe { _mm256_loadu_pd(a_coeffs[0..4].as_ptr()) };
+    // SAFETY: `a_coeffs` has 16 f64 values; slice [4..8] is in-bounds and loadu accepts unaligned pointers.
     let a1 = unsafe { _mm256_loadu_pd(a_coeffs[4..8].as_ptr()) };
+    // SAFETY: `a_coeffs` has 16 f64 values; slice [8..12] is in-bounds and loadu accepts unaligned pointers.
     let a2 = unsafe { _mm256_loadu_pd(a_coeffs[8..12].as_ptr()) };
+    // SAFETY: `a_coeffs` has 16 f64 values; slice [12..16] is in-bounds and loadu accepts unaligned pointers.
     let a3 = unsafe { _mm256_loadu_pd(a_coeffs[12..16].as_ptr()) };
 
     let mut acc_even0 = _mm256_set1_pd(0.0);
