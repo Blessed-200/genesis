@@ -372,19 +372,6 @@ unsafe fn broadcast_lane(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-unsafe fn place_lane(src: std::arch::x86_64::__m256d, lane: usize) -> std::arch::x86_64::__m256d {
-    use std::arch::x86_64::{_mm256_blend_pd, _mm256_setzero_pd};
-
-    match lane {
-        0 => _mm256_blend_pd(_mm256_setzero_pd(), src, 0x1),
-        1 => _mm256_blend_pd(_mm256_setzero_pd(), src, 0x2),
-        2 => _mm256_blend_pd(_mm256_setzero_pd(), src, 0x4),
-        _ => _mm256_blend_pd(_mm256_setzero_pd(), src, 0x8),
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
 unsafe fn select_lane_by_index(
     a0: std::arch::x86_64::__m256d,
     a1: std::arch::x86_64::__m256d,
@@ -408,34 +395,34 @@ unsafe fn load_xor_lanes_const<const J: usize, const KBASE: usize>(
     a2: std::arch::x86_64::__m256d,
     a3: std::arch::x86_64::__m256d,
 ) -> std::arch::x86_64::__m256d {
-    use std::arch::x86_64::{_mm256_add_pd, _mm256_setzero_pd};
+    use std::arch::x86_64::_mm256_blend_pd;
 
     let idx0 = blade_mul_index_const(KBASE, J);
     let idx1 = blade_mul_index_const(KBASE + 1, J);
     let idx2 = blade_mul_index_const(KBASE + 2, J);
     let idx3 = blade_mul_index_const(KBASE + 3, J);
 
-    let mut lanes = _mm256_setzero_pd();
-    lanes = _mm256_add_pd(lanes, unsafe {
-        place_lane(select_lane_by_index(a0, a1, a2, a3, idx0), 0)
-    });
-    lanes = _mm256_add_pd(lanes, unsafe {
-        place_lane(select_lane_by_index(a0, a1, a2, a3, idx1), 1)
-    });
-    lanes = _mm256_add_pd(lanes, unsafe {
-        place_lane(select_lane_by_index(a0, a1, a2, a3, idx2), 2)
-    });
-    _mm256_add_pd(lanes, unsafe {
-        place_lane(select_lane_by_index(a0, a1, a2, a3, idx3), 3)
-    })
+    let b0 = select_lane_by_index(a0, a1, a2, a3, idx0);
+    let b1 = select_lane_by_index(a0, a1, a2, a3, idx1);
+    let b2 = select_lane_by_index(a0, a1, a2, a3, idx2);
+    let b3 = select_lane_by_index(a0, a1, a2, a3, idx3);
+
+    let mix01 = _mm256_blend_pd(b0, b1, 0b0010);
+    let mix23 = _mm256_blend_pd(b2, b3, 0b1000);
+
+    _mm256_blend_pd(mix01, mix23, 0b1100)
 }
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C, align(32))]
+struct AlignedMask(pub [u64; 4]);
 
 #[cfg(target_arch = "x86_64")]
 struct SignMaskData<const J: usize, const KBASE: usize>;
 
 #[cfg(target_arch = "x86_64")]
 impl<const J: usize, const KBASE: usize> SignMaskData<J, KBASE> {
-    const DATA: [u64; 4] = lane_sign_mask_bits::<J, KBASE>();
+    const DATA: AlignedMask = AlignedMask(lane_sign_mask_bits::<J, KBASE>());
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -450,7 +437,7 @@ unsafe fn fmadd_with_sign_pattern<const J: usize, const KBASE: usize>(
 ) -> std::arch::x86_64::__m256d {
     use std::arch::x86_64::{
         _mm256_broadcast_sd, _mm256_castsi256_pd, _mm256_fmadd_pd, _mm256_fnmadd_pd,
-        _mm256_loadu_si256, _mm256_xor_pd,
+        _mm256_load_si256, _mm256_xor_pd,
     };
 
     let lanes = load_xor_lanes_const::<J, KBASE>(a0, a1, a2, a3);
@@ -465,7 +452,7 @@ unsafe fn fmadd_with_sign_pattern<const J: usize, const KBASE: usize>(
         return _mm256_fnmadd_pd(lanes, b_vec, acc);
     }
 
-    let sign_mask = _mm256_loadu_si256(SignMaskData::<J, KBASE>::DATA.as_ptr().cast());
+    let sign_mask = _mm256_load_si256(SignMaskData::<J, KBASE>::DATA.0.as_ptr().cast());
     let signed_lanes = _mm256_xor_pd(lanes, _mm256_castsi256_pd(sign_mask));
     _mm256_fmadd_pd(signed_lanes, b_vec, acc)
 }
