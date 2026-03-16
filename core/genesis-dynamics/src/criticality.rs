@@ -147,40 +147,20 @@ impl CriticalityMonitor {
         if self.count() < 10 {
             return None;
         }
-
-        // Recopilar tamaños no nulos
-        let mut sizes: [u32; 4096] = [0u32; 4096]; // stack buffer — sin heap
-        let mut n = 0usize;
-        for s in self.active_sizes() {
-            if s > 0 && n < sizes.len() {
-                sizes[n] = s;
-                n += 1;
-            }
-        }
+        let sizes: Vec<u32> = self.active_sizes().filter(|&s| s > 0).collect();
+        let n = sizes.len();
         if n < 10 {
             return None;
         }
-
-        // S_min = mínimo observado
-        let s_min = f64::from(sizes[..n].iter().copied().min().unwrap_or(1));
+        let s_min = f64::from(*sizes.iter().min().unwrap_or(&1));
         if s_min <= 0.0 {
             return None;
         }
-
-        // Corrección semicontinua de Clauset para datos discretos:
-        // ln(Sᵢ / (S_min − 0.5)) reduce sesgo sistemático para distribuciones discretas.
-        // Para S_min = 1: denominador = 0.5, no hay singularidad.
         let s_half = (s_min - 0.5).max(0.5);
-        let sum_ln: f64 = sizes[..n]
-            .iter()
-            .map(|&s| (f64::from(s) / s_half).ln())
-            .sum();
-
+        let sum_ln: f64 = sizes.iter().map(|&s| (f64::from(s) / s_half).ln()).sum();
         if sum_ln < f64::MIN_POSITIVE {
             return None;
         }
-
-        // `n` está acotado por el tamaño del buffer local y se usa solo en cálculo continuo.
         #[allow(clippy::cast_precision_loss)]
         Some(1.0 + n as f64 / sum_ln)
     }

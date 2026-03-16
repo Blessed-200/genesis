@@ -54,6 +54,20 @@ use crate::sign::CAYLEY_SIGN;
 
 const DENSE_MASK: u16 = 0xFFFF;
 
+pub(crate) const CAYLEY_SIGN_F64: [[f64; 16]; 16] = {
+    let mut t = [[0.0f64; 16]; 16];
+    let mut i = 0;
+    while i < 16 {
+        let mut j = 0;
+        while j < 16 {
+            t[i][j] = if CAYLEY_SIGN[i][j] > 0 { 1.0 } else { -1.0 };
+            j += 1;
+        }
+        i += 1;
+    }
+    t
+};
+
 const SIGN_FLIP_BIT: u64 = 1u64 << 63;
 
 const fn build_sign_flip_masks() -> [[u64; TOTAL_BLADES]; TOTAL_BLADES] {
@@ -177,12 +191,11 @@ fn geometric_product_scalar_sparse(
     while mask_a != 0 {
         let i = mask_a.trailing_zeros() as usize;
         let coef_a = a_coeffs[i];
-        let row = &CAYLEY_SIGN[i];
         let mut mask_b = b_mask;
         while mask_b != 0 {
             let j = mask_b.trailing_zeros() as usize;
             let k = i ^ j;
-            result_buf[k] += coef_a * b_coeffs[j] * f64::from(row[j]);
+            result_buf[k] += coef_a * b_coeffs[j] * CAYLEY_SIGN_F64[i][j];
             mask_b &= mask_b - 1;
         }
         mask_a &= mask_a - 1;
@@ -196,10 +209,9 @@ fn geometric_product_scalar_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     for (i, &coef_a) in a_coeffs.iter().enumerate() {
-        let row = &CAYLEY_SIGN[i];
         for (j, &coef_b) in b_coeffs.iter().enumerate() {
             let k = i ^ j;
-            result_buf[k] += coef_a * coef_b * f64::from(row[j]);
+            result_buf[k] += coef_a * coef_b * CAYLEY_SIGN_F64[i][j];
         }
     }
 }
@@ -533,7 +545,7 @@ unsafe fn geometric_product_aarch64_neon_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::aarch64::{
-        float64x2_t, vaddq_f64, vdupq_n_f64, vld1q_f64, vmulq_f64, vsetq_lane_f64, vst1q_f64,
+        float64x2_t, vdupq_n_f64, vfmaq_f64, vld1q_f64, vsetq_lane_f64, vst1q_f64,
     };
 
     let mut accumulators = [vdupq_n_f64(0.0); TOTAL_BLADES / 2];
@@ -572,8 +584,7 @@ unsafe fn geometric_product_aarch64_neon_dense(
                 let r = vdupq_n_f64(v0);
                 vsetq_lane_f64::<1>(v1, r)
             };
-            let product = vmulq_f64(lhs, b_vec);
-            *accumulator = vaddq_f64(*accumulator, product);
+            *accumulator = vfmaq_f64(*accumulator, lhs, b_vec);
         }
     }
 

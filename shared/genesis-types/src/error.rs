@@ -61,16 +61,16 @@ pub enum VfeTermCode {
 }
 
 /// Non-alloc domain fingerprint used in invariant/signal mismatch paths.
-pub type DomainCode = u32;
+pub type DomainCode = u64;
 
-/// Computes a stable compact domain identifier (FNV-1a 32-bit).
+/// Computes a stable compact domain identifier (FNV-1a 64-bit).
 pub const fn domain_code(input: &str) -> DomainCode {
     let bytes = input.as_bytes();
-    let mut hash = 0x811c9dc5u32;
+    let mut hash = 0xcbf29ce484222325u64;
     let mut i = 0;
     while i < bytes.len() {
-        hash ^= bytes[i] as u32;
-        hash = hash.wrapping_mul(0x01000193);
+        hash ^= bytes[i] as u64;
+        hash = hash.wrapping_mul(0x100000001b3u64);
         i += 1;
     }
     hash
@@ -360,7 +360,7 @@ pub enum GenesisError {
     ///
     /// AX-ID: AXIOMA-008, AXIOMA-009
     #[error(
-        "Signal error: domain mismatch — reset_code=0x{reset:08x}, signal_code=0x{signal:08x}"
+        "Signal error: domain mismatch — reset_code=0x{reset:016x}, signal_code=0x{signal:016x}"
     )]
     DomainMismatch {
         /// Compact domain identifier named in the `DomainResetSignal`.
@@ -559,7 +559,7 @@ impl GenesisError {
                 format!("VFE non-finite detail: term={term:?}")
             }
             Self::DomainMismatch { reset, signal } => format!(
-                "Domain mismatch detail: reset_code=0x{reset:08x}, signal_code=0x{signal:08x}"
+                "Domain mismatch detail: reset_code=0x{reset:016x}, signal_code=0x{signal:016x}"
             ),
             _ => self.to_string(),
         }
