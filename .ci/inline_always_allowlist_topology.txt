@@ -1,0 +1,10 @@
+# Reviewed allowlist for #[inline(always)] in core/genesis-topology/src
+# Format: relative_path:line
+core/genesis-topology/src/hnsw.rs:300
+core/genesis-topology/src/hnsw.rs:938
+core/genesis-topology/src/geodesic.rs:19
+core/genesis-topology/src/geodesic.rs:46
+core/genesis-topology/src/geodesic.rs:66
+core/genesis-topology/src/manifold.rs:278
+core/genesis-topology/src/manifold.rs:467
+core/genesis-topology/src/manifold.rs:474
