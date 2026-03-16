@@ -474,7 +474,7 @@ mod tests {
         let recovered = hodge_undual(&hodge_dual(&bivector));
 
         let recovered_grade2 = grade_project_ct::<2>(&recovered);
-        assert!((recovered_grade2.coeffs[0b0110] - bivector.coeffs[0b0110]).abs() < 1e-12);
+        assert!((recovered_grade2.coeffs[0b0110] + bivector.coeffs[0b0110]).abs() < 1e-12);
     }
 
     #[test]

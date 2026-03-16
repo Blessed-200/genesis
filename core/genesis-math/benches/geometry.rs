@@ -269,6 +269,38 @@ fn bench_dense_kernel_compare(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_comparison(c: &mut Criterion) {
+    let a = full_mv();
+    let b = full_mv();
+
+    let mat_a = [[1.0f64 / 16.0; 16]; 16];
+    let mat_b = [[1.0f64 / 16.0; 16]; 16];
+
+    let mut group = c.benchmark_group("comparison");
+    group.bench_function("dense_kernel_g13_16x16", |bencher| {
+        bencher.iter(|| {
+            black_box(dense_geometric_product_g13(
+                black_box(&a.coeffs),
+                black_box(&b.coeffs),
+            ))
+        });
+    });
+    group.bench_function("naive_matmul_16x16_f64_baseline", |bencher| {
+        bencher.iter(|| {
+            let mut mat_c = [[0.0f64; 16]; 16];
+            for i in 0..16 {
+                for j in 0..16 {
+                    for k in 0..16 {
+                        mat_c[i][k] += mat_a[i][j] * mat_b[j][k];
+                    }
+                }
+            }
+            black_box(mat_c)
+        });
+    });
+    group.finish();
+}
+
 fn bench_bivector_norm_sq_of_product(c: &mut Criterion) {
     use genesis_math::bivector_norm_sq_of_product;
     let a = full_mv();
@@ -349,6 +381,7 @@ criterion_group!(
     bench_single_blade_product,
     bench_sparse_geo_product_mask_patterns,
     bench_dense_kernel_compare,
+    bench_comparison,
     bench_bivector_norm_sq_of_product,
     bench_sparse_geo_product_contiguous_batch,
     bench_from_dense_single_pass,

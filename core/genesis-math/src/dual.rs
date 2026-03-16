@@ -43,7 +43,7 @@ pub fn hodge_undual(value: &SparseCliffordVector) -> SparseCliffordVector {
     while mask != 0 {
         let i = mask.trailing_zeros() as usize;
         let k = i ^ PSEUDOSCALAR_INDEX;
-        out[k] += value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);
+        out[k] += -value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);
         mask &= mask - 1;
     }
 
@@ -231,7 +231,7 @@ pub fn geometric_product_dual(
 
 #[cfg(test)]
 mod tests {
-    use super::{geometric_product_dual, Dual, SparseDualVector};
+    use super::{geometric_product_dual, hodge_dual, hodge_undual, Dual, SparseDualVector};
     use crate::SparseCliffordVector;
 
     #[test]
@@ -268,5 +268,34 @@ mod tests {
         for coeff in dual.coeffs {
             assert_eq!(coeff.grad, 0.0);
         }
+    }
+
+    #[test]
+    fn hodge_double_dual_is_negation_in_g13() {
+        let scalar = SparseCliffordVector::from_iter([(0, 1.0)]).unwrap();
+        let double = hodge_undual(&hodge_dual(&scalar));
+        assert!(
+            (double.coeffs[0] + 1.0).abs() < 1e-12,
+            "hodge_undual(hodge_dual(scalar)) should be -scalar, got {}",
+            double.coeffs[0]
+        );
+
+        let e1 = SparseCliffordVector::from_iter([(0b0001, 1.0)]).unwrap();
+        let double_e1 = hodge_undual(&hodge_dual(&e1));
+        let orig = e1.coeffs[0b0001];
+        let got = double_e1.coeffs[0b0001];
+        assert!(
+            (got + orig).abs() < 1e-12,
+            "hodge_undual(hodge_dual(e1)) should be -e1, got {got}"
+        );
+
+        let biv = SparseCliffordVector::from_iter([(0b0011, 1.0)]).unwrap();
+        let double_biv = hodge_undual(&hodge_dual(&biv));
+        let orig_biv = biv.coeffs[0b0011];
+        let got_biv = double_biv.coeffs[0b0011];
+        assert!(
+            (got_biv + orig_biv).abs() < 1e-12,
+            "hodge_undual(hodge_dual(biv)) should be -biv, got {got_biv}"
+        );
     }
 }
