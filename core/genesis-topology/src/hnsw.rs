@@ -20,11 +20,10 @@ use std::sync::Arc;
 use std::thread;
 
 use fixedbitset::FixedBitSet;
-use genesis_math::SparseCliffordVector;
+use genesis_math::{fast_metric_distance, SparseCliffordVector};
 use genesis_types::{GenesisError, NodeId};
 use smallvec::SmallVec;
 
-use crate::geodesic::geometric_distance;
 
 const TOTAL_BLADES: usize = 16;
 
@@ -41,7 +40,7 @@ const TOTAL_BLADES: usize = 16;
 
 mod layer0_codec {
     use super::TOTAL_BLADES;
-    use genesis_math::SparseCliffordVector;
+    use genesis_math::{fast_metric_distance_from_dense, SparseCliffordVector};
 
     #[cfg(feature = "hnsw-f16")]
     mod f16_kernel {
@@ -114,7 +113,7 @@ mod layer0_codec {
 
         fn distance(stored: &Self::Storage, query: &SparseCliffordVector) -> f64 {
             let dense = core::array::from_fn(|i| f64::from(stored[i]));
-            crate::geodesic::fast_bivector_distance_from_dense(&dense, query)
+            fast_metric_distance_from_dense(&dense, query)
         }
 
         fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES] {
@@ -142,7 +141,7 @@ mod layer0_codec {
         }
 
         fn distance(stored: &Self::Storage, query: &SparseCliffordVector) -> f64 {
-            super::fast_bivector_distance_f16(stored, query)
+            super::fast_metric_distance_f16(stored, query)
         }
 
         fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES] {
@@ -210,6 +209,79 @@ pub(crate) const M: usize = 16;
 /// `pub(crate)` for manifold.rs stack-allocated neighbour buffers (BN-02).
 pub(crate) const M0: usize = M * 2;
 
+/// Compressed Sparse Row neighbor list for one HNSW layer.
+///
+/// `data[offsets[i]..offsets[i+1]]` contains the neighbors of node i.
+/// Insertion appends to `data`; the offset range for each node is
+/// tracked via `offsets`. Capacity is pre-allocated at construction.
+///
+/// AX-ID: AXIOMA-007, AXIOMA-013
+#[derive(Clone)]
+struct CsrNeighborList {
+    data: Vec<NodeId>,
+    offsets: Vec<usize>,
+    max_neighbors: usize,
+}
+
+impl CsrNeighborList {
+    fn new(capacity_nodes: usize, max_neighbors: usize) -> Self {
+        let mut offsets = Vec::with_capacity(capacity_nodes.saturating_add(1));
+        offsets.push(0);
+        Self {
+            data: Vec::with_capacity(capacity_nodes.saturating_mul(max_neighbors)),
+            offsets,
+            max_neighbors,
+        }
+    }
+
+    fn neighbors(&self, node_dense_idx: usize) -> &[NodeId] {
+        let start = self.offsets[node_dense_idx];
+        let end = self.offsets[node_dense_idx + 1];
+        &self.data[start..end]
+    }
+
+    #[allow(dead_code)]
+    fn neighbors_mut(&mut self, node_dense_idx: usize) -> &mut [NodeId] {
+        let start = self.offsets[node_dense_idx];
+        let end = self.offsets[node_dense_idx + 1];
+        &mut self.data[start..end]
+    }
+
+    fn add_node(&mut self) {
+        let end = *self.offsets.last().unwrap_or(&0);
+        self.offsets.push(end);
+    }
+
+    fn set_neighbors(&mut self, node_dense_idx: usize, neighbors: &[NodeId]) {
+        let capped = &neighbors[..neighbors.len().min(self.max_neighbors)];
+        let start = self.offsets[node_dense_idx];
+        let end = self.offsets[node_dense_idx + 1];
+        let old_len = end - start;
+        self.data.splice(start..end, capped.iter().copied());
+        let new_len = capped.len();
+        if new_len != old_len {
+            let delta = new_len as isize - old_len as isize;
+            for off in &mut self.offsets[(node_dense_idx + 1)..] {
+                *off = (*off as isize + delta) as usize;
+            }
+        }
+    }
+
+    fn push_neighbor(&mut self, node_dense_idx: usize, neighbor: NodeId) -> bool {
+        let start = self.offsets[node_dense_idx];
+        let end = self.offsets[node_dense_idx + 1];
+        if end - start >= self.max_neighbors {
+            return false;
+        }
+        self.data.insert(end, neighbor);
+        for off in &mut self.offsets[(node_dense_idx + 1)..] {
+            *off += 1;
+        }
+        true
+    }
+}
+
+
 /// Level multiplier: 1.0 / ln(M).
 // M es una constante pequeña (≤ 64). M as f64 es exacto: M < 2^53.
 #[allow(clippy::cast_precision_loss)]
@@ -241,9 +313,8 @@ struct HnswNode {
     id: NodeId,
     vec: SparseCliffordVector,
     layer0: Layer0Coeffs,
-    /// Adjacency lists per layer. Layer 0 is the densest.
-    /// Each entry is (`NodeId`, distance) sorted by `NodeId` for O(log K) lookup.
-    layers: Vec<Vec<(NodeId, f64)>>,
+    /// Maximum layer assigned to this node in the HNSW hierarchy.
+    max_layer: usize,
 }
 
 impl HnswNode {
@@ -272,7 +343,7 @@ impl HnswNode {
             id,
             vec,
             layer0: encode_layer0(&layer0)?,
-            layers: vec![Vec::new(); max_layer + 1],
+            max_layer,
         })
     }
 }
@@ -306,7 +377,7 @@ fn encode_layer0(values: &[f32; TOTAL_BLADES]) -> Result<Layer0Coeffs, GenesisEr
 ///
 /// Panics only if the decompressed coefficients become non-finite, which
 /// violates the encoding invariants of `f32_to_f16_bits` for finite inputs.
-pub fn fast_bivector_distance_f16(stored: &[u16; 16], query: &SparseCliffordVector) -> f64 {
+pub fn fast_metric_distance_f16(stored: &[u16; 16], query: &SparseCliffordVector) -> f64 {
     // NOTA ARQUITECTÓNICA:
     // Se usa compile-time dispatch en lugar de runtime dispatch para evitar
     // la pérdida de inlining y la penalización de `vzeroupper` en el hot loop.
@@ -352,7 +423,7 @@ pub fn fast_bivector_distance_f16(stored: &[u16; 16], query: &SparseCliffordVect
         }
     }
 
-    crate::geodesic::fast_bivector_distance_from_dense(&decompressed, query)
+    fast_metric_distance_from_dense(&decompressed, query)
 }
 
 #[cfg(all(feature = "hnsw-f16", test))]
@@ -397,6 +468,10 @@ pub struct HnswGraph {
     direct_index: Vec<u32>, // u32::MAX = no presente
     /// Estado del índice secundario `id_index`.
     state: GraphState,
+    /// Per-layer neighbor lists in CSR layout.
+    layer_neighbors: Vec<CsrNeighborList>,
+    /// Directed edge count at layer 0 (stored as directed for O(1) updates).
+    edge_count_layer0_undirected: usize,
 }
 
 /// Cache-optimised SoA view of layer-0 HNSW data.
@@ -450,7 +525,19 @@ impl HnswGraph {
             ef_construction,
             direct_index: Vec::new(),
             state: GraphState::Online,
+            layer_neighbors: Vec::new(),
+            edge_count_layer0_undirected: 0,
         }
+    }
+
+
+    fn ensure_layer_neighbors_initialized(&mut self) {
+        if !self.layer_neighbors.is_empty() {
+            return;
+        }
+        self.layer_neighbors = (0..MAX_LAYERS)
+            .map(|layer| CsrNeighborList::new(0, if layer == 0 { M0 } else { M }))
+            .collect();
     }
 
     /// Lookup internal index by `NodeId`. O(1) average with direct index, fallback O(log N).
@@ -541,9 +628,14 @@ impl HnswGraph {
             return Ok(()); // already present
         }
 
+        self.ensure_layer_neighbors_initialized();
+
         let target_layer = Self::random_level(id);
         let new_idx = self.nodes.len();
         self.nodes.push(HnswNode::new(id, *vec, target_layer)?);
+        for layer in &mut self.layer_neighbors {
+            layer.add_node();
+        }
         self.insert_id_index(id, new_idx);
 
         if id.get() < u64::from(u32::MAX) {
@@ -629,25 +721,46 @@ impl HnswGraph {
 
     /// Add an edge at a given layer (sorted insert, no duplicates).
     fn add_edge(&mut self, from_idx: usize, layer: usize, to: NodeId, dist: f64) {
-        if layer >= self.nodes[from_idx].layers.len() {
+        if layer > self.nodes[from_idx].max_layer {
             return;
         }
-        let adj = &mut self.nodes[from_idx].layers[layer];
-        let pos = adj.binary_search_by_key(&to.get(), |&(nid, _)| nid.get());
-        if let Err(insertion_point) = pos {
-            adj.insert(insertion_point, (to, dist));
+        let _ = dist;
+        let layer_list = &mut self.layer_neighbors[layer];
+        let mut neighbors = layer_list.neighbors(from_idx).to_vec();
+        match neighbors.binary_search_by_key(&to.get(), |nid| nid.get()) {
+            Ok(_) => {}
+            Err(pos) => {
+                if neighbors.len() < layer_list.max_neighbors {
+                    if pos == neighbors.len() {
+                        if layer_list.push_neighbor(from_idx, to) && layer == 0 {
+                            self.edge_count_layer0_undirected += 1;
+                        }
+                    } else {
+                        neighbors.insert(pos, to);
+                        layer_list.set_neighbors(from_idx, &neighbors);
+                        if layer == 0 {
+                            self.edge_count_layer0_undirected += 1;
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// Remove a directed edge at `layer` if present.
     /// Returns `true` iff one edge was removed.
     fn remove_edge(&mut self, from_idx: usize, layer: usize, to: NodeId) -> bool {
-        if layer >= self.nodes[from_idx].layers.len() {
+        if layer > self.nodes[from_idx].max_layer {
             return false;
         }
-        let adj = &mut self.nodes[from_idx].layers[layer];
-        if let Ok(pos) = adj.binary_search_by_key(&to.get(), |&(nid, _)| nid.get()) {
-            adj.remove(pos);
+        let layer_list = &mut self.layer_neighbors[layer];
+        let mut neighbors = layer_list.neighbors(from_idx).to_vec();
+        if let Ok(pos) = neighbors.binary_search_by_key(&to.get(), |nid| nid.get()) {
+            neighbors.remove(pos);
+            layer_list.set_neighbors(from_idx, &neighbors);
+            if layer == 0 {
+                self.edge_count_layer0_undirected = self.edge_count_layer0_undirected.saturating_sub(1);
+            }
             return true;
         }
         false
@@ -671,16 +784,21 @@ impl HnswGraph {
     /// Prune a node's adjacency list at a layer to at most `m_max` neighbours
     /// (keep the closest by distance).
     fn prune_layer(&mut self, idx: usize, layer: usize, m_max: usize) {
-        if layer >= self.nodes[idx].layers.len() {
+        if layer > self.nodes[idx].max_layer {
             return;
         }
-        while self.nodes[idx].layers[layer].len() > m_max {
-            let farthest = self.nodes[idx].layers[layer]
+        while self.layer_neighbors[layer].neighbors(idx).len() > m_max {
+            let farthest = self.layer_neighbors[layer]
+                .neighbors(idx)
                 .iter()
-                .max_by(|a, b| a.1.total_cmp(&b.1))
-                .copied();
+                .copied()
+                .max_by(|a, b| {
+                    let da = self.get_idx(*a).map_or(f64::INFINITY, |i| self.distance_to_node(&self.nodes[idx].vec, i, layer));
+                    let db = self.get_idx(*b).map_or(f64::INFINITY, |i| self.distance_to_node(&self.nodes[idx].vec, i, layer));
+                    da.total_cmp(&db)
+                });
 
-            let Some((farthest_id, _)) = farthest else {
+            let Some(farthest_id) = farthest else {
                 break;
             };
             self.remove_edge_bidirectional(idx, layer, farthest_id);
@@ -694,7 +812,7 @@ impl HnswGraph {
                 query,
             );
         }
-        geometric_distance(query, &self.nodes[idx].vec)
+fast_metric_distance(query, &self.nodes[idx].vec)
     }
 
     /// Greedy single-element search at a given layer.
@@ -709,8 +827,8 @@ impl HnswGraph {
         let mut current_dist = self.distance_to_node(query, current, layer);
         loop {
             let mut improved = false;
-            if layer < self.nodes[current].layers.len() {
-                for &(nb_id, _) in &self.nodes[current].layers[layer] {
+            if layer < self.nodes[current].max_layer + 1 {
+                for &nb_id in self.layer_neighbors[layer].neighbors(current) {
                     if let Some(nb_idx) = self.get_idx(nb_id) {
                         let d = self.distance_to_node(query, nb_idx, layer);
                         if d < current_dist {
@@ -770,8 +888,8 @@ impl HnswGraph {
                     }
                 }
 
-                if layer < self.nodes[c_idx].layers.len() {
-                    for &(nb_id, _) in &self.nodes[c_idx].layers[layer] {
+                if layer < self.nodes[c_idx].max_layer + 1 {
+                    for &nb_id in self.layer_neighbors[layer].neighbors(c_idx) {
                         if let Some(nb_idx) = self.get_idx(nb_id) {
                             if scratch.visited[nb_idx] {
                                 continue;
@@ -825,7 +943,10 @@ impl HnswGraph {
 
     /// Search for the k nearest neighbours to query.
     ///
-    /// AX-ID: AXIOMA-013
+    /// Distance metric: Clifford grade-weighted L2 in G(1,3).
+    /// Neighbors are nearest in algebraic geometry, not Euclidean R^16.
+    ///
+    /// AX-ID: AXIOMA-001, AXIOMA-007, H_estructura (LEY_FUNDACIONAL §3.1)
     pub fn search_nearest(&self, query: &SparseCliffordVector, k: usize) -> Vec<NodeId> {
         let Some(entry_idx) = self.entry else {
             return Vec::new();
@@ -854,7 +975,8 @@ impl HnswGraph {
     pub fn neighbors(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
         let node = self.get_idx(id).map(|idx| &self.nodes[idx]);
         NeighborIter {
-            layers: node.map_or(&[], |n| n.layers.as_slice()),
+graph: self,
+            node_idx: node.map(|_| self.get_idx(id).unwrap_or(0)),
             layer_pos: 0,
             edge_pos: 0,
             seen: SmallVec::new(), // BN-07: inline stack, no heap allocation for ≤128 IDs
@@ -872,18 +994,17 @@ impl HnswGraph {
                 // SAFETY: `idx` comes from `self.get_idx(id)`, which guarantees an in-bounds index.
                 let node = unsafe { self.nodes.get_unchecked(idx) };
                 let nv = node.vec;
-                node.layers.first().map_or_else(SmallVec::new, |layer0| {
-                    let mut local = SmallVec::<[NodeId; M]>::with_capacity(layer0.len().min(M0));
-                    for &(nb_id, _) in layer0 {
-                        if let Some(ni) = self.get_idx(nb_id) {
-                            let d = self.distance_to_node(&nv, ni, 0);
-                            if d <= radius {
-                                local.push(nb_id);
-                            }
+                let layer0 = self.layer_neighbors[0].neighbors(idx);
+                let mut local = SmallVec::<[NodeId; M]>::with_capacity(layer0.len().min(M0));
+                for &nb_id in layer0 {
+                    if let Some(ni) = self.get_idx(nb_id) {
+                        let d = self.distance_to_node(&nv, ni, 0);
+                        if d <= radius {
+                            local.push(nb_id);
                         }
                     }
-                    local
-                })
+                }
+                local
             });
         candidates.into_iter()
     }
@@ -911,8 +1032,8 @@ impl HnswGraph {
         debug_assert!(marks.len() >= self.nodes.len());
 
         let mut pushed = 0;
-        for layer in &node.layers {
-            for &(nb_id, _) in layer {
+        for layer_idx in 0..=node.max_layer {
+            for &nb_id in self.layer_neighbors[layer_idx].neighbors(idx) {
                 let Some(nb_idx) = self.get_idx(nb_id) else {
                     continue;
                 };
@@ -944,12 +1065,9 @@ impl HnswGraph {
         self.nodes.len()
     }
 
-    /// Total number of directed edges at layer 0 (base connectivity).
-    pub fn edge_count(&self) -> usize {
-        self.nodes
-            .iter()
-            .map(|n| n.layers.first().map_or(0, Vec::len))
-            .sum()
+    /// Total number of undirected edges at layer 0 (base connectivity).
+    pub const fn edge_count(&self) -> usize {
+        self.edge_count_layer0_undirected / 2
     }
 
     /// Build a contiguous layer-0 SoA snapshot for read-heavy numeric pipelines.
@@ -966,13 +1084,13 @@ impl HnswGraph {
             node_ids.push(node.id);
             dense_coeffs.push(decode_layer0_to_f64(&node.layer0));
             let start = neighbor_ids.len();
-            if let Some(layer0) = node.layers.first() {
-                neighbor_ids.reserve(layer0.len());
-                neighbor_distances.reserve(layer0.len());
-                for &(nb_id, d) in layer0 {
-                    neighbor_ids.push(nb_id);
-                    neighbor_distances.push(d);
-                }
+            let layer0 = self.layer_neighbors[0].neighbors(node_ids.len()-1);
+            neighbor_ids.reserve(layer0.len());
+            neighbor_distances.reserve(layer0.len());
+            for &nb_id in layer0 {
+                neighbor_ids.push(nb_id);
+                let d = self.get_idx(nb_id).map_or(f64::INFINITY, |nb_idx| self.distance_to_node(&node.vec, nb_idx, 0));
+                neighbor_distances.push(d);
             }
             neighbor_offsets.push((start, neighbor_ids.len()));
         }
@@ -1009,11 +1127,16 @@ impl HnswGraph {
         // Step 1: Remove all edges originating from this node.
         // Collect neighbour IDs first to avoid borrow conflicts.
         let all_neighbours: Vec<(NodeId, usize)> = self.nodes[idx]
-            .layers
-            .iter()
-            .enumerate()
-            .flat_map(|(layer, adj)| adj.iter().map(move |&(nb_id, _)| (nb_id, layer)))
-            .collect();
+            .max_layer
+            .checked_add(1)
+            .map(|layers| {
+                let mut all = Vec::new();
+                for layer in 0..layers {
+                    all.extend(self.layer_neighbors[layer].neighbors(idx).iter().copied().map(|nb_id| (nb_id, layer)));
+                }
+                all
+            })
+            .unwrap_or_default();
 
         for (nb_id, layer) in all_neighbours {
             // Remove the reverse edge: nb → id
@@ -1023,8 +1146,8 @@ impl HnswGraph {
         }
 
         // Step 2: Clear the node's own adjacency lists.
-        for layer in &mut self.nodes[idx].layers {
-            layer.clear();
+        for layer in 0..=self.nodes[idx].max_layer {
+            self.layer_neighbors[layer].set_neighbors(idx, &[]);
         }
 
         // Step 3: Invalidate direct_index entry.
@@ -1044,10 +1167,10 @@ impl HnswGraph {
                 .nodes
                 .iter()
                 .enumerate()
-                .filter(|(i, n)| *i != idx && !n.layers.is_empty())
-                .max_by_key(|(_, n)| n.layers.len())
+                                .filter(|(i, n)| *i != idx && n.id != NodeId::INVALID)
+                .max_by_key(|(_, n)| n.max_layer)
                 .map(|(i, n)| {
-                    self.entry_layer = n.layers.len() - 1;
+                    self.entry_layer = n.max_layer;
                     i
                 });
         }
@@ -1056,7 +1179,7 @@ impl HnswGraph {
         // A compact_index() call rebuilds id_index cleanly. Do not swap_remove
         // because that would invalidate all internal indices stored in adjacency lists.
         self.nodes[idx].id = NodeId::INVALID;
-        self.nodes[idx].layers.clear();
+        self.nodes[idx].max_layer = 0;
 
         Ok(())
     }
@@ -1246,7 +1369,8 @@ fn radix_sort_node_ids(index: &mut Vec<(NodeId, usize)>) {
 ///
 /// AX-ID: AXIOMA-013
 struct NeighborIter<'a> {
-    layers: &'a [Vec<(NodeId, f64)>],
+    graph: &'a HnswGraph,
+    node_idx: Option<usize>,
     layer_pos: usize,
     edge_pos: usize,
     /// Deduplicated node IDs already emitted, sorted ascending for binary search.
@@ -1263,27 +1387,23 @@ impl Iterator for NeighborIter<'_> {
     type Item = NodeId;
 
     fn next(&mut self) -> Option<NodeId> {
+        let node_idx = self.node_idx?;
         loop {
-            if self.layer_pos >= self.layers.len() {
+            if self.layer_pos > self.graph.nodes[node_idx].max_layer {
                 return None;
             }
-            let layer = &self.layers[self.layer_pos];
+            let layer = self.graph.layer_neighbors[self.layer_pos].neighbors(node_idx);
             if self.edge_pos >= layer.len() {
                 self.layer_pos += 1;
                 self.edge_pos = 0;
                 continue;
             }
-            let (nid, _) = layer[self.edge_pos];
+            let nid = layer[self.edge_pos];
             self.edge_pos += 1;
             let raw = nid.get();
-            // Búsqueda binaria en Vec ordenado: O(log |seen|) en lugar de O(|seen|).
-            // Para el caso típico (M_total ≤ 64 vecinos únicos), |seen| ≤ 64,
-            // log₂(64) = 6 comparaciones vs 64 lineales: 10× más rápido.
             match self.seen.binary_search(&raw) {
-                Ok(_) => continue, // ya emitido
+                Ok(_) => continue,
                 Err(pos) => {
-                    // Insertar en posición ordenada para mantener invariante.
-                    // Cost: O(|seen|) shift, pero |seen| ≤ M_total ≤ 64. Aceptable.
                     self.seen.insert(pos, raw);
                     return Some(nid);
                 }
@@ -1294,7 +1414,7 @@ impl Iterator for NeighborIter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use genesis_math::SparseCliffordVector;
+    use genesis_math::{fast_metric_distance, SparseCliffordVector};
     use proptest::prelude::*;
 
     use super::*;
@@ -1321,7 +1441,7 @@ mod tests {
         let total_layer0: usize = graph
             .nodes
             .iter()
-            .map(|node| node.layers.first().map_or(0, Vec::len))
+            .enumerate().map(|(i, _node)| graph.layer_neighbors[0].neighbors(i).len())
             .sum();
 
         assert_eq!(soa.node_ids.len(), graph.node_count());
@@ -1416,7 +1536,7 @@ mod tests {
             .iter()
             .enumerate()
             .filter(|&(i, _)| i != 42)
-            .map(|(i, v)| (i, geometric_distance(&query, v)))
+            .map(|(i, v)| (i, fast_metric_distance(&query, v)))
             .collect();
         bf.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         let bf_top3: Vec<u64> = bf.iter().take(3).map(|&(i, _)| i as u64).collect();
@@ -1488,7 +1608,7 @@ mod tests {
         let mut brute: Vec<(usize, f64)> = vecs
             .iter()
             .enumerate()
-            .map(|(idx, v)| (idx, geometric_distance(&query, v)))
+            .map(|(idx, v)| (idx, fast_metric_distance(&query, v)))
             .collect();
         brute.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
 
@@ -1547,7 +1667,7 @@ mod tests {
         let mut level_1 = 0usize;
         let mut max_level = 0usize;
         for node in &g.nodes {
-            let level = node.layers.len() - 1;
+            let level = node.max_layer;
             if level == 0 {
                 level_0 += 1;
             }
@@ -1696,13 +1816,14 @@ mod tests {
             // Verify local degree bounds per node per layer.
             // This is the tighter invariant that replaces global density enforcement.
             for node in &g.nodes {
-                for (layer_idx, adj) in node.layers.iter().enumerate() {
+                for layer_idx in 0..=node.max_layer {
                     let m_max = if layer_idx == 0 { M0 } else { M };
+                    let degree = g.layer_neighbors[layer_idx].neighbors(usize::try_from(node.id.get()).expect("dense id")).len();
                     assert!(
-                        adj.len() <= m_max,
+                        degree <= m_max,
                         "node {:?} layer {layer_idx}: degree {} > m_max {}",
                         node.id,
-                        adj.len(),
+                        degree,
                         m_max
                     );
                 }
@@ -1988,7 +2109,7 @@ mod tests {
                     #[cfg(feature = "hnsw-f16")]
                     let d = geometric_distance(v, &query);
                     #[cfg(not(feature = "hnsw-f16"))]
-                    let d = geometric_distance(&query, v);
+                    let d = fast_metric_distance(&query, v);
                     (idx, d)
                 })
                 .collect();
@@ -2002,10 +2123,10 @@ mod tests {
                     #[cfg(feature = "hnsw-f16")]
                     let dist = {
                         let layer0 = core::array::from_fn(|i| f32_to_f16_bits(v.coeffs[i] as f32));
-                        fast_bivector_distance_f16(&layer0, &query)
+                        fast_metric_distance_f16(&layer0, &query)
                     };
                     #[cfg(not(feature = "hnsw-f16"))]
-                    let dist = geometric_distance(&query, v);
+                    let dist = fast_metric_distance(&query, v);
                     (idx, dist)
                 })
                 .collect();
@@ -2014,6 +2135,130 @@ mod tests {
 
             assert_eq!(stored_top5, exact_top5, "query={q}");
         }
+    }
+    #[test]
+    fn csr_layout_invariants_hold_after_inserts() {
+        let mut g = HnswGraph::new(32);
+        let n = 128_u64;
+        for i in 0..n {
+            g.insert(make_id(i), &make_vec((i as f64) * 0.01 + 0.1))
+                .expect("insert should succeed");
+        }
+        for layer in &g.layer_neighbors {
+            assert_eq!(layer.offsets.len(), usize::try_from(n).expect("n fits") + 1);
+            for w in layer.offsets.windows(2) {
+                assert!(w[0] <= w[1]);
+            }
+            assert_eq!(layer.data.len(), *layer.offsets.last().expect("non-empty offsets"));
+        }
+    }
+
+    #[test]
+    fn csr_stress_neighbors_and_search_results_are_valid() {
+        let mut g = HnswGraph::new(64);
+        for i in 0..1000_u64 {
+            let v = SparseCliffordVector::from_iter((0..8).map(|b| {
+                let val = ((i as f64 + 1.0) * (b as f64 + 1.0) * 0.001).sin();
+                (b, val)
+            }))
+            .expect("vector should be valid");
+            g.insert(make_id(i), &v).expect("insert should succeed");
+        }
+
+        for idx in 0..g.node_count() {
+            assert!(g.layer_neighbors[0].neighbors(idx).len() <= M0);
+            let mut seen = Vec::new();
+            for layer in 0..=g.nodes[idx].max_layer {
+                for &nb in g.layer_neighbors[layer].neighbors(idx) {
+                    let raw = nb.get();
+                    assert!(g.get_idx(nb).is_some(), "invalid neighbor id={raw}");
+                    if !seen.contains(&raw) {
+                        seen.push(raw);
+                    }
+                }
+            }
+        }
+
+        for q in 0..100_u64 {
+            let query = make_vec((q as f64) * 0.013 + 0.25);
+            let got = g.search_nearest(&query, 8);
+            for id in got {
+                assert!(g.get_idx(id).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn clifford_metric_changes_neighbor_ordering_vs_l2() {
+        let mut g = HnswGraph::new(128);
+
+        let vectors: Vec<SparseCliffordVector> = (0..10)
+            .map(|i| {
+                SparseCliffordVector::from_iter([
+                    (0, 0.15 * (i as f64 + 1.0)),
+                    (1, 0.07 * (10.0 - i as f64)),
+                    (6, 0.05 * ((i % 3) as f64 + 1.0)),
+                    (15, 0.11 * ((i % 4) as f64 + 0.5)),
+                ])
+                .expect("valid")
+            })
+            .collect();
+
+        for (i, v) in vectors.iter().enumerate() {
+            g.insert(make_id(u64::try_from(i).expect("fits")), v)
+                .expect("insert should succeed");
+        }
+
+        let l2 = |a: &SparseCliffordVector, b: &SparseCliffordVector| {
+            let mut sum = 0.0;
+            for i in 0..TOTAL_BLADES {
+                let d = a.coeffs[i] - b.coeffs[i];
+                sum += d * d;
+            }
+            sum.sqrt()
+        };
+
+        let mut found = false;
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        for _ in 0..2048 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let q0 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let q1 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let q15 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
+            let query = SparseCliffordVector::from_iter([(0, q0), (1, q1), (15, q15)]).expect("valid");
+            let mut by_metric: Vec<(usize, f64)> = vectors
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (i, fast_metric_distance(&query, v)))
+                .collect();
+            by_metric.sort_by(|a, b| a.1.total_cmp(&b.1));
+
+            let mut by_l2: Vec<(usize, f64)> = vectors
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (i, l2(&query, v)))
+                .collect();
+            by_l2.sort_by(|a, b| a.1.total_cmp(&b.1));
+
+            if by_metric[0].0 != by_l2[0].0 {
+                found = true;
+                let got = g.search_nearest(&query, 10);
+                let best_returned = got
+                    .iter()
+                    .min_by(|a, b| {
+                        let da = fast_metric_distance(&query, g.get_vector(**a).expect("vector exists"));
+                        let db = fast_metric_distance(&query, g.get_vector(**b).expect("vector exists"));
+                        da.total_cmp(&db)
+                    })
+                    .expect("non-empty result");
+                assert_eq!(*best_returned, make_id(u64::try_from(by_metric[0].0).expect("fits")));
+                break;
+            }
+        }
+
+        assert!(found, "at least one query must produce different metric-vs-l2 ordering");
     }
 }
 
