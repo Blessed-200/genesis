@@ -24,8 +24,136 @@ use genesis_math::{fast_metric_distance, SparseCliffordVector};
 use genesis_types::{GenesisError, NodeId};
 use smallvec::SmallVec;
 
-
 const TOTAL_BLADES: usize = 16;
+const SIMD_BATCH_WIDTH: usize = 4;
+
+const fn metric_weight_for_blade(blade: usize) -> f64 {
+    match blade.count_ones() {
+        0 => 2.0,
+        1 => 1.5,
+        2 => 1.0,
+        3 => 0.5,
+        4 => 0.3,
+        _ => 0.0,
+    }
+}
+
+const METRIC_WEIGHTS: [f64; TOTAL_BLADES] = {
+    let mut weights = [0.0; TOTAL_BLADES];
+    let mut i = 0;
+    while i < TOTAL_BLADES {
+        weights[i] = metric_weight_for_blade(i);
+        i += 1;
+    }
+    weights
+};
+
+/// Four `SparseCliffordVector`s in SoA (Structure-of-Arrays) layout.
+///
+/// Layout (transposed): `coeffs_transposed[blade_idx][vec_idx]`
+///
+/// ```text
+/// blade 0  => [v0[0],  v1[0],  v2[0],  v3[0]]
+/// blade 1  => [v0[1],  v1[1],  v2[1],  v3[1]]
+/// ...
+/// blade 15 => [v0[15], v1[15], v2[15], v3[15]]
+/// ```
+///
+/// The `align(32)` guarantee allows AVX2 loads from each row with one 256-bit
+/// load instruction when the runtime path selects SIMD.
+///
+/// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+#[repr(C, align(32))]
+struct SoaBatch4 {
+    /// `coeffs_transposed[i][j]` = vector `j`, blade `i`.
+    coeffs_transposed: [[f64; SIMD_BATCH_WIDTH]; TOTAL_BLADES],
+    /// Number of valid vectors in this batch (`1..=4`).
+    count: usize,
+}
+
+impl SoaBatch4 {
+    fn from_nodes(nodes: &[(&SparseCliffordVector, usize)]) -> Self {
+        debug_assert!(!nodes.is_empty() && nodes.len() <= SIMD_BATCH_WIDTH);
+        let mut coeffs_transposed = [[0.0; SIMD_BATCH_WIDTH]; TOTAL_BLADES];
+        for (vec_idx, (vector, _internal_idx)) in nodes.iter().enumerate() {
+            for (blade_idx, blade_row) in coeffs_transposed.iter_mut().enumerate() {
+                blade_row[vec_idx] = vector.coeffs[blade_idx];
+            }
+        }
+        Self {
+            coeffs_transposed,
+            count: nodes.len(),
+        }
+    }
+}
+
+/// Compute Clifford grade-weighted distances from query to up to 4 candidates.
+///
+/// Returns `[d0, d1, d2, d3]` where `dᵢ = fast_metric_distance(query, batch[i])`.
+/// Slots beyond `batch.count` are filled with `f64::INFINITY`.
+///
+/// AX-ID: AXIOMA-001, AXIOMA-013
+fn batch_distance_4(query: &SparseCliffordVector, batch: &SoaBatch4) -> [f64; SIMD_BATCH_WIDTH] {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
+            // SAFETY: Feature detection ensures AVX2+FMA support before executing
+            // AVX2/FMA intrinsics; violating this would execute unsupported
+            // instructions and cause an illegal-instruction trap at runtime.
+            let mut out = unsafe { batch_distance_4_avx2(query, batch) };
+            for d in out.iter_mut().skip(batch.count) {
+                *d = f64::INFINITY;
+            }
+            return out;
+        }
+    }
+
+    let mut out = [f64::INFINITY; SIMD_BATCH_WIDTH];
+    for (slot, d) in out.iter_mut().enumerate().take(batch.count) {
+        let dense = core::array::from_fn(|blade| batch.coeffs_transposed[blade][slot]);
+        *d = genesis_math::fast_metric_distance_from_dense(&dense, query);
+    }
+    out
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+#[target_feature(enable = "fma")]
+unsafe fn batch_distance_4_avx2(
+    query: &SparseCliffordVector,
+    batch: &SoaBatch4,
+) -> [f64; SIMD_BATCH_WIDTH] {
+    use std::arch::x86_64::{
+        _mm256_fmadd_pd, _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_setzero_pd,
+        _mm256_storeu_pd, _mm256_sub_pd,
+    };
+
+    let mut acc = _mm256_setzero_pd();
+
+    for (blade, &w) in METRIC_WEIGHTS.iter().enumerate().take(TOTAL_BLADES) {
+        let q = query.coeffs[blade];
+        // SAFETY: `coeffs_transposed[blade]` points to at least 4 contiguous f64
+        // values and `_mm256_loadu_pd` supports unaligned addresses.
+        // If this invariant were violated, this would read past bounds (UB).
+        let batch_col = unsafe { _mm256_loadu_pd(batch.coeffs_transposed[blade].as_ptr()) };
+        let q_broadcast = _mm256_set1_pd(q);
+        let weight = _mm256_set1_pd(w);
+        let diff = _mm256_sub_pd(q_broadcast, batch_col);
+        let sq = _mm256_mul_pd(diff, diff);
+        acc = _mm256_fmadd_pd(weight, sq, acc);
+    }
+
+    let mut out = [0.0_f64; SIMD_BATCH_WIDTH];
+    // SAFETY: `out` has space for 4 contiguous f64 values; store writes exactly 32 bytes.
+    // If `out` had insufficient length, this would write out of bounds (UB).
+    unsafe {
+        _mm256_storeu_pd(out.as_mut_ptr(), acc);
+    }
+    for value in &mut out {
+        *value = value.sqrt();
+    }
+    out
+}
 
 // Política de mantenimiento para módulos críticos de topología.
 //
@@ -281,7 +409,6 @@ impl CsrNeighborList {
     }
 }
 
-
 /// Level multiplier: 1.0 / ln(M).
 // M es una constante pequeña (≤ 64). M as f64 es exacto: M < 2^53.
 #[allow(clippy::cast_precision_loss)]
@@ -530,7 +657,6 @@ impl HnswGraph {
         }
     }
 
-
     fn ensure_layer_neighbors_initialized(&mut self) {
         if !self.layer_neighbors.is_empty() {
             return;
@@ -759,7 +885,8 @@ impl HnswGraph {
             neighbors.remove(pos);
             layer_list.set_neighbors(from_idx, &neighbors);
             if layer == 0 {
-                self.edge_count_layer0_undirected = self.edge_count_layer0_undirected.saturating_sub(1);
+                self.edge_count_layer0_undirected =
+                    self.edge_count_layer0_undirected.saturating_sub(1);
             }
             return true;
         }
@@ -793,8 +920,12 @@ impl HnswGraph {
                 .iter()
                 .copied()
                 .max_by(|a, b| {
-                    let da = self.get_idx(*a).map_or(f64::INFINITY, |i| self.distance_to_node(&self.nodes[idx].vec, i, layer));
-                    let db = self.get_idx(*b).map_or(f64::INFINITY, |i| self.distance_to_node(&self.nodes[idx].vec, i, layer));
+                    let da = self.get_idx(*a).map_or(f64::INFINITY, |i| {
+                        self.distance_to_node(&self.nodes[idx].vec, i, layer)
+                    });
+                    let db = self.get_idx(*b).map_or(f64::INFINITY, |i| {
+                        self.distance_to_node(&self.nodes[idx].vec, i, layer)
+                    });
                     da.total_cmp(&db)
                 });
 
@@ -812,7 +943,7 @@ impl HnswGraph {
                 query,
             );
         }
-fast_metric_distance(query, &self.nodes[idx].vec)
+        fast_metric_distance(query, &self.nodes[idx].vec)
     }
 
     /// Greedy single-element search at a given layer.
@@ -847,6 +978,7 @@ fast_metric_distance(query, &self.nodes[idx].vec)
     }
 
     /// Beam search at a given layer returning (`internal_idx`, dist) sorted by distance.
+    #[allow(clippy::too_many_lines)]
     fn search_layer(
         &self,
         query: &SparseCliffordVector,
@@ -889,26 +1021,108 @@ fast_metric_distance(query, &self.nodes[idx].vec)
                 }
 
                 if layer < self.nodes[c_idx].max_layer + 1 {
-                    for &nb_id in self.layer_neighbors[layer].neighbors(c_idx) {
-                        if let Some(nb_idx) = self.get_idx(nb_id) {
-                            if scratch.visited[nb_idx] {
-                                continue;
+                    let neighbors = self.layer_neighbors[layer].neighbors(c_idx);
+                    if layer == 0 {
+                        let mut chunk: [Option<(&SparseCliffordVector, usize)>; SIMD_BATCH_WIDTH] =
+                            [None, None, None, None];
+                        let mut chunk_len = 0_usize;
+
+                        for &nb_id in neighbors {
+                            if let Some(nb_idx) = self.get_idx(nb_id) {
+                                if scratch.visited[nb_idx] {
+                                    continue;
+                                }
+                                scratch.visited.set(nb_idx, true);
+                                scratch.visited_touched.push(nb_idx);
+                                chunk[chunk_len] = Some((&self.nodes[nb_idx].vec, nb_idx));
+                                chunk_len += 1;
+
+                                if chunk_len == SIMD_BATCH_WIDTH {
+                                    let nodes = [
+                                        chunk[0].expect("full chunk slot 0 must exist"),
+                                        chunk[1].expect("full chunk slot 1 must exist"),
+                                        chunk[2].expect("full chunk slot 2 must exist"),
+                                        chunk[3].expect("full chunk slot 3 must exist"),
+                                    ];
+                                    let batch = SoaBatch4::from_nodes(&nodes);
+                                    let distances = batch_distance_4(query, &batch);
+                                    for slot in 0..SIMD_BATCH_WIDTH {
+                                        let d = distances[slot];
+                                        let nb_idx = nodes[slot].1;
+                                        let worst = scratch
+                                            .results
+                                            .peek()
+                                            .map(|(FiniteDist(dw), _)| *dw)
+                                            .unwrap_or(f64::INFINITY);
+
+                                        if scratch.results.len() < ef || d < worst {
+                                            scratch
+                                                .candidates
+                                                .push(Reverse((FiniteDist(d), nb_idx)));
+                                            scratch.results.push((FiniteDist(d), nb_idx));
+                                            if scratch.results.len() > ef {
+                                                scratch.results.pop();
+                                            }
+                                        }
+                                    }
+                                    chunk = [None, None, None, None];
+                                    chunk_len = 0;
+                                }
                             }
-                            scratch.visited.set(nb_idx, true);
-                            scratch.visited_touched.push(nb_idx);
-                            let d = self.distance_to_node(query, nb_idx, layer);
+                        }
 
-                            let worst = scratch
-                                .results
-                                .peek()
-                                .map(|(FiniteDist(dw), _)| *dw)
-                                .unwrap_or(f64::INFINITY);
+                        if chunk_len > 0 {
+                            let mut tail: [(&SparseCliffordVector, usize); SIMD_BATCH_WIDTH] = [
+                                (&self.nodes[c_idx].vec, c_idx),
+                                (&self.nodes[c_idx].vec, c_idx),
+                                (&self.nodes[c_idx].vec, c_idx),
+                                (&self.nodes[c_idx].vec, c_idx),
+                            ];
+                            for (slot, item) in chunk.iter().enumerate().take(chunk_len) {
+                                tail[slot] = item.expect("tail slot must exist");
+                            }
+                            let batch = SoaBatch4::from_nodes(&tail[..chunk_len]);
+                            let distances = batch_distance_4(query, &batch);
+                            for slot in 0..chunk_len {
+                                let d = distances[slot];
+                                let nb_idx = tail[slot].1;
+                                let worst = scratch
+                                    .results
+                                    .peek()
+                                    .map(|(FiniteDist(dw), _)| *dw)
+                                    .unwrap_or(f64::INFINITY);
 
-                            if scratch.results.len() < ef || d < worst {
-                                scratch.candidates.push(Reverse((FiniteDist(d), nb_idx)));
-                                scratch.results.push((FiniteDist(d), nb_idx));
-                                if scratch.results.len() > ef {
-                                    scratch.results.pop();
+                                if scratch.results.len() < ef || d < worst {
+                                    scratch.candidates.push(Reverse((FiniteDist(d), nb_idx)));
+                                    scratch.results.push((FiniteDist(d), nb_idx));
+                                    if scratch.results.len() > ef {
+                                        scratch.results.pop();
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        for &nb_id in neighbors {
+                            if let Some(nb_idx) = self.get_idx(nb_id) {
+                                if scratch.visited[nb_idx] {
+                                    continue;
+                                }
+                                scratch.visited.set(nb_idx, true);
+                                scratch.visited_touched.push(nb_idx);
+                                let d = self.distance_to_node(query, nb_idx, layer);
+
+                                let worst = scratch
+                                    .results
+                                    .peek()
+                                    .map(|(FiniteDist(dw), _)| *dw)
+                                    .unwrap_or(f64::INFINITY);
+
+                                if scratch.results.len() < ef || d < worst {
+                                    scratch.candidates.push(Reverse((FiniteDist(d), nb_idx)));
+                                    scratch.results.push((FiniteDist(d), nb_idx));
+                                    if scratch.results.len() > ef {
+                                        scratch.results.pop();
+                                    }
                                 }
                             }
                         }
@@ -975,7 +1189,7 @@ fast_metric_distance(query, &self.nodes[idx].vec)
     pub fn neighbors(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
         let node = self.get_idx(id).map(|idx| &self.nodes[idx]);
         NeighborIter {
-graph: self,
+            graph: self,
             node_idx: node.map(|_| self.get_idx(id).unwrap_or(0)),
             layer_pos: 0,
             edge_pos: 0,
@@ -1084,12 +1298,14 @@ graph: self,
             node_ids.push(node.id);
             dense_coeffs.push(decode_layer0_to_f64(&node.layer0));
             let start = neighbor_ids.len();
-            let layer0 = self.layer_neighbors[0].neighbors(node_ids.len()-1);
+            let layer0 = self.layer_neighbors[0].neighbors(node_ids.len() - 1);
             neighbor_ids.reserve(layer0.len());
             neighbor_distances.reserve(layer0.len());
             for &nb_id in layer0 {
                 neighbor_ids.push(nb_id);
-                let d = self.get_idx(nb_id).map_or(f64::INFINITY, |nb_idx| self.distance_to_node(&node.vec, nb_idx, 0));
+                let d = self.get_idx(nb_id).map_or(f64::INFINITY, |nb_idx| {
+                    self.distance_to_node(&node.vec, nb_idx, 0)
+                });
                 neighbor_distances.push(d);
             }
             neighbor_offsets.push((start, neighbor_ids.len()));
@@ -1132,7 +1348,13 @@ graph: self,
             .map(|layers| {
                 let mut all = Vec::new();
                 for layer in 0..layers {
-                    all.extend(self.layer_neighbors[layer].neighbors(idx).iter().copied().map(|nb_id| (nb_id, layer)));
+                    all.extend(
+                        self.layer_neighbors[layer]
+                            .neighbors(idx)
+                            .iter()
+                            .copied()
+                            .map(|nb_id| (nb_id, layer)),
+                    );
                 }
                 all
             })
@@ -1167,7 +1389,7 @@ graph: self,
                 .nodes
                 .iter()
                 .enumerate()
-                                .filter(|(i, n)| *i != idx && n.id != NodeId::INVALID)
+                .filter(|(i, n)| *i != idx && n.id != NodeId::INVALID)
                 .max_by_key(|(_, n)| n.max_layer)
                 .map(|(i, n)| {
                     self.entry_layer = n.max_layer;
@@ -1183,6 +1405,38 @@ graph: self,
 
         Ok(())
     }
+}
+
+/// Benchmark helper: evaluate one batch of 4 distances with SIMD/scalar dispatch.
+///
+/// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+pub fn benchmark_batch_distance_4(
+    query: &SparseCliffordVector,
+    candidates: &[SparseCliffordVector; SIMD_BATCH_WIDTH],
+) -> [f64; SIMD_BATCH_WIDTH] {
+    let nodes = [
+        (&candidates[0], 0),
+        (&candidates[1], 1),
+        (&candidates[2], 2),
+        (&candidates[3], 3),
+    ];
+    let batch = SoaBatch4::from_nodes(&nodes);
+    batch_distance_4(query, &batch)
+}
+
+/// Benchmark helper: scalar baseline for 4 sequential distance evaluations.
+///
+/// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+pub fn benchmark_scalar_distance_4x(
+    query: &SparseCliffordVector,
+    candidates: &[SparseCliffordVector; SIMD_BATCH_WIDTH],
+) -> [f64; SIMD_BATCH_WIDTH] {
+    [
+        fast_metric_distance(query, &candidates[0]),
+        fast_metric_distance(query, &candidates[1]),
+        fast_metric_distance(query, &candidates[2]),
+        fast_metric_distance(query, &candidates[3]),
+    ]
 }
 
 fn decode_layer0_to_f64(stored: &Layer0Coeffs) -> [f64; TOTAL_BLADES] {
@@ -1428,6 +1682,49 @@ mod tests {
         NodeId::try_new(v).expect("NodeId válido por construcción")
     }
 
+    fn next_u64(seed: &mut u64) -> u64 {
+        *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        *seed
+    }
+
+    fn random_vec(seed: &mut u64) -> SparseCliffordVector {
+        let dense = core::array::from_fn(|_| {
+            let bits = next_u64(seed) >> 11;
+            (bits as f64) / ((1_u64 << 53) as f64) * 2.0 - 1.0
+        });
+        SparseCliffordVector::from_dense(&dense)
+            .expect("deterministic random vector must be finite")
+    }
+
+    #[test]
+    fn batch_distance_4_matches_scalar_for_all_counts() {
+        let mut seed = 0x1234_5678_9ABC_DEF0;
+        let query = random_vec(&mut seed);
+
+        for count in 1..=SIMD_BATCH_WIDTH {
+            let mut vectors = [query; SIMD_BATCH_WIDTH];
+            for item in vectors.iter_mut().take(count) {
+                *item = random_vec(&mut seed);
+            }
+            let nodes = [
+                (&vectors[0], 0),
+                (&vectors[1], 1),
+                (&vectors[2], 2),
+                (&vectors[3], 3),
+            ];
+            let batch = SoaBatch4::from_nodes(&nodes[..count]);
+            let distances = batch_distance_4(&query, &batch);
+
+            for slot in 0..count {
+                let scalar = fast_metric_distance(&query, &vectors[slot]);
+                assert!((distances[slot] - scalar).abs() < 1e-10);
+            }
+            for slot in count..SIMD_BATCH_WIDTH {
+                assert!(distances[slot].is_infinite());
+            }
+        }
+    }
+
     #[test]
     fn layer0_soa_preserves_layer0_cardinality() {
         let mut graph = HnswGraph::new(16);
@@ -1441,7 +1738,8 @@ mod tests {
         let total_layer0: usize = graph
             .nodes
             .iter()
-            .enumerate().map(|(i, _node)| graph.layer_neighbors[0].neighbors(i).len())
+            .enumerate()
+            .map(|(i, _node)| graph.layer_neighbors[0].neighbors(i).len())
             .sum();
 
         assert_eq!(soa.node_ids.len(), graph.node_count());
@@ -1818,7 +2116,9 @@ mod tests {
             for node in &g.nodes {
                 for layer_idx in 0..=node.max_layer {
                     let m_max = if layer_idx == 0 { M0 } else { M };
-                    let degree = g.layer_neighbors[layer_idx].neighbors(usize::try_from(node.id.get()).expect("dense id")).len();
+                    let degree = g.layer_neighbors[layer_idx]
+                        .neighbors(usize::try_from(node.id.get()).expect("dense id"))
+                        .len();
                     assert!(
                         degree <= m_max,
                         "node {:?} layer {layer_idx}: degree {} > m_max {}",
@@ -2149,7 +2449,10 @@ mod tests {
             for w in layer.offsets.windows(2) {
                 assert!(w[0] <= w[1]);
             }
-            assert_eq!(layer.data.len(), *layer.offsets.last().expect("non-empty offsets"));
+            assert_eq!(
+                layer.data.len(),
+                *layer.offsets.last().expect("non-empty offsets")
+            );
         }
     }
 
@@ -2227,7 +2530,8 @@ mod tests {
             let q1 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
             let q15 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
-            let query = SparseCliffordVector::from_iter([(0, q0), (1, q1), (15, q15)]).expect("valid");
+            let query =
+                SparseCliffordVector::from_iter([(0, q0), (1, q1), (15, q15)]).expect("valid");
             let mut by_metric: Vec<(usize, f64)> = vectors
                 .iter()
                 .enumerate()
@@ -2248,17 +2552,25 @@ mod tests {
                 let best_returned = got
                     .iter()
                     .min_by(|a, b| {
-                        let da = fast_metric_distance(&query, g.get_vector(**a).expect("vector exists"));
-                        let db = fast_metric_distance(&query, g.get_vector(**b).expect("vector exists"));
+                        let da =
+                            fast_metric_distance(&query, g.get_vector(**a).expect("vector exists"));
+                        let db =
+                            fast_metric_distance(&query, g.get_vector(**b).expect("vector exists"));
                         da.total_cmp(&db)
                     })
                     .expect("non-empty result");
-                assert_eq!(*best_returned, make_id(u64::try_from(by_metric[0].0).expect("fits")));
+                assert_eq!(
+                    *best_returned,
+                    make_id(u64::try_from(by_metric[0].0).expect("fits"))
+                );
                 break;
             }
         }
 
-        assert!(found, "at least one query must produce different metric-vs-l2 ordering");
+        assert!(
+            found,
+            "at least one query must produce different metric-vs-l2 ordering"
+        );
     }
 }
 
