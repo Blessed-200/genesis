@@ -220,4 +220,11 @@ core/genesis-dynamics/src/
 
 ---
 
+## SoaBatch4 — estado actual
+- Kernel batch_distance_4: CORRECTO (test pasa, 1e-10 tolerancia)  
+- Speedup medido: 0.85x (más lento que scalar)
+- Causa: transpose-on-the-fly en hot loop domina el costo
+- Solución pendiente: pre-construir SoA en inserción (persistent layout)
+- NO revertir — la infraestructura es correcta y necesaria para persistent SoA
+
 *GÉNESIS Cognitive Core | AGENTS.md v4.0.0 | 384 tests, 0 failures*
