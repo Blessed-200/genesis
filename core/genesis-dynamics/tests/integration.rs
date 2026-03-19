@@ -7,11 +7,17 @@
 use genesis_dynamics::*;
 use genesis_types::NodeId;
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct CountingAllocator;
 
 static ALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
+static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
+    TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -39,6 +45,7 @@ static GLOBAL_ALLOCATOR: CountingAllocator = CountingAllocator;
 
 #[test]
 fn stress_kuramoto_10k_steps_no_nan() {
+    let _guard = lock_tests();
     let n = 50usize;
     let mut net = QuantumKuramotoNetwork::new(0.05);
     for i in 0..n {
@@ -80,6 +87,7 @@ fn stress_kuramoto_10k_steps_no_nan() {
 
 #[test]
 fn stress_vfe_convergence_100_nodes() {
+    let _guard = lock_tests();
     let mut minimizer = VFEMinimizer::new();
     for i in 0..100u64 {
         minimizer.add_node(
@@ -108,6 +116,7 @@ fn stress_vfe_convergence_100_nodes() {
 
 #[test]
 fn critical_coupling_threshold() {
+    let _guard = lock_tests();
     use genesis_dynamics::kuramoto_critical_coupling;
     let kc = kuramoto_critical_coupling(1.0);
     assert!(
@@ -118,6 +127,8 @@ fn critical_coupling_threshold() {
 
     let n = 30usize;
     let mut net = QuantumKuramotoNetwork::new(1.0);
+    net.gauge_learning_rate = 0.0;
+    net.curvature_damping = 0.0;
     for i in 0..n {
         net.add_oscillator(QuantumOscillator::new(
             NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
@@ -146,6 +157,7 @@ fn critical_coupling_threshold() {
 
 #[test]
 fn heap_audit_update_cycle_performs_zero_allocations() {
+    let _guard = lock_tests();
     let n = 64usize;
     let mut net = QuantumKuramotoNetwork::new(0.2);
     for i in 0..n {
@@ -166,6 +178,10 @@ fn heap_audit_update_cycle_performs_zero_allocations() {
     }
 
     for _ in 0..8 {
+        net.step(0.01);
+    }
+
+    for _ in 0..4 {
         net.step(0.01);
     }
 

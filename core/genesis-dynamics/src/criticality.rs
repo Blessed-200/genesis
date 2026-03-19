@@ -118,7 +118,9 @@ impl CriticalityMonitor {
     }
 
     /// Número de avalanchas válidas disponibles (mín(total, capacity)).
-    fn count(&self) -> usize {
+    ///
+    /// AX-ID: AXIOMA-005
+    pub fn count(&self) -> usize {
         self.total_recorded.min(self.capacity.get())
     }
 

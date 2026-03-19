@@ -96,11 +96,15 @@ pub struct QuantumKuramotoNetwork {
 
     /// Acoplamiento público (`NodeId`-based) — fuente de verdad para serialización.
     /// PROHIBIDO `HashMap` — `Vec` sparse.
-    pub coupling: Vec<(NodeId, NodeId, f64)>,
+    ///
+    /// Cada entrada es `(src, dst, gamma, A_ij)` donde `A_ij` es la conexión gauge
+    /// discreta sobre la arista dirigida `src → dst`.
+    pub coupling: Vec<(NodeId, NodeId, f64, f64)>,
 
-    /// Índice interno: (`idx_i`, `idx_j`, `gamma`) sorted by `idx_i` para binary search.
-    /// Se reconstruye lazy cuando `dirty = true`.
-    coupling_idx: Vec<(u32, u32, f64)>,
+    /// Índice interno: (`idx_i`, `idx_j`, `gamma`, `A_ij`, public_edge_idx`)
+    /// sorted by `idx_i` para acceso contiguo por nodo origen.
+    /// Se reconstruye lazy cuando la topología cambia.
+    coupling_idx: Vec<(u32, u32, f64, f64, u32)>,
 
     /// `NodeId` → índice en `oscillators`. `u32::MAX` = no registrado.
     /// Direct array: O(1) lookup, válido para `NodeIds` consecutivos.
@@ -108,6 +112,22 @@ pub struct QuantumKuramotoNetwork {
 
     /// kT — controla amplitud de decoherencia térmica.
     pub temperature: f64,
+
+    /// `η_gauge` — tasa de adaptación del campo gauge.
+    ///
+    /// Demasiado pequeña: el campo no registra desajustes locales y el sistema colapsa.
+    /// Demasiado grande: introduce sobrecorrección, oscilaciones numéricas y ruido de fase.
+    ///
+    /// AX-ID: AXIOMA-006, AXIOMA-007, H_estructura (LEY_FUNDACIONAL §3.1)
+    pub gauge_learning_rate: f64,
+
+    /// `λ_curvature` — amortiguación por curvatura discreta.
+    ///
+    /// Demasiado pequeña: las holonomías crecen sin límite y dominan el acoplamiento.
+    /// Demasiado grande: aplana la conexión demasiado rápido y destruye la criticidad local.
+    ///
+    /// AX-ID: AXIOMA-006, AXIOMA-007, H_estructura (LEY_FUNDACIONAL §3.1)
+    pub curvature_damping: f64,
 
     /// Estado del LCG. Semilla fija → reproducibilidad determinística.
     rng_state: u64,
@@ -128,8 +148,20 @@ pub struct QuantumKuramotoNetwork {
     /// Scratch saturations per node for adaptive coupling (reused each step).
     sat_scratch: Vec<f64>,
 
-    /// Flag: `coupling_idx` necesita rebuild.
+    /// Scratch gauge updates por arista pública. Usa `NaN` como centinela "sin actualización".
+    gauge_scratch: Vec<f64>,
+
+    /// Flag: la topología cambió y deben recomputarse índices y triángulos.
     dirty: bool,
+
+    /// Triángulos dirigidos `(e_ij, e_jk, e_ki)` expresados en índices de `self.coupling`.
+    triangles: Vec<(usize, usize, usize)>,
+
+    /// Índice inverso: arista pública → triángulos que la contienen.
+    edge_to_triangles: Vec<Vec<usize>>,
+
+    /// Índice de arista reversa para mantener antisimetría `A_ji = -A_ij`.
+    reverse_edges: Vec<Option<usize>>,
 
     /// Caché del parámetro de orden r_sync.
     /// Invalidado por `step()` vía `sync_dirty = true`.
@@ -148,13 +180,19 @@ impl QuantumKuramotoNetwork {
             coupling_idx: Vec::new(),
             id_to_idx: Vec::new(),
             temperature,
+            gauge_learning_rate: 0.01,
+            curvature_damping: 0.1,
             rng_state: 0xdead_beef_cafe_babe_u64,
             spare_gaussian: None,
             phase_scratch: Vec::new(),
             coupling_offsets: Vec::new(),
             amp_scratch: Vec::new(),
             sat_scratch: Vec::new(),
+            gauge_scratch: Vec::new(),
             dirty: false,
+            triangles: Vec::new(),
+            edge_to_triangles: Vec::new(),
+            reverse_edges: Vec::new(),
             sync_cache: 0.0,
             sync_dirty: true,
         }
@@ -203,13 +241,13 @@ impl QuantumKuramotoNetwork {
         let key = (i.get(), j.get());
         let pos = self
             .coupling
-            .binary_search_by_key(&key, |&(a, b, _)| (a.get(), b.get()));
+            .binary_search_by_key(&key, |&(a, b, _, _)| (a.get(), b.get()));
         match (pos, gamma != 0.0) {
             (Ok(p), true) => self.coupling[p].2 = gamma,
             (Ok(p), false) => {
                 self.coupling.remove(p);
             }
-            (Err(p), true) => self.coupling.insert(p, (i, j, gamma)),
+            (Err(p), true) => self.coupling.insert(p, (i, j, gamma, 0.0)),
             (Err(_), false) => {}
         }
         self.dirty = true;
@@ -220,6 +258,99 @@ impl QuantumKuramotoNetwork {
         for &(i, j, gamma) in pairs {
             self.set_coupling(i, j, gamma);
         }
+    }
+
+    /// Establece la conexión gauge discreta `A_ij` y mantiene la antisimetría `A_ji = -A_ij`.
+    ///
+    /// Si la arista reversa no existe, se crea con peso `0.0` para preservar el contrato gauge
+    /// sin alterar el acoplamiento dinámico preexistente.
+    ///
+    /// AX-ID: AXIOMA-006, AXIOMA-007, H_estructura (LEY_FUNDACIONAL §3.1)
+    pub fn set_gauge(&mut self, src: NodeId, dst: NodeId, a_ij: f64) {
+        self.set_or_insert_edge(src, dst, None, Some(a_ij));
+        self.set_or_insert_edge(dst, src, None, Some(-a_ij));
+        self.dirty = true;
+    }
+
+    /// Kuramoto order parameter `r ∈ [0,1]` sobre la fase primaria.
+    ///
+    /// `r≈1` implica sincronía rígida; `r≈0` desorden completo; el régimen crítico aparece
+    /// en valores intermedios que conservan fluctuaciones sin colapso.
+    ///
+    /// AX-ID: AXIOMA-005, AXIOMA-006
+    #[must_use]
+    pub fn order_parameter(&self) -> f64 {
+        let mut sum_cos = 0.0;
+        let mut sum_sin = 0.0;
+        let mut count = 0.0;
+
+        for osc in &self.oscillators {
+            if !osc.state.contributes_to_sync() {
+                continue;
+            }
+            let phase = osc.primary_phase();
+            sum_cos += phase.cos();
+            sum_sin += phase.sin();
+            count += 1.0;
+        }
+
+        if count == 0.0 {
+            0.0
+        } else {
+            (sum_cos.hypot(sum_sin) / count).clamp(0.0, 1.0)
+        }
+    }
+
+    /// Curvatura gauge total `Σ F²_ijk` sobre todos los triángulos dirigidos.
+    ///
+    /// Cero indica conexión plana; valores intermedios sostienen frustración local que impide
+    /// tanto el colapso total como las cascadas ilimitadas.
+    ///
+    /// AX-ID: AXIOMA-006, AXIOMA-007
+    pub fn total_curvature(&mut self) -> f64 {
+        self.rebuild_if_dirty();
+        self.triangles
+            .iter()
+            .map(|&(e_ij, e_jk, e_ki)| {
+                let holonomy = wrap_phase_diff(
+                    self.coupling[e_ij].3 + self.coupling[e_jk].3 + self.coupling[e_ki].3,
+                );
+                holonomy * holonomy
+            })
+            .sum()
+    }
+
+    /// Número de triángulos dirigidos materializados para la dinámica gauge.
+    ///
+    /// AX-ID: AXIOMA-006, AXIOMA-007
+    pub fn triangle_count(&mut self) -> usize {
+        self.rebuild_if_dirty();
+        self.triangles.len()
+    }
+
+    /// Aplica una transformación gauge local `θ_i → θ_i + φ_i`, `A_ij → A_ij + φ_i - φ_j`.
+    ///
+    /// El desplazamiento se aplica a todos los grados de fase del nodo para conservar
+    /// la invariancia local de la red multigrado.
+    ///
+    /// AX-ID: AXIOMA-006, AXIOMA-007, H_estructura (LEY_FUNDACIONAL §3.1)
+    pub fn apply_local_gauge_shift(&mut self, node: NodeId, phi: f64) {
+        let Some(idx) = self.lookup_idx(node) else {
+            return;
+        };
+        for phase in &mut self.oscillators[idx].phases {
+            *phase += phi;
+        }
+        let len = self.coupling.len();
+        for edge_idx in 0..len {
+            let (src, dst, _, gauge) = self.coupling[edge_idx];
+            if src == node {
+                self.assign_gauge(edge_idx, gauge + phi);
+            } else if dst == node {
+                self.assign_gauge(edge_idx, gauge - phi);
+            }
+        }
+        self.sync_dirty = true;
     }
 
     /// Adaptive Kuramoto step with bivector frustration and semantic habituation.
@@ -304,7 +435,7 @@ impl QuantumKuramotoNetwork {
             let sat_i = self.sat_scratch[i];
             let mut coupling_sums = [0.0f64; 5];
 
-            for &(_, j_u32, gamma_0) in edges {
+            for &(_, j_u32, gamma_0, gauge, _) in edges {
                 #[allow(clippy::cast_possible_truncation)]
                 let j = j_u32 as usize;
                 let phi_j = &self.phase_scratch[j];
@@ -330,8 +461,8 @@ impl QuantumKuramotoNetwork {
                     (gamma_0 * amp_factor * orient_factor * habituate).max(KURAMOTO_COUPLING_FLOOR);
 
                 for g in 0..5usize {
-                    coupling_sums[g] =
-                        adaptive_gamma.mul_add((phi_j[g] - phi_i[g]).sin(), coupling_sums[g]);
+                    coupling_sums[g] = adaptive_gamma
+                        .mul_add((phi_j[g] - phi_i[g] + gauge).sin(), coupling_sums[g]);
                 }
             }
 
@@ -347,6 +478,8 @@ impl QuantumKuramotoNetwork {
             }
         }
 
+        self.update_gauge_fields();
+        self.apply_homeostatic_feedback();
         self.sync_dirty = true;
     }
 
@@ -424,6 +557,9 @@ impl QuantumKuramotoNetwork {
             self.step_inner_deterministic(dt);
         }
 
+        self.update_gauge_fields();
+        self.apply_homeostatic_feedback();
+
         self.sync_dirty = true;
     }
 
@@ -468,7 +604,7 @@ impl QuantumKuramotoNetwork {
     #[inline]
     fn compute_coupling_sums(
         phase_scratch: &[[f64; 5]],
-        coupling_idx: &[(u32, u32, f64)],
+        coupling_idx: &[(u32, u32, f64, f64, u32)],
         coupling_offsets: &[(usize, usize)],
         oscillators: &[crate::oscillator::QuantumOscillator],
         i: usize,
@@ -476,12 +612,12 @@ impl QuantumKuramotoNetwork {
         let mut sums = [0.0f64; 5];
         let (start, end) = coupling_offsets[i];
         let phi_i = &phase_scratch[i];
-        for &(_, j_u32, gamma) in &coupling_idx[start..end] {
+        for &(_, j_u32, gamma, gauge, _) in &coupling_idx[start..end] {
             if oscillators[j_u32 as usize].state.contributes_to_sync() {
                 #[allow(clippy::cast_possible_truncation)]
                 let phi_j = &phase_scratch[j_u32 as usize];
                 for (g, sum_g) in sums.iter_mut().enumerate() {
-                    *sum_g = gamma.mul_add((phi_j[g] - phi_i[g]).sin(), *sum_g);
+                    *sum_g = gamma.mul_add((phi_j[g] - phi_i[g] + gauge).sin(), *sum_g);
                 }
             }
         }
@@ -613,6 +749,139 @@ impl QuantumKuramotoNetwork {
         }
     }
 
+    #[inline]
+    fn edge_position(&self, src: NodeId, dst: NodeId) -> Result<usize, usize> {
+        self.coupling
+            .binary_search_by_key(&(src.get(), dst.get()), |&(a, b, _, _)| (a.get(), b.get()))
+    }
+
+    fn set_or_insert_edge(
+        &mut self,
+        src: NodeId,
+        dst: NodeId,
+        gamma: Option<f64>,
+        gauge: Option<f64>,
+    ) -> usize {
+        match self.edge_position(src, dst) {
+            Ok(pos) => {
+                if let Some(new_gamma) = gamma {
+                    self.coupling[pos].2 = new_gamma;
+                }
+                if let Some(new_gauge) = gauge {
+                    self.coupling[pos].3 = wrap_phase_diff(new_gauge);
+                }
+                pos
+            }
+            Err(pos) => {
+                self.coupling.insert(
+                    pos,
+                    (
+                        src,
+                        dst,
+                        gamma.unwrap_or(0.0),
+                        wrap_phase_diff(gauge.unwrap_or(0.0)),
+                    ),
+                );
+                pos
+            }
+        }
+    }
+
+    #[inline]
+    fn assign_gauge(&mut self, edge_idx: usize, gauge: f64) {
+        let wrapped = wrap_phase_diff(gauge);
+        self.coupling[edge_idx].3 = wrapped;
+        if let Some(reverse_idx) = self.reverse_edges.get(edge_idx).copied().flatten() {
+            self.coupling[reverse_idx].3 = wrap_phase_diff(-wrapped);
+        }
+    }
+
+    fn triangle_curvature(&self, edge_idx: usize) -> f64 {
+        self.edge_to_triangles
+            .get(edge_idx)
+            .map_or(0.0, |triangles| {
+                triangles
+                    .iter()
+                    .map(|&triangle_idx| {
+                        let (e_ij, e_jk, e_ki) = self.triangles[triangle_idx];
+                        let holonomy = wrap_phase_diff(
+                            self.coupling[e_ij].3 + self.coupling[e_jk].3 + self.coupling[e_ki].3,
+                        );
+                        holonomy * holonomy
+                    })
+                    .sum()
+            })
+    }
+
+    fn update_gauge_fields(&mut self) {
+        self.gauge_scratch.resize(self.coupling.len(), f64::NAN);
+        for gauge in &mut self.gauge_scratch {
+            *gauge = f64::NAN;
+        }
+        for edge_idx in 0..self.coupling.len() {
+            if self.gauge_scratch[edge_idx].is_finite() {
+                continue;
+            }
+            let (src, dst, _, gauge) = self.coupling[edge_idx];
+            let Some(src_idx) = self.lookup_idx(src) else {
+                continue;
+            };
+            let Some(dst_idx) = self.lookup_idx(dst) else {
+                continue;
+            };
+            let phase_src = self.oscillators[src_idx].primary_phase();
+            let phase_dst = self.oscillators[dst_idx].primary_phase();
+            let phase_drive = wrap_phase_diff(phase_src - phase_dst);
+            let curvature = self.triangle_curvature(edge_idx);
+            let tri_count = self
+                .edge_to_triangles
+                .get(edge_idx)
+                .map_or(1.0, |triangles| triangles.len().max(1) as f64);
+            let curvature_term = (curvature / tri_count).tanh();
+            let new_gauge = wrap_phase_diff(
+                gauge + self.gauge_learning_rate * phase_drive
+                    - self.curvature_damping * curvature_term * gauge,
+            );
+            self.gauge_scratch[edge_idx] = new_gauge;
+            if let Some(reverse_idx) = self.reverse_edges.get(edge_idx).copied().flatten() {
+                self.gauge_scratch[reverse_idx] = -new_gauge;
+            }
+        }
+
+        for (edge_idx, &gauge) in self.gauge_scratch.iter().enumerate() {
+            if gauge.is_finite() {
+                self.coupling[edge_idx].3 = wrap_phase_diff(gauge);
+            }
+        }
+        self.refresh_coupling_idx_fields();
+    }
+
+    fn apply_homeostatic_feedback(&mut self) {
+        let r = self.order_parameter();
+        let scale = if r > 0.9 {
+            0.98
+        } else if r < 0.1 {
+            1.01
+        } else {
+            1.0
+        };
+        if scale == 1.0 {
+            return;
+        }
+        for edge in &mut self.coupling {
+            edge.2 *= scale;
+        }
+        self.refresh_coupling_idx_fields();
+    }
+
+    fn refresh_coupling_idx_fields(&mut self) {
+        for entry in &mut self.coupling_idx {
+            let public_idx = entry.4 as usize;
+            entry.2 = self.coupling[public_idx].2;
+            entry.3 = self.coupling[public_idx].3;
+        }
+    }
+
     /// Reconstruye `coupling_idx` sorted by source oscilador index y materializa offsets.
     fn rebuild_if_dirty(&mut self) {
         if !self.dirty {
@@ -620,17 +889,21 @@ impl QuantumKuramotoNetwork {
         }
         self.coupling_idx.clear();
         self.coupling_offsets.resize(self.oscillators.len(), (0, 0));
+        self.reverse_edges = vec![None; self.coupling.len()];
+        self.gauge_scratch.resize(self.coupling.len(), f64::NAN);
 
-        for &(ni, nj, gamma) in &self.coupling {
+        for (public_idx, &(ni, nj, gamma, gauge)) in self.coupling.iter().enumerate() {
             if let (Some(ii), Some(ij)) = (self.lookup_idx(ni), self.lookup_idx(nj)) {
                 self.coupling_idx.push((
                     u32::try_from(ii).expect("index must stay below u32::MAX"),
                     u32::try_from(ij).expect("index must stay below u32::MAX"),
                     gamma,
+                    gauge,
+                    u32::try_from(public_idx).expect("edge count must stay below u32::MAX"),
                 ));
             }
         }
-        self.coupling_idx.sort_unstable_by_key(|&(i, _, _)| i);
+        self.coupling_idx.sort_unstable_by_key(|&(i, _, _, _, _)| i);
 
         let mut cursor = 0usize;
         for (node_idx, offsets) in self.coupling_offsets.iter_mut().enumerate() {
@@ -647,7 +920,45 @@ impl QuantumKuramotoNetwork {
             *offsets = (start, cursor);
         }
 
+        for edge_idx in 0..self.coupling.len() {
+            let (src, dst, _, _) = self.coupling[edge_idx];
+            if let Ok(reverse_idx) = self.edge_position(dst, src) {
+                self.reverse_edges[edge_idx] = Some(reverse_idx);
+            }
+        }
+
+        self.rebuild_triangles();
+
         self.dirty = false;
+    }
+
+    fn rebuild_triangles(&mut self) {
+        self.triangles.clear();
+        self.edge_to_triangles = vec![Vec::new(); self.coupling.len()];
+
+        for &(src_idx_u32, mid_idx_u32, _, _, edge_ij_u32) in &self.coupling_idx {
+            let src_idx = src_idx_u32 as usize;
+            let mid_idx = mid_idx_u32 as usize;
+            let edge_ij = edge_ij_u32 as usize;
+            let (start, end) = self.coupling_offsets[mid_idx];
+            let src = self.oscillators[src_idx].node_id;
+
+            for &(_, dst_idx_u32, _, _, edge_jk_u32) in &self.coupling_idx[start..end] {
+                let dst_idx = dst_idx_u32 as usize;
+                if dst_idx == src_idx || dst_idx == mid_idx {
+                    continue;
+                }
+                let dst = self.oscillators[dst_idx].node_id;
+                if let Ok(edge_ki) = self.edge_position(dst, src) {
+                    let triangle_idx = self.triangles.len();
+                    let edge_jk = edge_jk_u32 as usize;
+                    self.triangles.push((edge_ij, edge_jk, edge_ki));
+                    self.edge_to_triangles[edge_ij].push(triangle_idx);
+                    self.edge_to_triangles[edge_jk].push(triangle_idx);
+                    self.edge_to_triangles[edge_ki].push(triangle_idx);
+                }
+            }
+        }
     }
 
     /// Number of coupling edges currently registered.
@@ -738,7 +1049,7 @@ impl QuantumKuramotoNetwork {
         // Step 2: Remove coupling edges referencing this oscillator.
         // Remove coupling edges referencing this node.
         // coupling stores (NodeId, NodeId, f64).
-        self.coupling.retain(|&(ni, nj, _)| ni != id && nj != id);
+        self.coupling.retain(|&(ni, nj, _, _)| ni != id && nj != id);
 
         // Step 3: Mark offsets as dirty — rebuild_offsets() triggered on next step.
         self.dirty = true;
@@ -864,7 +1175,9 @@ mod tests {
     #[test]
     fn kuramoto_coupling_induces_synchronization_multigrade() {
         let n = 10usize;
-        let mut net = QuantumKuramotoNetwork::new(0.05);
+        let mut net = QuantumKuramotoNetwork::new(0.0);
+        net.gauge_learning_rate = 0.0;
+        net.curvature_damping = 0.0;
 
         for i in 0..n {
             let phase = 2.0 * core::f64::consts::PI * i as f64 / n as f64;
@@ -973,7 +1286,7 @@ mod tests {
         let keys: Vec<_> = net
             .coupling
             .iter()
-            .map(|&(a, b, _)| (a.get(), b.get()))
+            .map(|&(a, b, _, _)| (a.get(), b.get()))
             .collect();
         let sorted = {
             let mut k = keys.clone();
@@ -1275,6 +1588,86 @@ mod tests {
         assert!(first.is_finite());
         assert!(second.is_finite());
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn set_gauge_keeps_reverse_edge_antisymmetric() {
+        let mut net = QuantumKuramotoNetwork::new(0.0);
+        let a = NodeId::try_new(0).expect("NodeId válido por construcción");
+        let b = NodeId::try_new(1).expect("NodeId válido por construcción");
+        net.add_oscillator(make_osc(0, 0.0))
+            .expect("NodeId válido por construcción");
+        net.add_oscillator(make_osc(1, 0.0))
+            .expect("NodeId válido por construcción");
+        net.set_coupling(a, b, 0.5);
+        net.set_coupling(b, a, 0.5);
+        net.set_gauge(a, b, 0.25);
+
+        let forward = net
+            .coupling
+            .iter()
+            .find(|&&(src, dst, _, _)| src == a && dst == b)
+            .map(|edge| edge.3)
+            .expect("arista forward debe existir");
+        let reverse = net
+            .coupling
+            .iter()
+            .find(|&&(src, dst, _, _)| src == b && dst == a)
+            .map(|edge| edge.3)
+            .expect("arista reverse debe existir");
+        assert!((forward + reverse).abs() < 1e-12);
+    }
+
+    #[test]
+    fn triangle_count_detects_directed_cycle() {
+        let mut net = QuantumKuramotoNetwork::new(0.0);
+        for i in 0..3_u64 {
+            net.add_oscillator(make_osc(i, 0.0))
+                .expect("NodeId válido por construcción");
+        }
+        net.set_coupling(
+            NodeId::try_new(0).expect("NodeId válido por construcción"),
+            NodeId::try_new(1).expect("NodeId válido por construcción"),
+            0.4,
+        );
+        net.set_coupling(
+            NodeId::try_new(1).expect("NodeId válido por construcción"),
+            NodeId::try_new(2).expect("NodeId válido por construcción"),
+            0.4,
+        );
+        net.set_coupling(
+            NodeId::try_new(2).expect("NodeId válido por construcción"),
+            NodeId::try_new(0).expect("NodeId válido por construcción"),
+            0.4,
+        );
+        assert_eq!(net.triangle_count(), 3);
+    }
+
+    #[test]
+    fn apply_local_gauge_shift_preserves_order_parameter() {
+        let mut net = QuantumKuramotoNetwork::new(0.0);
+        for i in 0..4_u64 {
+            let phase = i as f64 * 0.4;
+            net.add_oscillator(QuantumOscillator::with_phases(
+                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                [phase; 5],
+                [0.0; 5],
+            ))
+            .expect("NodeId válido por construcción");
+        }
+        for i in 0..4_u64 {
+            let src = NodeId::try_new(i).expect("NodeId válido por construcción");
+            let dst = NodeId::try_new((i + 1) % 4).expect("NodeId válido por construcción");
+            net.set_coupling(src, dst, 0.2);
+            net.set_coupling(dst, src, 0.2);
+        }
+        let before = net.order_parameter();
+        net.apply_local_gauge_shift(
+            NodeId::try_new(1).expect("NodeId válido por construcción"),
+            0.15,
+        );
+        let after = net.order_parameter();
+        assert!((before - after).abs() < 0.05);
     }
 }
 

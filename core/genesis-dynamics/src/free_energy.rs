@@ -223,9 +223,42 @@ const fn canonical_edge(i: NodeId, j: NodeId) -> (NodeId, NodeId) {
 pub struct VFEMinimizer {
     beliefs: Vec<Belief>,
     fisher: Vec<FisherInfo>,
-    /// `NodeId` → índice en `beliefs`. `u32::MAX` = no registrado.
-    /// Direct array: O(1) lookup, válido para `NodeIds` consecutivos.
-    id_to_idx: Vec<u32>,
+    /// `NodeId` → índice en `beliefs` usando páginas sparse on-demand.
+    /// `u32::MAX` = no registrado.
+    id_to_idx: PagedIndex,
+}
+
+const PAGE_BITS: u32 = 12;
+const PAGE_SIZE: usize = 1 << PAGE_BITS;
+const PAGE_MASK: usize = PAGE_SIZE - 1;
+
+#[derive(Debug, Default)]
+struct PagedIndex {
+    pages: Vec<Option<Box<[u32; PAGE_SIZE]>>>,
+}
+
+impl PagedIndex {
+    #[inline]
+    fn get(&self, raw: usize) -> Option<u32> {
+        let page = raw >> PAGE_BITS;
+        let offset = raw & PAGE_MASK;
+        self.pages
+            .get(page)
+            .and_then(Option::as_ref)
+            .map(|p| p[offset])
+            .filter(|&idx| idx != u32::MAX)
+    }
+
+    #[inline]
+    fn set(&mut self, raw: usize, val: u32) {
+        let page = raw >> PAGE_BITS;
+        let offset = raw & PAGE_MASK;
+        if page >= self.pages.len() {
+            self.pages.resize_with(page + 1, || None);
+        }
+        let slots = self.pages[page].get_or_insert_with(|| Box::new([u32::MAX; PAGE_SIZE]));
+        slots[offset] = val;
+    }
 }
 
 impl VFEMinimizer {
@@ -239,7 +272,7 @@ impl VFEMinimizer {
         Self {
             beliefs: Vec::new(),
             fisher: Vec::new(),
-            id_to_idx: Vec::new(),
+            id_to_idx: PagedIndex { pages: Vec::new() },
         }
     }
 
@@ -280,15 +313,12 @@ impl VFEMinimizer {
             return;
         }
 
-        if raw >= self.id_to_idx.len() {
-            self.id_to_idx.resize(raw + 1, u32::MAX);
-        }
-        if self.id_to_idx[raw] == u32::MAX {
+        if self.id_to_idx.get(raw).is_none() {
             let Ok(idx) = u32::try_from(self.beliefs.len()) else {
                 debug_assert!(false, "VFEMinimizer belief count overflowed u32::MAX");
                 return;
             };
-            self.id_to_idx[raw] = idx;
+            self.id_to_idx.set(raw, idx);
             self.beliefs.push(Belief::new(id, prior_mean));
             self.fisher.push(FisherInfo::new());
         }
@@ -301,13 +331,7 @@ impl VFEMinimizer {
         let Ok(raw) = usize::try_from(id.get()) else {
             return None;
         };
-        self.id_to_idx.get(raw).and_then(|&idx| {
-            if idx == u32::MAX {
-                None
-            } else {
-                Some(idx as usize)
-            }
-        })
+        self.id_to_idx.get(raw).map(|idx| idx as usize)
     }
 
     /// VFE sobre el subespacio de grado 1 — retrocompatibilidad con callers `[f64;4]`.
@@ -581,9 +605,7 @@ impl VFEMinimizer {
             return Err(GenesisError::NodeNotFound { id });
         };
         let idx = self.lookup(id).ok_or(GenesisError::NodeNotFound { id })?;
-        if raw < self.id_to_idx.len() {
-            self.id_to_idx[raw] = u32::MAX;
-        }
+        self.id_to_idx.set(raw, u32::MAX);
         self.beliefs[idx] = Belief::tombstone();
         self.fisher[idx] = FisherInfo::new();
         Ok(())
