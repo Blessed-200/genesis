@@ -1,0 +1,6669 @@
+{
+  "file": "dual.rs",
+  "timestamp": "2026-03-19T02:36:47.222Z",
+  "opportunities": [
+    {
+      "id": "O1",
+      "type": "nested_loop",
+      "location": [
+        1413,
+        1434
+      ],
+      "line": 43,
+      "column": 4,
+      "severity": "high",
+      "description": "Loop anidado detectado (profundidad: 2)",
+      "suggestion": "Considera reestructurar el algoritmo o usar iteradores/paralelización con rayon",
+      "metadata": {
+        "loopDepth": 2,
+        "canVectorize": false,
+        "impact": {
+          "estimatedSpeedup": "10-100x potential",
+          "memoryImpact": "medium",
+          "risk": "caution"
+        },
+        "priority": 6
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_undual"
+      },
+      "impact": {
+        "estimatedSpeedup": "10-50x",
+        "memoryImpact": "medium",
+        "reason": "runtime_bottleneck",
+        "risk": "caution"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 1413,
+        "end_byte": 1434,
+        "start_line": 42,
+        "end_line": 43,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative"
+      }
+    },
+    {
+      "id": "O2",
+      "type": "nested_loop",
+      "location": [
+        3748,
+        3806
+      ],
+      "line": 113,
+      "column": 8,
+      "severity": "high",
+      "description": "Loop anidado detectado (profundidad: 3)",
+      "suggestion": "Considera reestructurar el algoritmo o usar iteradores/paralelización con rayon",
+      "metadata": {
+        "loopDepth": 3,
+        "canVectorize": false,
+        "impact": {
+          "estimatedSpeedup": "100-10000x potential",
+          "memoryImpact": "medium",
+          "risk": "caution"
+        },
+        "priority": 6
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "from_dense_buf"
+      },
+      "impact": {
+        "estimatedSpeedup": "10-50x",
+        "memoryImpact": "medium",
+        "reason": "runtime_bottleneck",
+        "risk": "caution"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 3748,
+        "end_byte": 3806,
+        "start_line": 112,
+        "end_line": 113,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative"
+      }
+    },
+    {
+      "id": "O3",
+      "type": "function_call_in_loop",
+      "location": [
+        3748,
+        3806
+      ],
+      "line": 113,
+      "column": 28,
+      "severity": "medium",
+      "description": "Llamada a 'iter' dentro de loop",
+      "suggestion": "Considera mover 'iter' fuera del loop si es invariante",
+      "metadata": {
+        "function": {
+          "name": "iter",
+          "intrinsic": false,
+          "pure": true,
+          "inline": "always",
+          "resolved": "core::slice::<impl>::iter",
+          "complexity": "O(1)"
+        },
+        "loopDepth": 3,
+        "impact": {
+          "estimatedSpeedup": "2-5x",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "from_dense_buf"
+      },
+      "impact": {
+        "estimatedSpeedup": "2-5x",
+        "memoryImpact": "none",
+        "reason": "runtime_bottleneck",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_external_state_access",
+        "evidence": [
+          "Función std pura conocida: iter"
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 3748,
+        "end_byte": 3806,
+        "start_line": 112,
+        "end_line": 113,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative"
+      }
+    },
+    {
+      "id": "O4",
+      "type": "function_call_in_loop",
+      "location": [
+        3748,
+        3806
+      ],
+      "line": 113,
+      "column": 44,
+      "severity": "medium",
+      "description": "Llamada a 'enumerate' dentro de loop",
+      "suggestion": "Considera mover 'enumerate' fuera del loop si es invariante",
+      "metadata": {
+        "function": {
+          "name": "enumerate",
+          "intrinsic": false,
+          "pure": true,
+          "inline": "unknown"
+        },
+        "loopDepth": 3,
+        "impact": {
+          "estimatedSpeedup": "2-5x",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "from_dense_buf"
+      },
+      "impact": {
+        "estimatedSpeedup": "2-5x",
+        "memoryImpact": "none",
+        "reason": "runtime_bottleneck",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_external_state_access",
+        "evidence": [
+          "Función std pura conocida: enumerate"
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 3748,
+        "end_byte": 3806,
+        "start_line": 112,
+        "end_line": 113,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative"
+      }
+    },
+    {
+      "id": "O5",
+      "type": "nested_loop",
+      "location": [
+        4882,
+        4948
+      ],
+      "line": 148,
+      "column": 8,
+      "severity": "high",
+      "description": "Loop anidado detectado (profundidad: 4)",
+      "suggestion": "Considera reestructurar el algoritmo o usar iteradores/paralelización con rayon",
+      "metadata": {
+        "loopDepth": 4,
+        "canVectorize": false,
+        "impact": {
+          "estimatedSpeedup": "1000-1000000x potential",
+          "memoryImpact": "medium",
+          "risk": "caution"
+        },
+        "priority": 6
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "from"
+      },
+      "impact": {
+        "estimatedSpeedup": "10-50x",
+        "memoryImpact": "medium",
+        "reason": "runtime_bottleneck",
+        "risk": "caution"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 4882,
+        "end_byte": 4948,
+        "start_line": 147,
+        "end_line": 148,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative"
+      }
+    },
+    {
+      "id": "O6",
+      "type": "function_call_in_loop",
+      "location": [
+        4882,
+        4948
+      ],
+      "line": 148,
+      "column": 40,
+      "severity": "medium",
+      "description": "Llamada a 'into_iter' dentro de loop",
+      "suggestion": "Considera mover 'into_iter' fuera del loop si es invariante",
+      "metadata": {
+        "function": {
+          "name": "into_iter",
+          "intrinsic": false,
+          "pure": true,
+          "inline": "always",
+          "resolved": "core::iter::into_iter",
+          "complexity": "O(1)"
+        },
+        "loopDepth": 4,
+        "impact": {
+          "estimatedSpeedup": "2-5x",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "from"
+      },
+      "impact": {
+        "estimatedSpeedup": "2-5x",
+        "memoryImpact": "none",
+        "reason": "runtime_bottleneck",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_external_state_access",
+        "evidence": [
+          "Función std pura conocida: into_iter"
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 4882,
+        "end_byte": 4948,
+        "start_line": 147,
+        "end_line": 148,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative"
+      }
+    },
+    {
+      "id": "O7",
+      "type": "function_call_in_loop",
+      "location": [
+        4882,
+        4948
+      ],
+      "line": 148,
+      "column": 52,
+      "severity": "medium",
+      "description": "Llamada a 'enumerate' dentro de loop",
+      "suggestion": "Considera mover 'enumerate' fuera del loop si es invariante",
+      "metadata": {
+        "function": {
+          "name": "enumerate",
+          "intrinsic": false,
+          "pure": true,
+          "inline": "unknown"
+        },
+        "loopDepth": 4,
+        "impact": {
+          "estimatedSpeedup": "2-5x",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "from"
+      },
+      "impact": {
+        "estimatedSpeedup": "2-5x",
+        "memoryImpact": "none",
+        "reason": "runtime_bottleneck",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_external_state_access",
+        "evidence": [
+          "Función std pura conocida: enumerate"
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 4882,
+        "end_byte": 4948,
+        "start_line": 147,
+        "end_line": 148,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative"
+      }
+    },
+    {
+      "id": "O8",
+      "type": "nested_loop",
+      "location": [
+        6361,
+        6386
+      ],
+      "line": 200,
+      "column": 4,
+      "severity": "high",
+      "description": "Loop anidado detectado (profundidad: 5)",
+      "suggestion": "Considera reestructurar el algoritmo o usar iteradores/paralelización con rayon",
+      "metadata": {
+        "loopDepth": 5,
+        "canVectorize": false,
+        "impact": {
+          "estimatedSpeedup": "10000-100000000x potential",
+          "memoryImpact": "medium",
+          "risk": "caution"
+        },
+        "priority": 6
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "10-50x",
+        "memoryImpact": "medium",
+        "reason": "runtime_bottleneck",
+        "risk": "caution"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6361,
+        "end_byte": 6386,
+        "start_line": 199,
+        "end_line": 200,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative"
+      }
+    },
+    {
+      "id": "O9",
+      "type": "nested_loop",
+      "location": [
+        6587,
+        6616
+      ],
+      "line": 206,
+      "column": 8,
+      "severity": "high",
+      "description": "Loop anidado detectado (profundidad: 6)",
+      "suggestion": "Considera reestructurar el algoritmo o usar iteradores/paralelización con rayon",
+      "metadata": {
+        "loopDepth": 6,
+        "canVectorize": false,
+        "impact": {
+          "estimatedSpeedup": "100000-10000000000x potential",
+          "memoryImpact": "medium",
+          "risk": "caution"
+        },
+        "priority": 6
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "10-50x",
+        "memoryImpact": "medium",
+        "reason": "runtime_bottleneck",
+        "risk": "caution"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6587,
+        "end_byte": 6616,
+        "start_line": 205,
+        "end_line": 206,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative"
+      }
+    },
+    {
+      "id": "O10",
+      "type": "invariant_code_motion",
+      "location": [
+        6786,
+        6840
+      ],
+      "line": 210,
+      "column": 16,
+      "severity": "medium",
+      "description": "Posible código invariante: 'sign'",
+      "suggestion": "Mueve este cálculo fuera del loop si no depende de la variable de iteración",
+      "metadata": {
+        "variable": "sign",
+        "expression": "f64::from(sign_row[rhs_index])",
+        "impact": {
+          "estimatedSpeedup": "2-20x",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6786,
+        "end_byte": 6840,
+        "start_line": 209,
+        "end_line": 210,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative"
+      }
+    },
+    {
+      "id": "O11",
+      "type": "invariant_code_motion",
+      "location": [
+        7715,
+        7736
+      ],
+      "line": 245,
+      "column": 12,
+      "severity": "low",
+      "description": "Posible código invariante: 'x0'",
+      "suggestion": "Mueve este cálculo fuera del loop si no depende de la variable de iteración",
+      "metadata": {
+        "variable": "x0",
+        "expression": "3.5",
+        "impact": {
+          "estimatedSpeedup": "2-20x",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "dual_ad_x_squared_via_geometric_product"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 7715,
+        "end_byte": 7736,
+        "start_line": 244,
+        "end_line": 245,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O12",
+      "type": "function_call_in_loop",
+      "location": [
+        7977,
+        8074
+      ],
+      "line": 256,
+      "column": 52,
+      "severity": "low",
+      "description": "Llamada a 'expect' dentro de loop",
+      "suggestion": "Considera mover 'expect' fuera del loop si es invariante",
+      "metadata": {
+        "function": {
+          "name": "expect",
+          "intrinsic": false,
+          "pure": true,
+          "inline": "unknown"
+        },
+        "loopDepth": 6,
+        "impact": {
+          "estimatedSpeedup": "2-5x",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "dual_ad_x_squared_via_geometric_product"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_external_state_access",
+        "evidence": [
+          "Función std pura conocida: expect"
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 7977,
+        "end_byte": 8074,
+        "start_line": 255,
+        "end_line": 256,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O13",
+      "type": "function_call_in_loop",
+      "location": [
+        8344,
+        8400
+      ],
+      "line": 265,
+      "column": 12,
+      "severity": "low",
+      "description": "Llamada a 'expect' dentro de loop",
+      "suggestion": "Considera mover 'expect' fuera del loop si es invariante",
+      "metadata": {
+        "function": {
+          "name": "expect",
+          "intrinsic": false,
+          "pure": true,
+          "inline": "unknown"
+        },
+        "loopDepth": 6,
+        "impact": {
+          "estimatedSpeedup": "2-5x",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "from_sparse_clifford_vector_sets_zero_gradients"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_external_state_access",
+        "evidence": [
+          "Función std pura conocida: expect"
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8344,
+        "end_byte": 8400,
+        "start_line": 264,
+        "end_line": 265,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O14",
+      "type": "nested_loop",
+      "location": [
+        8450,
+        8484
+      ],
+      "line": 268,
+      "column": 8,
+      "severity": "low",
+      "description": "Loop anidado detectado (profundidad: 7)",
+      "suggestion": "Considera reestructurar el algoritmo o usar iteradores/paralelización con rayon",
+      "metadata": {
+        "loopDepth": 7,
+        "canVectorize": false,
+        "impact": {
+          "estimatedSpeedup": "1000000-1000000000000x potential",
+          "memoryImpact": "medium",
+          "risk": "caution"
+        },
+        "priority": 6
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "from_sparse_clifford_vector_sets_zero_gradients"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8450,
+        "end_byte": 8484,
+        "start_line": 267,
+        "end_line": 268,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O15",
+      "type": "function_call_in_loop",
+      "location": [
+        8603,
+        8677
+      ],
+      "line": 275,
+      "column": 64,
+      "severity": "low",
+      "description": "Llamada a 'unwrap' dentro de loop",
+      "suggestion": "Considera mover 'unwrap' fuera del loop si es invariante",
+      "metadata": {
+        "function": {
+          "name": "unwrap",
+          "intrinsic": false,
+          "pure": true,
+          "inline": "unknown"
+        },
+        "loopDepth": 7,
+        "impact": {
+          "estimatedSpeedup": "2-5x",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_external_state_access",
+        "evidence": [
+          "Función std pura conocida: unwrap"
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8603,
+        "end_byte": 8677,
+        "start_line": 274,
+        "end_line": 275,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O16",
+      "type": "invariant_code_motion",
+      "location": [
+        8603,
+        8677
+      ],
+      "line": 275,
+      "column": 12,
+      "severity": "low",
+      "description": "Posible código invariante: 'scalar'",
+      "suggestion": "Mueve este cálculo fuera del loop si no depende de la variable de iteración",
+      "metadata": {
+        "variable": "scalar",
+        "expression": "SparseCliffordVector::from_iter([(0, 1.0)]).unwrap()",
+        "impact": {
+          "estimatedSpeedup": "2-20x",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8603,
+        "end_byte": 8677,
+        "start_line": 274,
+        "end_line": 275,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O17",
+      "type": "function_call_in_loop",
+      "location": [
+        8919,
+        8994
+      ],
+      "line": 283,
+      "column": 65,
+      "severity": "low",
+      "description": "Llamada a 'unwrap' dentro de loop",
+      "suggestion": "Considera mover 'unwrap' fuera del loop si es invariante",
+      "metadata": {
+        "function": {
+          "name": "unwrap",
+          "intrinsic": false,
+          "pure": true,
+          "inline": "unknown"
+        },
+        "loopDepth": 7,
+        "impact": {
+          "estimatedSpeedup": "2-5x",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_external_state_access",
+        "evidence": [
+          "Función std pura conocida: unwrap"
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8919,
+        "end_byte": 8994,
+        "start_line": 282,
+        "end_line": 283,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O18",
+      "type": "invariant_code_motion",
+      "location": [
+        8919,
+        8994
+      ],
+      "line": 283,
+      "column": 12,
+      "severity": "low",
+      "description": "Posible código invariante: 'e1'",
+      "suggestion": "Mueve este cálculo fuera del loop si no depende de la variable de iteración",
+      "metadata": {
+        "variable": "e1",
+        "expression": "SparseCliffordVector::from_iter([(0b0001, 1.0)]).unwrap()",
+        "impact": {
+          "estimatedSpeedup": "2-20x",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8919,
+        "end_byte": 8994,
+        "start_line": 282,
+        "end_line": 283,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O19",
+      "type": "invariant_code_motion",
+      "location": [
+        8995,
+        9050
+      ],
+      "line": 284,
+      "column": 12,
+      "severity": "low",
+      "description": "Posible código invariante: 'double_e1'",
+      "suggestion": "Mueve este cálculo fuera del loop si no depende de la variable de iteración",
+      "metadata": {
+        "variable": "double_e1",
+        "expression": "hodge_undual(&hodge_dual(&e1))",
+        "impact": {
+          "estimatedSpeedup": "2-20x",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8995,
+        "end_byte": 9050,
+        "start_line": 283,
+        "end_line": 284,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O20",
+      "type": "invariant_code_motion",
+      "location": [
+        9051,
+        9088
+      ],
+      "line": 285,
+      "column": 12,
+      "severity": "low",
+      "description": "Posible código invariante: 'orig'",
+      "suggestion": "Mueve este cálculo fuera del loop si no depende de la variable de iteración",
+      "metadata": {
+        "variable": "orig",
+        "expression": "e1.coeffs[0b0001]",
+        "impact": {
+          "estimatedSpeedup": "2-20x",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9051,
+        "end_byte": 9088,
+        "start_line": 284,
+        "end_line": 285,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O21",
+      "type": "invariant_code_motion",
+      "location": [
+        9089,
+        9132
+      ],
+      "line": 286,
+      "column": 12,
+      "severity": "low",
+      "description": "Posible código invariante: 'got'",
+      "suggestion": "Mueve este cálculo fuera del loop si no depende de la variable de iteración",
+      "metadata": {
+        "variable": "got",
+        "expression": "double_e1.coeffs[0b0001]",
+        "impact": {
+          "estimatedSpeedup": "2-20x",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9089,
+        "end_byte": 9132,
+        "start_line": 285,
+        "end_line": 286,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O22",
+      "type": "function_call_in_loop",
+      "location": [
+        9270,
+        9346
+      ],
+      "line": 292,
+      "column": 66,
+      "severity": "low",
+      "description": "Llamada a 'unwrap' dentro de loop",
+      "suggestion": "Considera mover 'unwrap' fuera del loop si es invariante",
+      "metadata": {
+        "function": {
+          "name": "unwrap",
+          "intrinsic": false,
+          "pure": true,
+          "inline": "unknown"
+        },
+        "loopDepth": 7,
+        "impact": {
+          "estimatedSpeedup": "2-5x",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_external_state_access",
+        "evidence": [
+          "Función std pura conocida: unwrap"
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9270,
+        "end_byte": 9346,
+        "start_line": 291,
+        "end_line": 292,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O23",
+      "type": "invariant_code_motion",
+      "location": [
+        9270,
+        9346
+      ],
+      "line": 292,
+      "column": 12,
+      "severity": "low",
+      "description": "Posible código invariante: 'biv'",
+      "suggestion": "Mueve este cálculo fuera del loop si no depende de la variable de iteración",
+      "metadata": {
+        "variable": "biv",
+        "expression": "SparseCliffordVector::from_iter([(0b0011, 1.0)]).unwrap()",
+        "impact": {
+          "estimatedSpeedup": "2-20x",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9270,
+        "end_byte": 9346,
+        "start_line": 291,
+        "end_line": 292,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O24",
+      "type": "invariant_code_motion",
+      "location": [
+        9405,
+        9447
+      ],
+      "line": 294,
+      "column": 12,
+      "severity": "low",
+      "description": "Posible código invariante: 'orig_biv'",
+      "suggestion": "Mueve este cálculo fuera del loop si no depende de la variable de iteración",
+      "metadata": {
+        "variable": "orig_biv",
+        "expression": "biv.coeffs[0b0011]",
+        "impact": {
+          "estimatedSpeedup": "2-20x",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9405,
+        "end_byte": 9447,
+        "start_line": 293,
+        "end_line": 294,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O25",
+      "type": "invariant_code_motion",
+      "location": [
+        9448,
+        9496
+      ],
+      "line": 295,
+      "column": 12,
+      "severity": "low",
+      "description": "Posible código invariante: 'got_biv'",
+      "suggestion": "Mueve este cálculo fuera del loop si no depende de la variable de iteración",
+      "metadata": {
+        "variable": "got_biv",
+        "expression": "double_biv.coeffs[0b0011]",
+        "impact": {
+          "estimatedSpeedup": "2-20x",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9448,
+        "end_byte": 9496,
+        "start_line": 294,
+        "end_line": 295,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "O26",
+      "type": "branchless_opportunity",
+      "location": [
+        3938,
+        3984
+      ],
+      "line": 117,
+      "column": 16,
+      "severity": "low",
+      "description": "Múltiples comparaciones entre 'abs' y 'max_abs_coeff_value'",
+      "suggestion": "Considera usar std::cmp::Ordering para comparaciones encadenadas",
+      "metadata": {
+        "variables": [
+          "abs",
+          "max_abs_coeff_value"
+        ],
+        "count": 3,
+        "impact": {
+          "estimatedSpeedup": "1.5-3x",
+          "memoryImpact": "none",
+          "risk": "caution"
+        },
+        "priority": 2
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "from_dense_buf"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "constant_time_operation",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 3938,
+        "end_byte": 3984,
+        "start_line": 116,
+        "end_line": 117,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "constant_time_operation"
+      }
+    },
+    {
+      "id": "O27",
+      "type": "common_subexpression",
+      "location": [
+        2186,
+        2257
+      ],
+      "line": 66,
+      "column": 0,
+      "severity": "low",
+      "description": "Expresión común 'Dual-valued' repetida 4 veces",
+      "suggestion": "Extrae la expresión a una variable para evitar recomputación",
+      "metadata": {
+        "expression": "Dual-valued",
+        "count": 4,
+        "lines": [
+          65,
+          69,
+          71,
+          73
+        ],
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 1
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_undual"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "constant_time_operation",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 2186,
+        "end_byte": 2257,
+        "start_line": 65,
+        "end_line": 66,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "constant_time_operation"
+      }
+    },
+    {
+      "id": "O28",
+      "type": "common_subexpression",
+      "location": [
+        8752,
+        8803
+      ],
+      "line": 278,
+      "column": 0,
+      "severity": "low",
+      "description": "Expresión común '1e-12' repetida 3 veces",
+      "suggestion": "Extrae la expresión a una variable para evitar recomputación",
+      "metadata": {
+        "expression": "1e-12",
+        "count": 3,
+        "lines": [
+          277,
+          287,
+          296
+        ],
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 1
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8752,
+        "end_byte": 8803,
+        "start_line": 277,
+        "end_line": 278,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": []
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "medium",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 1,
+          "can_unroll_aggressively": false,
+          "available_registers": 16
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO1",
+      "type": "loop_variable_dependency",
+      "location": [
+        789,
+        836
+      ],
+      "line": 24,
+      "column": 12,
+      "severity": "medium",
+      "description": "Variable 'i' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "i",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "i",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 789,
+        "end_byte": 836,
+        "start_line": 23,
+        "end_line": 24,
+        "affected_variables": [
+          "i"
+        ],
+        "input_variables": [
+          "i"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "    while mask != 0 {\n        let i = mask.trailing_zeros() as usize;\n        let k = i ^ PSEUDOSCALAR_INDEX;\n        out[k] += -value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "i"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "i"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO2",
+      "type": "loop_variable_dependency",
+      "location": [
+        837,
+        876
+      ],
+      "line": 25,
+      "column": 12,
+      "severity": "medium",
+      "description": "Variable 'k' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "k",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "k",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 837,
+        "end_byte": 876,
+        "start_line": 24,
+        "end_line": 25,
+        "affected_variables": [
+          "k"
+        ],
+        "input_variables": [
+          "k"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let i = mask.trailing_zeros() as usize;\n        let k = i ^ PSEUDOSCALAR_INDEX;\n        out[k] += -value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);\n        mask &= mask - 1;"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "k"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "k"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO3",
+      "type": "loop_variable_dependency",
+      "location": [
+        1435,
+        1482
+      ],
+      "line": 44,
+      "column": 12,
+      "severity": "medium",
+      "description": "Variable 'i' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "i",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "i",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_undual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 1435,
+        "end_byte": 1482,
+        "start_line": 43,
+        "end_line": 44,
+        "affected_variables": [
+          "i"
+        ],
+        "input_variables": [
+          "i"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "    while mask != 0 {\n        let i = mask.trailing_zeros() as usize;\n        let k = i ^ PSEUDOSCALAR_INDEX;\n        out[k] += -value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "i"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "i"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO4",
+      "type": "loop_variable_dependency",
+      "location": [
+        1483,
+        1522
+      ],
+      "line": 45,
+      "column": 12,
+      "severity": "medium",
+      "description": "Variable 'k' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "k",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "k",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_undual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 1483,
+        "end_byte": 1522,
+        "start_line": 44,
+        "end_line": 45,
+        "affected_variables": [
+          "k"
+        ],
+        "input_variables": [
+          "k"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let i = mask.trailing_zeros() as usize;\n        let k = i ^ PSEUDOSCALAR_INDEX;\n        out[k] += -value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);\n        mask &= mask - 1;"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "k"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "k"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO5",
+      "type": "loop_variable_dependency",
+      "location": [
+        6387,
+        6446
+      ],
+      "line": 201,
+      "column": 12,
+      "severity": "medium",
+      "description": "Variable 'lhs_index' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "lhs_index",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "lhs_index",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6387,
+        "end_byte": 6446,
+        "start_line": 200,
+        "end_line": 201,
+        "affected_variables": [
+          "lhs_index"
+        ],
+        "input_variables": [
+          "lhs_index"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "    while lhs_mask != 0 {\n        let lhs_index = lhs_mask.trailing_zeros() as usize;\n        let lhs_coeff = lhs.coeffs[lhs_index];\n        let sign_row = &CAYLEY_SIGN[lhs_index];"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "lhs_index"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "lhs_index"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO6",
+      "type": "loop_variable_dependency",
+      "location": [
+        6447,
+        6493
+      ],
+      "line": 202,
+      "column": 12,
+      "severity": "medium",
+      "description": "Variable 'lhs_coeff' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "lhs_coeff",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "lhs_coeff",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6447,
+        "end_byte": 6493,
+        "start_line": 201,
+        "end_line": 202,
+        "affected_variables": [
+          "lhs_coeff"
+        ],
+        "input_variables": [
+          "lhs_coeff"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let lhs_index = lhs_mask.trailing_zeros() as usize;\n        let lhs_coeff = lhs.coeffs[lhs_index];\n        let sign_row = &CAYLEY_SIGN[lhs_index];\n"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "lhs_coeff"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "lhs_coeff"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO7",
+      "type": "loop_variable_dependency",
+      "location": [
+        6494,
+        6541
+      ],
+      "line": 203,
+      "column": 12,
+      "severity": "medium",
+      "description": "Variable 'sign_row' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "sign_row",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "sign_row",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6494,
+        "end_byte": 6541,
+        "start_line": 202,
+        "end_line": 203,
+        "affected_variables": [
+          "sign_row"
+        ],
+        "input_variables": [
+          "sign_row"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let lhs_coeff = lhs.coeffs[lhs_index];\n        let sign_row = &CAYLEY_SIGN[lhs_index];\n\n        let mut rhs_mask = rhs.active_mask;"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "sign_row"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "sign_row"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO8",
+      "type": "loop_variable_dependency",
+      "location": [
+        6617,
+        6680
+      ],
+      "line": 207,
+      "column": 16,
+      "severity": "medium",
+      "description": "Variable 'rhs_index' es invariante en loop (profundidad 2)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "rhs_index",
+        "loopDepth": 2,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "rhs_index",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6617,
+        "end_byte": 6680,
+        "start_line": 206,
+        "end_line": 207,
+        "affected_variables": [
+          "rhs_index"
+        ],
+        "input_variables": [
+          "rhs_index"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        while rhs_mask != 0 {\n            let rhs_index = rhs_mask.trailing_zeros() as usize;\n            let result_index = lhs_index ^ rhs_index;\n            let rhs_coeff = rhs.coeffs[rhs_index];"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "rhs_index"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "rhs_index"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO9",
+      "type": "loop_variable_dependency",
+      "location": [
+        6681,
+        6734
+      ],
+      "line": 208,
+      "column": 16,
+      "severity": "medium",
+      "description": "Variable 'result_index' es invariante en loop (profundidad 2)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "result_index",
+        "loopDepth": 2,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "result_index",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6681,
+        "end_byte": 6734,
+        "start_line": 207,
+        "end_line": 208,
+        "affected_variables": [
+          "result_index"
+        ],
+        "input_variables": [
+          "result_index"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "            let rhs_index = rhs_mask.trailing_zeros() as usize;\n            let result_index = lhs_index ^ rhs_index;\n            let rhs_coeff = rhs.coeffs[rhs_index];\n            let sign = f64::from(sign_row[rhs_index]);"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "result_index"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "result_index"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO10",
+      "type": "loop_variable_dependency",
+      "location": [
+        6735,
+        6785
+      ],
+      "line": 209,
+      "column": 16,
+      "severity": "medium",
+      "description": "Variable 'rhs_coeff' es invariante en loop (profundidad 2)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "rhs_coeff",
+        "loopDepth": 2,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "rhs_coeff",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6735,
+        "end_byte": 6785,
+        "start_line": 208,
+        "end_line": 209,
+        "affected_variables": [
+          "rhs_coeff"
+        ],
+        "input_variables": [
+          "rhs_coeff"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "            let result_index = lhs_index ^ rhs_index;\n            let rhs_coeff = rhs.coeffs[rhs_index];\n            let sign = f64::from(sign_row[rhs_index]);\n"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "rhs_coeff"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "rhs_coeff"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO11",
+      "type": "loop_variable_dependency",
+      "location": [
+        6786,
+        6840
+      ],
+      "line": 210,
+      "column": 16,
+      "severity": "medium",
+      "description": "Variable 'sign' es invariante en loop (profundidad 2)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "sign",
+        "loopDepth": 2,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "sign",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6786,
+        "end_byte": 6840,
+        "start_line": 209,
+        "end_line": 210,
+        "affected_variables": [
+          "sign"
+        ],
+        "input_variables": [
+          "sign"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "            let rhs_coeff = rhs.coeffs[rhs_index];\n            let sign = f64::from(sign_row[rhs_index]);\n\n            result[result_index].value += sign * (lhs_coeff.value * rhs_coeff.value);"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "sign"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "sign"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO12",
+      "type": "reduction_pattern",
+      "location": [
+        6928,
+        6973
+      ],
+      "line": 213,
+      "column": 33,
+      "severity": "medium",
+      "description": "Patrón de reducción: 'grad' con operación +=",
+      "suggestion": "Considera usar iteradores con .fold() o paralelizar con rayon::reduce()",
+      "metadata": {
+        "accumulator": "grad",
+        "operation": "+=",
+        "isReduction": true,
+        "canVectorize": false,
+        "impact": {
+          "estimatedSpeedup": "2-4x (seq), 8-32x (par)",
+          "memoryImpact": "low",
+          "risk": "safe"
+        },
+        "priority": 4
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "grad",
+            "isInvariant": false,
+            "dependsOn": [],
+            "modifiedInLoop": true,
+            "readOnly": false,
+            "scope": "local",
+            "dependencyChain": [
+              "grad"
+            ]
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "unknown",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "auto",
+        "vector_width": "auto",
+        "thread_count": -1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 6928,
+        "end_byte": 6973,
+        "start_line": 212,
+        "end_line": 213,
+        "affected_variables": [
+          "grad"
+        ],
+        "input_variables": [],
+        "output_variables": [
+          "grad"
+        ],
+        "modified_variables": [
+          "grad"
+        ],
+        "dependencies": [],
+        "original_snippet": "            result[result_index].value += sign * (lhs_coeff.value * rhs_coeff.value);\n            result[result_index].grad += sign\n                * lhs_coeff\n                    .grad"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "loop_carried",
+          "distance": 1,
+          "dependent_variables": [
+            "grad"
+          ],
+          "breakable": true,
+          "break_technique": "reduction"
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "grad"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Dependencia de datos: loop_carried; Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO13",
+      "type": "loop_variable_dependency",
+      "location": [
+        7200,
+        7256
+      ],
+      "line": 224,
+      "column": 8,
+      "severity": "medium",
+      "description": "Variable 'out' es invariante en loop (profundidad 2)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "out",
+        "loopDepth": 2,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "out",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 7200,
+        "end_byte": 7256,
+        "start_line": 223,
+        "end_line": 224,
+        "affected_variables": [
+          "out"
+        ],
+        "input_variables": [
+          "out"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "\n    let out = SparseDualVector::from_dense_buf(&result);\n    if out.active_mask == 0 {\n        None"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "out"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "out"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO14",
+      "type": "loop_variable_dependency",
+      "location": [
+        7257,
+        7286
+      ],
+      "line": 225,
+      "column": 11,
+      "severity": "medium",
+      "description": "Variable 'active_mask' es invariante en loop (profundidad 2)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "active_mask",
+        "loopDepth": 2,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "active_mask",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "geometric_product_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 7257,
+        "end_byte": 7286,
+        "start_line": 224,
+        "end_line": 225,
+        "affected_variables": [
+          "active_mask"
+        ],
+        "input_variables": [
+          "active_mask"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "    let out = SparseDualVector::from_dense_buf(&result);\n    if out.active_mask == 0 {\n        None\n    } else {"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "active_mask"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "active_mask"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO15",
+      "type": "loop_variable_dependency",
+      "location": [
+        8603,
+        8677
+      ],
+      "line": 275,
+      "column": 12,
+      "severity": "low",
+      "description": "Variable 'scalar' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "scalar",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "scalar",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8603,
+        "end_byte": 8677,
+        "start_line": 274,
+        "end_line": 275,
+        "affected_variables": [
+          "scalar"
+        ],
+        "input_variables": [
+          "scalar"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "    fn hodge_double_dual_is_negation_in_g13() {\n        let scalar = SparseCliffordVector::from_iter([(0, 1.0)]).unwrap();\n        let double = hodge_undual(&hodge_dual(&scalar));\n        assert!("
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "scalar"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "scalar"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO16",
+      "type": "loop_variable_dependency",
+      "location": [
+        8678,
+        8734
+      ],
+      "line": 276,
+      "column": 12,
+      "severity": "low",
+      "description": "Variable 'double' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "double",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "double",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8678,
+        "end_byte": 8734,
+        "start_line": 275,
+        "end_line": 276,
+        "affected_variables": [
+          "double"
+        ],
+        "input_variables": [
+          "double"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let scalar = SparseCliffordVector::from_iter([(0, 1.0)]).unwrap();\n        let double = hodge_undual(&hodge_dual(&scalar));\n        assert!(\n            (double.coeffs[0] + 1.0).abs() < 1e-12,"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "double"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "double"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO17",
+      "type": "loop_variable_dependency",
+      "location": [
+        8919,
+        8994
+      ],
+      "line": 283,
+      "column": 12,
+      "severity": "low",
+      "description": "Variable 'e1' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "e1",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "e1",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8919,
+        "end_byte": 8994,
+        "start_line": 282,
+        "end_line": 283,
+        "affected_variables": [
+          "e1"
+        ],
+        "input_variables": [
+          "e1"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "\n        let e1 = SparseCliffordVector::from_iter([(0b0001, 1.0)]).unwrap();\n        let double_e1 = hodge_undual(&hodge_dual(&e1));\n        let orig = e1.coeffs[0b0001];"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "e1"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "e1"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO18",
+      "type": "loop_variable_dependency",
+      "location": [
+        8995,
+        9050
+      ],
+      "line": 284,
+      "column": 12,
+      "severity": "low",
+      "description": "Variable 'double_e1' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "double_e1",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "double_e1",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 8995,
+        "end_byte": 9050,
+        "start_line": 283,
+        "end_line": 284,
+        "affected_variables": [
+          "double_e1"
+        ],
+        "input_variables": [
+          "double_e1"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let e1 = SparseCliffordVector::from_iter([(0b0001, 1.0)]).unwrap();\n        let double_e1 = hodge_undual(&hodge_dual(&e1));\n        let orig = e1.coeffs[0b0001];\n        let got = double_e1.coeffs[0b0001];"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "double_e1"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "double_e1"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO19",
+      "type": "loop_variable_dependency",
+      "location": [
+        9051,
+        9088
+      ],
+      "line": 285,
+      "column": 12,
+      "severity": "low",
+      "description": "Variable 'orig' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "orig",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "orig",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9051,
+        "end_byte": 9088,
+        "start_line": 284,
+        "end_line": 285,
+        "affected_variables": [
+          "orig"
+        ],
+        "input_variables": [
+          "orig"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let double_e1 = hodge_undual(&hodge_dual(&e1));\n        let orig = e1.coeffs[0b0001];\n        let got = double_e1.coeffs[0b0001];\n        assert!("
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "orig"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "orig"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO20",
+      "type": "loop_variable_dependency",
+      "location": [
+        9089,
+        9132
+      ],
+      "line": 286,
+      "column": 12,
+      "severity": "low",
+      "description": "Variable 'got' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "got",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "got",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9089,
+        "end_byte": 9132,
+        "start_line": 285,
+        "end_line": 286,
+        "affected_variables": [
+          "got"
+        ],
+        "input_variables": [
+          "got"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let orig = e1.coeffs[0b0001];\n        let got = double_e1.coeffs[0b0001];\n        assert!(\n            (got + orig).abs() < 1e-12,"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "got"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "got"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO21",
+      "type": "loop_variable_dependency",
+      "location": [
+        9270,
+        9346
+      ],
+      "line": 292,
+      "column": 12,
+      "severity": "low",
+      "description": "Variable 'biv' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "biv",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "biv",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9270,
+        "end_byte": 9346,
+        "start_line": 291,
+        "end_line": 292,
+        "affected_variables": [
+          "biv"
+        ],
+        "input_variables": [
+          "biv"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "\n        let biv = SparseCliffordVector::from_iter([(0b0011, 1.0)]).unwrap();\n        let double_biv = hodge_undual(&hodge_dual(&biv));\n        let orig_biv = biv.coeffs[0b0011];"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "biv"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "biv"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO22",
+      "type": "loop_variable_dependency",
+      "location": [
+        9347,
+        9404
+      ],
+      "line": 293,
+      "column": 12,
+      "severity": "low",
+      "description": "Variable 'double_biv' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "double_biv",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "double_biv",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9347,
+        "end_byte": 9404,
+        "start_line": 292,
+        "end_line": 293,
+        "affected_variables": [
+          "double_biv"
+        ],
+        "input_variables": [
+          "double_biv"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let biv = SparseCliffordVector::from_iter([(0b0011, 1.0)]).unwrap();\n        let double_biv = hodge_undual(&hodge_dual(&biv));\n        let orig_biv = biv.coeffs[0b0011];\n        let got_biv = double_biv.coeffs[0b0011];"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "double_biv"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "double_biv"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO23",
+      "type": "loop_variable_dependency",
+      "location": [
+        9405,
+        9447
+      ],
+      "line": 294,
+      "column": 12,
+      "severity": "low",
+      "description": "Variable 'orig_biv' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "orig_biv",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "orig_biv",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9405,
+        "end_byte": 9447,
+        "start_line": 293,
+        "end_line": 294,
+        "affected_variables": [
+          "orig_biv"
+        ],
+        "input_variables": [
+          "orig_biv"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let double_biv = hodge_undual(&hodge_dual(&biv));\n        let orig_biv = biv.coeffs[0b0011];\n        let got_biv = double_biv.coeffs[0b0011];\n        assert!("
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "orig_biv"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "orig_biv"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO24",
+      "type": "loop_variable_dependency",
+      "location": [
+        9448,
+        9496
+      ],
+      "line": 295,
+      "column": 12,
+      "severity": "low",
+      "description": "Variable 'got_biv' es invariante en loop (profundidad 1)",
+      "suggestion": "Mueve esta computación fuera del loop para evitar recomputación",
+      "metadata": {
+        "variable": "got_biv",
+        "loopDepth": 1,
+        "isInvariant": true,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "dependencies": [
+          {
+            "name": "got_biv",
+            "isInvariant": true,
+            "dependsOn": [],
+            "modifiedInLoop": false,
+            "readOnly": true,
+            "scope": "local",
+            "dependencyChain": []
+          }
+        ]
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "test_code",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_double_dual_is_negation_in_g13"
+      },
+      "impact": {
+        "estimatedSpeedup": "none",
+        "memoryImpact": "none",
+        "reason": "test_code_not_production",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "assumed_none",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 9448,
+        "end_byte": 9496,
+        "start_line": 294,
+        "end_line": 295,
+        "affected_variables": [
+          "got_biv"
+        ],
+        "input_variables": [
+          "got_biv"
+        ],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let orig_biv = biv.coeffs[0b0011];\n        let got_biv = double_biv.coeffs[0b0011];\n        assert!(\n            (got_biv + orig_biv).abs() < 1e-12,"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "none",
+          "distance": -1,
+          "dependent_variables": [
+            "got_biv"
+          ],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "got_biv"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "manual",
+        "limitation_reason": "test_code_not_production"
+      }
+    },
+    {
+      "id": "FO25",
+      "type": "hidden_branch_in_loop",
+      "location": [
+        3938,
+        3984
+      ],
+      "line": 117,
+      "column": 16,
+      "severity": "medium",
+      "description": "3 comparaciones similares entre 'abs' y 'max_abs_coeff_value'",
+      "suggestion": "Considera reemplazar con una lookup table o usar std::cmp::Ordering",
+      "metadata": {
+        "variables": [
+          "abs",
+          "max_abs_coeff_value"
+        ],
+        "count": 3,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "branchAnalysis": {
+          "type": "if",
+          "line": 116,
+          "canBeBranchless": true,
+          "branchlessPattern": "lookup_table",
+          "hasSideEffects": false,
+          "conditions": [
+            "abs > max_abs_coeff_value"
+          ],
+          "outcomes": [],
+          "estimatedBranchCost": 45
+        }
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "from_dense_buf"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "scalar",
+        "memory_pattern": "unknown",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 3938,
+        "end_byte": 3984,
+        "start_line": 116,
+        "end_line": 117,
+        "affected_variables": [
+          "abs",
+          "max_abs_coeff_value"
+        ],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "                active_mask |= 1u16 << k;\n                if abs > max_abs_coeff_value {\n                    max_abs_coeff_value = abs;\n                }"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "unknown",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 2,
+          "pressure": "very_low",
+          "hot_variables": [
+            "abs",
+            "max_abs_coeff_value"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Dependencia de datos: unknown; Memoria no alineada: unknown"
+      }
+    },
+    {
+      "id": "FO26",
+      "type": "cache_locality_issue",
+      "location": [
+        877,
+        960
+      ],
+      "line": 26,
+      "column": 0,
+      "severity": "high",
+      "description": "Acceso no secuencial a 'coeffs' (12 accesos random)",
+      "suggestion": "Considera prefetching, reorganizar datos, o usar SoA (Struct of Arrays)",
+      "metadata": {
+        "array": "coeffs",
+        "randomAccesses": 12,
+        "sequentialAccesses": 3,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 3
+      },
+      "forensic": {
+        "cacheLocality": {
+          "dataStructures": [
+            {
+              "name": "coeffs",
+              "type": "array",
+              "accessPattern": "random",
+              "estimatedCacheLines": 12,
+              "hasGoodLocality": false,
+              "suggestion": "Prefetching o reorganización de datos recomendado"
+            }
+          ],
+          "totalDataTouched": 0,
+          "cacheFootprint": "exceeds_L3",
+          "tilingRecommended": true
+        }
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_dual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "auto",
+        "memory_pattern": "streaming_load",
+        "parallel_strategy": "none",
+        "vector_width": "auto",
+        "thread_count": 1,
+        "cache_target": "L2"
+      },
+      "context_window_ref": {
+        "start_byte": 877,
+        "end_byte": 960,
+        "start_line": 25,
+        "end_line": 26,
+        "affected_variables": [
+          "coeffs"
+        ],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "        let k = i ^ PSEUDOSCALAR_INDEX;\n        out[k] += -value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);\n        mask &= mask - 1;\n    }"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "random",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 0,
+          "prefetch_recommended": true,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 1,
+          "pressure": "very_low",
+          "hot_variables": [
+            "coeffs"
+          ],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Dependencia de datos: unknown; Memoria no alineada: random"
+      }
+    },
+    {
+      "id": "FO27",
+      "type": "memory_alignment_issue",
+      "location": [
+        2258,
+        2268
+      ],
+      "line": 67,
+      "column": 0,
+      "severity": "medium",
+      "description": "Alineación de 16 bytes puede ser subóptima para SIMD",
+      "suggestion": "Para SIMD AVX-256, usa #[repr(align(32))]. Para AVX-512, usa #[repr(align(64))]",
+      "metadata": {
+        "currentAlignment": 16,
+        "recommendedAlignment": 32,
+        "impact": {
+          "estimatedSpeedup": "unknown",
+          "memoryImpact": "none",
+          "risk": "safe"
+        },
+        "priority": 2
+      },
+      "forensic": {
+        "alignment": {
+          "dataStructures": [],
+          "misalignedAccess": [],
+          "suggestedAlignments": [
+            {
+              "struct": "current",
+              "currentAlignment": 16,
+              "recommendedAlignment": 32,
+              "reason": "Mejor rendimiento SIMD con alineación de 32 bytes"
+            }
+          ]
+        }
+      },
+      "execution_context": {
+        "phase": "runtime",
+        "reason": "runtime_fn",
+        "isConst": false,
+        "isStatic": false,
+        "enclosingFunction": "hodge_undual"
+      },
+      "impact": {
+        "estimatedSpeedup": "unknown",
+        "memoryImpact": "none",
+        "reason": "unknown_impact",
+        "risk": "safe"
+      },
+      "purity_info": {
+        "value": "proven",
+        "reason": "no_mutation_detected",
+        "evidence": [
+          "No se pudo determinar pureza estáticamente",
+          "Consistency fix: purity set to \"proven\" because side_effects is \"proven_none\""
+        ]
+      },
+      "side_effects_info": {
+        "value": "proven_none",
+        "reason": "no_mutation_detected",
+        "detectedEffects": []
+      },
+      "analysis_certainty": {
+        "aliasing": "unknown",
+        "bounds_check": "unknown",
+        "side_effects": "none",
+        "purity": "pure",
+        "thread_safety": "proven_safe",
+        "confidence_score": 100
+      },
+      "hardware_intent": {
+        "target_instruction": "AVX2",
+        "memory_pattern": "streaming_load",
+        "parallel_strategy": "data_parallel",
+        "vector_width": 256,
+        "thread_count": 1,
+        "cache_target": "L1"
+      },
+      "context_window_ref": {
+        "start_byte": 2258,
+        "end_byte": 2268,
+        "start_line": 66,
+        "end_line": 67,
+        "affected_variables": [],
+        "input_variables": [],
+        "output_variables": [],
+        "modified_variables": [],
+        "dependencies": [],
+        "original_snippet": "/// Dual-valued dense multivector with fixed metadata and stack layout.\n#[repr(C)]\n#[derive(Clone, Copy, Debug, PartialEq)]\npub struct SparseDualVector {"
+      },
+      "constraints": {
+        "data_dependency": {
+          "type": "unknown",
+          "distance": -1,
+          "dependent_variables": [],
+          "breakable": false
+        },
+        "memory_layout": {
+          "layout": "aligned_16",
+          "data_size_bytes": 0,
+          "fits_l1": false,
+          "fits_l2": false,
+          "alignment_bytes": 16,
+          "prefetch_recommended": false,
+          "access_hint": "sequential"
+        },
+        "register_pressure": {
+          "live_variables_count": 0,
+          "pressure": "very_low",
+          "hot_variables": [],
+          "cold_variables": [],
+          "unroll_factor": 8,
+          "can_unroll_aggressively": true,
+          "available_registers": 32
+        },
+        "safety_proven": false,
+        "aggressiveness_level": "conservative",
+        "limitation_reason": "Dependencia de datos: unknown; Memoria no alineada: aligned_16"
+      }
+    }
+  ],
+  "statistics": {
+    "totalLines": 302,
+    "totalFunctions": 10,
+    "totalLoops": 7,
+    "opportunitiesFound": 55,
+    "byType": {
+      "nested_loop": 6,
+      "function_call_in_loop": 9,
+      "invariant_code_motion": 10,
+      "branchless_opportunity": 1,
+      "common_subexpression": 2,
+      "loop_variable_dependency": 23,
+      "reduction_pattern": 1,
+      "hidden_branch_in_loop": 1,
+      "cache_locality_issue": 1,
+      "memory_alignment_issue": 1
+    },
+    "bySeverity": {
+      "critical": 0,
+      "high": 7,
+      "medium": 45,
+      "low": 3
+    },
+    "forensicStats": {
+      "loopsAnalyzableForParallel": 0,
+      "vectorizableLoops": 0,
+      "fmaOpportunities": 0,
+      "boundsChecksEliminable": 0,
+      "heapAllocationsAvoidable": 0,
+      "cacheIssuesDetected": 1
+    }
+  },
+  "rulesReport": {
+    "rules": [
+      {
+        "rule": {
+          "id": "R001",
+          "name": "Memory Allocation Hotspot",
+          "description": "Detecta asignaciones de memoria en loops calientes",
+          "category": "performance"
+        },
+        "result": {
+          "passed": true,
+          "score": 0,
+          "message": "Sin problemas de asignación detectados"
+        }
+      },
+      {
+        "rule": {
+          "id": "R002",
+          "name": "Complexity Amplification",
+          "description": "Detecta explosión de complejidad algorítmica",
+          "category": "performance"
+        },
+        "result": {
+          "passed": false,
+          "score": 10,
+          "message": "Loop profundidad 7 - complejidad O(n^7) o peor",
+          "action": "Considerar algoritmo alternativo o paralelización con rayon",
+          "category": "performance"
+        }
+      },
+      {
+        "rule": {
+          "id": "R003",
+          "name": "Branch Prediction",
+          "description": "Detecta oportunidades de branchless",
+          "category": "performance"
+        },
+        "result": {
+          "passed": true,
+          "score": 0,
+          "message": "Sin oportunidades branchless significativas"
+        }
+      },
+      {
+        "rule": {
+          "id": "R004",
+          "name": "Division Optimization",
+          "description": "Detecta divisiones costosas que pueden ser shifts",
+          "category": "performance"
+        },
+        "result": {
+          "passed": true,
+          "score": 0,
+          "message": "Sin divisiones optimizables"
+        }
+      },
+      {
+        "rule": {
+          "id": "R005",
+          "name": "Iterator Efficiency",
+          "description": "Detecta patrones de iteración ineficientes",
+          "category": "performance"
+        },
+        "result": {
+          "passed": true,
+          "score": 0,
+          "message": "Iteradores eficientes"
+        }
+      },
+      {
+        "rule": {
+          "id": "R006",
+          "name": "Cache Efficiency",
+          "description": "Detecta patrones que afectan cache locality",
+          "category": "performance"
+        },
+        "result": {
+          "passed": true,
+          "score": 0,
+          "message": "Cache locality aceptable"
+        }
+      },
+      {
+        "rule": {
+          "id": "R007",
+          "name": "SIMD Vectorization Potential",
+          "description": "Detecta loops candidatos a vectorización",
+          "category": "performance"
+        },
+        "result": {
+          "passed": true,
+          "score": 0,
+          "message": "Sin candidatos SIMD obvios"
+        }
+      },
+      {
+        "rule": {
+          "id": "R008",
+          "name": "FMA Opportunities",
+          "description": "Detecta patrones de Fused Multiply-Add",
+          "category": "performance"
+        },
+        "result": {
+          "passed": true,
+          "score": 0,
+          "message": "Sin patrones FMA detectados"
+        }
+      },
+      {
+        "rule": {
+          "id": "R009",
+          "name": "Bounds Check Elimination",
+          "description": "Detecta bounds checks eliminables",
+          "category": "performance"
+        },
+        "result": {
+          "passed": true,
+          "score": 0,
+          "message": "Sin bounds checks eliminables"
+        }
+      },
+      {
+        "rule": {
+          "id": "R010",
+          "name": "Heap Escape Prevention",
+          "description": "Detecta asignaciones de heap que pueden ir al stack",
+          "category": "performance"
+        },
+        "result": {
+          "passed": true,
+          "score": 0,
+          "message": "Sin escapes de heap detectados"
+        }
+      },
+      {
+        "rule": {
+          "id": "R011",
+          "name": "Memory Alignment",
+          "description": "Detecta problemas de alineación de memoria",
+          "category": "performance"
+        },
+        "result": {
+          "passed": false,
+          "score": 2,
+          "message": "1 problemas de alineación de memoria",
+          "action": "Añadir #[repr(C, align(32))] para structs con SIMD",
+          "category": "performance"
+        }
+      },
+      {
+        "rule": {
+          "id": "R012",
+          "name": "Aliasing Safety",
+          "description": "Detecta problemas de aliasing y data races",
+          "category": "safety"
+        },
+        "result": {
+          "passed": true,
+          "score": 0,
+          "message": "Sin problemas de aliasing"
+        }
+      },
+      {
+        "rule": {
+          "id": "R013",
+          "name": "Loop Invariant Detection",
+          "description": "Detecta variables invariantes en loops",
+          "category": "performance"
+        },
+        "result": {
+          "passed": false,
+          "score": 4,
+          "message": "33 variables invariantes detectadas",
+          "action": "Mover computaciones invariantes fuera del loop",
+          "category": "performance"
+        }
+      }
+    ],
+    "overallScore": 16,
+    "grade": "C",
+    "summary": "## Resumen de Análisis Forense\n\n**Grado:** C (Puntuación: 16)\n\n**Estadísticas:**\n- 302 líneas de código\n- 10 funciones\n- 7 loops\n- 55 oportunidades de optimización\n- Densidad: 18.21% oportunidades/línea\n\n**Detecciones Forenses:**\n- 0 loops paralelizables\n- 0 loops vectorizables (SIMD)\n- 0 patrones FMA\n- 0 bounds checks eliminables\n- 0 heap allocations evitables\n- 1 problemas de cache\n\n**Por Categoría:**\n- Performance: 16 puntos\n- Correctness: 0 puntos\n- Safety: 0 puntos\n\n**Veredicto:** Código funcional con varias oportunidades de mejora.",
+    "topIssues": [
+      "Complexity Amplification: Loop profundidad 7 - complejidad O(n^7) o peor",
+      "Loop Invariant Detection: 33 variables invariantes detectadas",
+      "Memory Alignment: 1 problemas de alineación de memoria"
+    ],
+    "categories": {
+      "performance": 16,
+      "correctness": 0,
+      "safety": 0
+    }
+  }
+}
