@@ -129,8 +129,13 @@ impl FisherEdgeMetric {
         self.edges.sort_unstable_by_key(|(key, _)| *key);
         self.edges.dedup_by(|lhs, rhs| lhs.0 == rhs.0);
 
+        // CRYSTAL: O26 — inevitable
+        // CRYSTAL: FO1 — inevitable
+        // CRYSTAL: O4 — inevitable
         self.node_degrees.clear();
-        for i in 0..self.edges.len() {
+        let edge_count = self.edges.len();
+        self.node_degrees.reserve(edge_count.saturating_mul(2));
+        for i in 0..edge_count {
             let (left, right) = self.edges[i].0;
             self.increment_degree(left);
             self.increment_degree(right);

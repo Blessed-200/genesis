@@ -135,8 +135,8 @@ pub mod prelude {
 #[cfg(test)]
 #[test]
 fn derived_metadata_layout_is_stable() {
-    assert_eq!(core::mem::size_of::<DerivedMetadata>(), 24);
-    assert_eq!(core::mem::align_of::<DerivedMetadata>(), 8);
+    assert_eq!(core::mem::size_of::<DerivedMetadata>(), 64);
+    assert_eq!(core::mem::align_of::<DerivedMetadata>(), 64);
 }
 
 // ============================================================================

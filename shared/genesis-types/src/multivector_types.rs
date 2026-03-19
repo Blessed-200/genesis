@@ -21,24 +21,26 @@
 /// lightweight metadata queries without loading the full 160-byte struct.
 ///
 /// # Memory layout
-/// Size = 16 bytes on 64-bit targets (u32 + 4-byte gap + f64 + f64).
-/// align(8) preserves f64 alignment.
-#[repr(C)]
+/// Size = 64 bytes on 64-bit targets after cache-line alignment.
+/// `align(64)` preserves a single alignment contract for SIMD and prefetch paths.
+// CRYSTAL: FO1 — inevitable
+// CRYSTAL: FO2 — inevitable
+#[repr(C, align(64))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DerivedMetadata {
-    /// Bitmask: bit i set ↔ blade i is active (|coeff| > COGNITIVE_PLANCK_CONSTANT).
-    /// u32 supports up to 32 blades — covers G(1,3) (16 blades) and near-future expansions.
-    pub active_mask: u32,
-    /// Padding to maintain f64 alignment of subsequent fields.
-    _pad: u32,
     /// Maximum absolute coefficient magnitude. Used for Cauchy-Schwarz gating.
     pub max_abs_coeff: f64,
     /// ⟨A·Ã⟩₀ — Clifford norm squared (Lorentz-invariant scalar).
     pub clifford_norm_sq: f64,
+    /// Bitmask: bit i set ↔ blade i is active (|coeff| > COGNITIVE_PLANCK_CONSTANT).
+    /// u32 supports up to 32 blades — covers G(1,3) (16 blades) and near-future expansions.
+    pub active_mask: u32,
+    /// Explicit trailing metadata slot to keep constructor output deterministic.
+    _pad: u32,
 }
 
-static_assertions::const_assert_eq!(core::mem::size_of::<DerivedMetadata>(), 24);
-static_assertions::const_assert_eq!(core::mem::align_of::<DerivedMetadata>(), 8);
+static_assertions::const_assert_eq!(core::mem::size_of::<DerivedMetadata>(), 64);
+static_assertions::const_assert_eq!(core::mem::align_of::<DerivedMetadata>(), 64);
 
 impl DerivedMetadata {
     /// Returns true if blade `i` is active in this metadata.
@@ -52,10 +54,10 @@ impl DerivedMetadata {
     #[inline]
     pub const fn new(active_mask: u32, max_abs_coeff: f64, clifford_norm_sq: f64) -> Self {
         Self {
-            active_mask,
-            _pad: 0,
             max_abs_coeff,
             clifford_norm_sq,
+            active_mask,
+            _pad: 0,
         }
     }
 
