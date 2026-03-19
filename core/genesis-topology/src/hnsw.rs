@@ -1687,10 +1687,12 @@ mod tests {
         *seed
     }
 
+    const SIGNED_U53_SCALE: f64 = 2.0 / (1_u64 << 53) as f64;
+
     fn random_vec(seed: &mut u64) -> SparseCliffordVector {
         let dense = core::array::from_fn(|_| {
             let bits = next_u64(seed) >> 11;
-            (bits as f64) / ((1_u64 << 53) as f64) * 2.0 - 1.0
+            (bits as f64).mul_add(SIGNED_U53_SCALE, -1.0)
         });
         SparseCliffordVector::from_dense(&dense)
             .expect("deterministic random vector must be finite")
@@ -2441,7 +2443,7 @@ mod tests {
         let mut g = HnswGraph::new(32);
         let n = 128_u64;
         for i in 0..n {
-            g.insert(make_id(i), &make_vec((i as f64) * 0.01 + 0.1))
+            g.insert(make_id(i), &make_vec((i as f64).mul_add(0.01, 0.1)))
                 .expect("insert should succeed");
         }
         for layer in &g.layer_neighbors {
@@ -2483,7 +2485,7 @@ mod tests {
         }
 
         for q in 0..100_u64 {
-            let query = make_vec((q as f64) * 0.013 + 0.25);
+            let query = make_vec((q as f64).mul_add(0.013, 0.25));
             let got = g.search_nearest(&query, 8);
             for id in got {
                 assert!(g.get_idx(id).is_some());

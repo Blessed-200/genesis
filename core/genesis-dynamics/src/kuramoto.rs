@@ -845,10 +845,10 @@ impl QuantumKuramotoNetwork {
                 .get(edge_idx)
                 .map_or(1.0, |triangles| triangles.len().max(1) as f64);
             let curvature_term = (curvature / tri_count).tanh();
-            let new_gauge = wrap_phase_diff(
-                gauge + self.gauge_learning_rate * phase_drive
-                    - self.curvature_damping * curvature_term * gauge,
-            );
+            let new_gauge = wrap_phase_diff(self.gauge_learning_rate.mul_add(
+                phase_drive,
+                (self.curvature_damping * curvature_term).mul_add(-gauge, gauge),
+            ));
             self.gauge_scratch[edge_idx] = new_gauge;
             if let Some(reverse_idx) = self.reverse_edges.get(edge_idx).copied().flatten() {
                 self.gauge_scratch[reverse_idx] = -new_gauge;
