@@ -123,6 +123,29 @@ fn belief_delta(before: &[f64; 16], after: &[f64; 16]) -> f64 {
         .sqrt()
 }
 
+/// Converts a power-law sample (already floored, finite, positive)
+/// to `u32` with saturating behavior at the type boundaries.
+///
+/// Precondition: `value` is the result of `.floor()` on a positive
+/// finite f64 from an inverse-CDF power-law sampler.
+/// Values >= u32::MAX saturate to u32::MAX; values < 1.0 clamp to 1.
+#[inline]
+fn power_law_sample_to_u32(value: f64) -> u32 {
+    if value >= f64::from(u32::MAX) {
+        return u32::MAX;
+    }
+    if value < 1.0 {
+        return 1;
+    }
+    // SAFETY: value is in [1.0, u32::MAX) after the guards above.
+    // floor() was already applied at the call site — no fractional part.
+    // The value is positive (>= 1.0) — no sign loss possible.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    {
+        value as u32
+    }
+}
+
 #[test]
 fn kuramoto_synchronization_reduces_phase_variance() {
     let n = 200usize;
@@ -241,13 +264,7 @@ fn criticality_monitor_reaches_soc_regime_under_dynamics() {
         let mut u = rng.next_f64_unit();
         u = u.clamp(1.0e-9, 1.0 - 1.0e-9);
         let size = u.powf(-1.0 / (tau_target - 1.0)).floor();
-        let size: u32 = if size >= f64::from(u32::MAX) {
-            u32::MAX
-        } else if size < 1.0 {
-            1
-        } else {
-            size as u32
-        };
+        let size: u32 = power_law_sample_to_u32(size);
         monitor.record_avalanche(size);
     }
 
