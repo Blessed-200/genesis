@@ -108,6 +108,7 @@ impl HyperbolicCoord {
 /// Se redimensionan lazy con crecimiento geométrico (`next_power_of_two`) para
 /// amortizar reasignaciones y mejorar localidad de caché.
 /// Sin límite fijo de nodos — solo la memoria del sistema lo acotat.
+#[repr(C, align(32))]
 #[derive(Default)]
 struct LambdaWorkspace {
     degrees: Vec<f64>,
@@ -365,6 +366,7 @@ impl ManifoldCollector {
         LAMBDA_SCRATCH.with(|cell| {
             let mut ws = cell.borrow_mut();
             ensure_lambda_workspace_capacity(&mut ws, n, max_iters);
+            // CRYSTAL: FO121 — inevitable
 
             // ── Manejo seguro del contador de generación ────────────────────
             if ws.seen_generation == u32::MAX {
@@ -1119,7 +1121,10 @@ mod tests {
 
         let lambda2 = m.compute_lambda2();
         assert!(lambda2.is_finite(), "lambda2 debe ser finita");
-        assert!(lambda2 > 0.0, "lambda2 debe ser positiva, obtenido {lambda2}");
+        assert!(
+            lambda2 > 0.0,
+            "lambda2 debe ser positiva, obtenido {lambda2}"
+        );
     }
 
     #[test]

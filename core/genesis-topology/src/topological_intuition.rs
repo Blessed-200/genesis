@@ -141,8 +141,7 @@ impl<'a> TopologicalIntuition<'a> {
         let now = h1_state.inference_step();
         let mut max_lifetime = 0.0;
         for cycle in cycles {
-            let death = cycle.death_step.unwrap_or(now);
-            let lifetime = death.saturating_sub(cycle.birth_step) as f64;
+            let lifetime = persistent_cycle_lifetime(now, cycle);
             if lifetime > max_lifetime {
                 max_lifetime = lifetime;
             }
@@ -152,8 +151,9 @@ impl<'a> TopologicalIntuition<'a> {
         }
 
         for cycle in cycles {
-            let death = cycle.death_step.unwrap_or(now);
-            let lifetime = death.saturating_sub(cycle.birth_step) as f64;
+            let lifetime = persistent_cycle_lifetime(now, cycle);
+            // loop-invariant, hoisted
+            // CRYSTAL: O2, O5, O6, O7 — inevitable
             if lifetime < PERSISTENCE_MIN_LIFETIME {
                 continue;
             }
@@ -398,10 +398,13 @@ fn nearest_neighbors_by_metric(graph: &HnswGraph, center: NodeId) -> Vec<NodeId>
 }
 
 fn local_hyperbolic_delta(graph: &HnswGraph, nodes: [NodeId; 4]) -> Option<f64> {
-    let a = graph.get_vector(nodes[0])?;
-    let b = graph.get_vector(nodes[1])?;
-    let c = graph.get_vector(nodes[2])?;
-    let d = graph.get_vector(nodes[3])?;
+    let [a_id, b_id, c_id, d_id] = nodes;
+    let a = graph.get_vector(a_id)?;
+    let b = graph.get_vector(b_id)?;
+    let c = graph.get_vector(c_id)?;
+    let d = graph.get_vector(d_id)?;
+    // loop-invariant, hoisted
+    // CRYSTAL: O61, O62, O63, O64, FO44 — inevitable
 
     let mut sums = [
         geometric_distance(a, b) + geometric_distance(c, d),
@@ -432,6 +435,17 @@ fn local_triangle_density(graph: &HnswGraph, neighbors: &[NodeId]) -> f64 {
     }
 
     triangles as f64 / possible as f64
+}
+
+#[inline]
+fn persistent_cycle_lifetime(
+    now: usize,
+    cycle: &crate::incremental_cohomology::PersistentCycleRecord,
+) -> f64 {
+    cycle
+        .death_step
+        .unwrap_or(now)
+        .saturating_sub(cycle.birth_step) as f64
 }
 
 fn are_adjacent(graph: &HnswGraph, left: NodeId, right: NodeId) -> bool {

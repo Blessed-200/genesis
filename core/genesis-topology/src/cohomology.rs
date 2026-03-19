@@ -194,10 +194,11 @@ impl H1Cache {
             self.uf_rank.resize(n, 0);
         }
 
-        for i in 0..n {
-            self.uf_parent[i] = i;
-            self.uf_rank[i] = 0;
+        for (i, parent) in self.uf_parent[..n].iter_mut().enumerate() {
+            *parent = i;
         }
+        self.uf_rank[..n].fill(0);
+        // CRYSTAL: FO63, FO64 — inevitable
     }
 
     fn find(&mut self, x: usize) -> usize {
