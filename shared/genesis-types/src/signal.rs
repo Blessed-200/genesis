@@ -293,7 +293,6 @@ pub enum SpikeComponentsError {
 // CRYSTAL: FO35 — inevitable
 // CRYSTAL: FO36 — inevitable
 #[repr(C, align(64))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SpikeComponents {
     /// Coefficients corresponding to each index. Positions `count..` are `0.0`.
     /// **At offset 0** — do not reorder. Required for aligned SIMD loads.
@@ -588,6 +587,104 @@ impl Hash for SpikeComponents {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for SpikeComponents {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let mut s = serializer.serialize_struct("SpikeComponents", 3)?;
+        s.serialize_field("values", &self.values)?;
+        s.serialize_field("indices", &self.indices)?;
+        s.serialize_field("count", &self.count)?;
+        s.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for SpikeComponents {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{self, MapAccess, SeqAccess, Visitor};
+
+        #[derive(serde::Deserialize)]
+        #[serde(field_identifier, rename_all = "lowercase")]
+        enum Field {
+            Values,
+            Indices,
+            Count,
+        }
+
+        struct SpikeComponentsVisitor;
+
+        impl<'de> Visitor<'de> for SpikeComponentsVisitor {
+            type Value = SpikeComponents;
+
+            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str("struct SpikeComponents")
+            }
+
+            fn visit_seq<V: SeqAccess<'de>>(self, mut seq: V) -> Result<SpikeComponents, V::Error> {
+                let values: [f64; 16] = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                let indices: [u16; 16] = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                let count: u8 = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+
+                Ok(SpikeComponents {
+                    values,
+                    indices,
+                    count,
+                    _pad: [0u8; 7],
+                    _tail_pad: [0u8; 24],
+                })
+            }
+
+            fn visit_map<V: MapAccess<'de>>(self, mut map: V) -> Result<SpikeComponents, V::Error> {
+                let mut values = None::<[f64; 16]>;
+                let mut indices = None::<[u16; 16]>;
+                let mut count = None::<u8>;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Values => {
+                            if values.is_some() {
+                                return Err(de::Error::duplicate_field("values"));
+                            }
+                            values = Some(map.next_value()?);
+                        }
+                        Field::Indices => {
+                            if indices.is_some() {
+                                return Err(de::Error::duplicate_field("indices"));
+                            }
+                            indices = Some(map.next_value()?);
+                        }
+                        Field::Count => {
+                            if count.is_some() {
+                                return Err(de::Error::duplicate_field("count"));
+                            }
+                            count = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                Ok(SpikeComponents {
+                    values: values.ok_or_else(|| de::Error::missing_field("values"))?,
+                    indices: indices.ok_or_else(|| de::Error::missing_field("indices"))?,
+                    count: count.ok_or_else(|| de::Error::missing_field("count"))?,
+                    _pad: [0u8; 7],
+                    _tail_pad: [0u8; 24],
+                })
+            }
+        }
+
+        const FIELDS: &[&str] = &["values", "indices", "count"];
+        deserializer.deserialize_struct("SpikeComponents", FIELDS, SpikeComponentsVisitor)
+    }
+}
+
 // ============================================================================
 // SPIKE EVENT
 // ============================================================================
@@ -617,7 +714,6 @@ impl Hash for SpikeComponents {
 // CRYSTAL: FO38 — inevitable
 // CRYSTAL: FO39 — inevitable
 #[repr(C, align(64))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SpikeEvent {
     /// Fixed-size multivector snapshot at the moment of firing.
     /// Zero heap allocation. AX-ID: AXIOMA-018.
@@ -716,6 +812,134 @@ impl Hash for SpikeEvent {
         self.total_dim.hash(state);
         self.collapse_grade.hash(state);
         self.components.hash(state);
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for SpikeEvent {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let mut s = serializer.serialize_struct("SpikeEvent", 5)?;
+        s.serialize_field("components", &self.components)?;
+        s.serialize_field("timestamp_ns", &self.timestamp_ns)?;
+        s.serialize_field("origin_node_id", &self.origin_node_id)?;
+        s.serialize_field("total_dim", &self.total_dim)?;
+        s.serialize_field("collapse_grade", &self.collapse_grade)?;
+        s.end()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for SpikeEvent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{self, MapAccess, SeqAccess, Visitor};
+
+        #[derive(serde::Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Components,
+            TimestampNs,
+            OriginNodeId,
+            TotalDim,
+            CollapseGrade,
+        }
+
+        struct SpikeEventVisitor;
+
+        impl<'de> Visitor<'de> for SpikeEventVisitor {
+            type Value = SpikeEvent;
+
+            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str("struct SpikeEvent")
+            }
+
+            fn visit_seq<V: SeqAccess<'de>>(self, mut seq: V) -> Result<SpikeEvent, V::Error> {
+                let components: SpikeComponents = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                let timestamp_ns: Timestamp = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                let origin_node_id: NodeId = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+                let total_dim: u64 = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(3, &self))?;
+                let collapse_grade: Option<u16> = seq
+                    .next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(4, &self))?;
+
+                Ok(SpikeEvent::new(
+                    components,
+                    timestamp_ns,
+                    origin_node_id,
+                    total_dim,
+                    collapse_grade,
+                ))
+            }
+
+            fn visit_map<V: MapAccess<'de>>(self, mut map: V) -> Result<SpikeEvent, V::Error> {
+                let mut components = None::<SpikeComponents>;
+                let mut timestamp_ns = None::<Timestamp>;
+                let mut origin_node_id = None::<NodeId>;
+                let mut total_dim = None::<u64>;
+                let mut collapse_grade = None::<Option<u16>>;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Components => {
+                            if components.is_some() {
+                                return Err(de::Error::duplicate_field("components"));
+                            }
+                            components = Some(map.next_value()?);
+                        }
+                        Field::TimestampNs => {
+                            if timestamp_ns.is_some() {
+                                return Err(de::Error::duplicate_field("timestamp_ns"));
+                            }
+                            timestamp_ns = Some(map.next_value()?);
+                        }
+                        Field::OriginNodeId => {
+                            if origin_node_id.is_some() {
+                                return Err(de::Error::duplicate_field("origin_node_id"));
+                            }
+                            origin_node_id = Some(map.next_value()?);
+                        }
+                        Field::TotalDim => {
+                            if total_dim.is_some() {
+                                return Err(de::Error::duplicate_field("total_dim"));
+                            }
+                            total_dim = Some(map.next_value()?);
+                        }
+                        Field::CollapseGrade => {
+                            if collapse_grade.is_some() {
+                                return Err(de::Error::duplicate_field("collapse_grade"));
+                            }
+                            collapse_grade = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                Ok(SpikeEvent::new(
+                    components.ok_or_else(|| de::Error::missing_field("components"))?,
+                    timestamp_ns.ok_or_else(|| de::Error::missing_field("timestamp_ns"))?,
+                    origin_node_id.ok_or_else(|| de::Error::missing_field("origin_node_id"))?,
+                    total_dim.ok_or_else(|| de::Error::missing_field("total_dim"))?,
+                    collapse_grade.ok_or_else(|| de::Error::missing_field("collapse_grade"))?,
+                ))
+            }
+        }
+
+        const FIELDS: &[&str] = &[
+            "components",
+            "timestamp_ns",
+            "origin_node_id",
+            "total_dim",
+            "collapse_grade",
+        ];
+        deserializer.deserialize_struct("SpikeEvent", FIELDS, SpikeEventVisitor)
     }
 }
 
@@ -1766,5 +1990,45 @@ mod tests {
             just_above.count as usize, 1,
             "coefficient just above Planck threshold must be accepted"
         );
+    }
+
+    #[cfg(all(test, feature = "serde"))]
+    mod serde_tests {
+        use super::super::{NodeId, SpikeComponents, SpikeEvent, Timestamp};
+
+        #[test]
+        fn spike_event_serde_round_trip_preserves_tail_padding() {
+            let original = SpikeEvent::new(
+                SpikeComponents::from_pairs([(0u16, 1.5), (3u16, -0.5)]),
+                Timestamp::new(42),
+                NodeId::try_new(7).unwrap(),
+                16,
+                Some(2),
+            );
+
+            let json = serde_json::to_string(&original).unwrap();
+            let recovered: SpikeEvent = serde_json::from_str(&json).unwrap();
+
+            assert_eq!(original, recovered);
+            assert_eq!(recovered._tail_pad, [0u8; 36]);
+
+            let orig_bytes = unsafe {
+                core::slice::from_raw_parts(
+                    &original as *const _ as *const u8,
+                    core::mem::size_of::<SpikeEvent>(),
+                )
+            };
+            let recv_bytes = unsafe {
+                core::slice::from_raw_parts(
+                    &recovered as *const _ as *const u8,
+                    core::mem::size_of::<SpikeEvent>(),
+                )
+            };
+
+            assert_eq!(
+                orig_bytes, recv_bytes,
+                "raw bytes differ after round-trip — DAX contract violated"
+            );
+        }
     }
 }
