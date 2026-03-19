@@ -6,7 +6,8 @@
 //! ## Corrections applied (Audit Rev 1)
 //!
 //! - **CORRECCIÓN ESTRUCTURAL-1:** `SpikeComponents` adopts a **`SoA` layout**
-//!   (indices: `[u16; 16]`, values: `[f64; 16]`, count: `u8`, pad: `[u8; 7]`).
+//!   (indices: `[u16; 16]`, values: `[f64; 16]`, count: `u8`, pad: `[u8; 7]`,
+//!   tail pad: `[u8; 24]`).
 //!   Blade indices are `u16`, supporting G(1,3+n) expansion to D ≤ 15 (2^15 = 32,768
 //!   blades ≤ `u16::MAX`) via
 //!   `GramSchmidtExpander` without future binary-contract breakage. `presence_mask`
@@ -278,6 +279,7 @@ pub enum SpikeComponentsError {
 /// indices: [u16; 16] =  32 bytes  (offset 128)
 /// count:   u8        =   1 byte   (offset 160)
 /// _pad:    [u8;  7]  =   7 bytes  (offset 161)
+/// _tail_pad:[u8; 24]  =  24 bytes  (offset 168)
 /// Total                192 bytes  (align 64)
 /// ```
 ///
@@ -301,13 +303,22 @@ pub struct SpikeComponents {
     pub indices: [u16; SPIKE_MAX_COMPONENTS],
     /// Number of active (blade, coefficient) pairs. Invariant: `count ≤ SPIKE_MAX_COMPONENTS`.
     pub count: u8,
-    // Private padding to keep the explicit payload compact before struct-level cache-line padding.
+    /// Explicit payload padding to align the next field to an 8-byte boundary.
     _pad: [u8; 7],
+    /// Explicit cache-line tail padding. Zero-initialized.
+    /// Ensures deterministic raw-byte layout for DAX zero-copy.
+    /// AX-ID: AXIOMA-018
+    _tail_pad: [u8; 24],
 }
 
 // Compile-time layout verification.
 static_assertions::assert_eq_size!(SpikeComponents, [u8; 192]);
 static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 64);
+
+/// Layout version of SpikeEvent repr(C) contract.
+/// Increment when any field offset or size changes.
+/// AX-ID: AXIOMA-018
+pub const SPIKE_EVENT_LAYOUT_VERSION: u32 = 2;
 
 impl SpikeComponents {
     fn from_pairs_internal<I>(iter: I) -> Self
@@ -420,6 +431,7 @@ impl SpikeComponents {
             values,
             count: count_u8,
             _pad: [0u8; 7],
+            _tail_pad: [0u8; 24],
         }
     }
 
@@ -595,7 +607,7 @@ impl Hash for SpikeComponents {
 /// origin_node_id:   NodeId(u64)      =   8 bytes  (offset 200)
 /// total_dim:        u64              =   8 bytes  (offset 208)
 /// collapse_grade:   Option<u16>      =   4 bytes  (offset 216)
-/// trailing pad      (align 64)       =  36 bytes  (offset 220)
+/// _tail_pad:        [u8; 36]         =  36 bytes  (offset 220)
 /// Total                              = 256 bytes
 /// ```
 ///
@@ -631,6 +643,11 @@ pub struct SpikeEvent {
     /// Valid grades for G(1,3) are 0..=4; `u16` provides headroom for
     /// expanded algebras.
     pub collapse_grade: Option<u16>,
+    /// Explicit cache-line tail padding. Zero-initialized.
+    /// Ensures deterministic raw-byte layout for DAX zero-copy.
+    /// Version: SPIKE_EVENT_LAYOUT_VERSION = 2
+    /// AX-ID: AXIOMA-018
+    _tail_pad: [u8; 36],
 }
 
 // Compile-time layout invariant: SpikeEvent keeps its hot payload on a 64-byte boundary.
@@ -638,6 +655,27 @@ static_assertions::const_assert_eq!(core::mem::size_of::<SpikeEvent>(), 256);
 static_assertions::const_assert_eq!(core::mem::align_of::<SpikeEvent>(), 64);
 
 impl SpikeEvent {
+    /// Constructs a `SpikeEvent` with deterministic zero-initialized tail padding.
+    ///
+    /// AX-ID: AXIOMA-018
+    #[inline]
+    pub const fn new(
+        components: SpikeComponents,
+        timestamp_ns: Timestamp,
+        origin_node_id: NodeId,
+        total_dim: u64,
+        collapse_grade: Option<u16>,
+    ) -> Self {
+        Self {
+            components,
+            timestamp_ns,
+            origin_node_id,
+            total_dim,
+            collapse_grade,
+            _tail_pad: [0u8; 36],
+        }
+    }
+
     /// Returns `true` if this spike is a spontaneous internal drive event
     /// (no external stimulus; the system's curiosity — AX-ID: AXIOMA-003).
     #[inline]
@@ -1085,6 +1123,23 @@ mod tests {
         assert_eq!(core::mem::align_of::<SpikeEvent>(), 64);
     }
 
+    #[test]
+    fn spike_event_layout_version_is_2() {
+        assert_eq!(SPIKE_EVENT_LAYOUT_VERSION, 2);
+    }
+
+    #[test]
+    fn spike_event_new_zero_initializes_tail_padding() {
+        let event = SpikeEvent::new(
+            SpikeComponents::from_pairs([(0u16, 1.0)]),
+            Timestamp::new(9),
+            NodeId::try_new(3).expect("3 is inside the valid NodeId range"),
+            16,
+            Some(1),
+        );
+        assert_eq!(event._tail_pad, [0u8; 36]);
+    }
+
     /// SpikeEvent must be `Copy` — compile-time proof of zero per-spike heap alloc.
     ///
     /// AX-ID: AXIOMA-018
@@ -1364,13 +1419,13 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn make_event(grade: Option<u16>) -> SpikeEvent {
-        SpikeEvent {
-            timestamp_ns: Timestamp::new(1_000_000),
-            origin_node_id: NodeId::try_new(42).expect("42 is inside the valid NodeId range"),
-            components: SpikeComponents::from_pairs([(0u16, 1.0), (3u16, -0.5), (7u16, 0.25)]),
-            total_dim: 16u64,
-            collapse_grade: grade,
-        }
+        SpikeEvent::new(
+            SpikeComponents::from_pairs([(0u16, 1.0), (3u16, -0.5), (7u16, 0.25)]),
+            Timestamp::new(1_000_000),
+            NodeId::try_new(42).expect("42 is inside the valid NodeId range"),
+            16u64,
+            grade,
+        )
     }
 
     #[test]

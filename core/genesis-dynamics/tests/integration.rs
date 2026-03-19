@@ -7,8 +7,8 @@
 use genesis_dynamics::*;
 use genesis_types::NodeId;
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 struct CountingAllocator;
 
@@ -16,7 +16,9 @@ static ALLOC_CALLS: AtomicUsize = AtomicUsize::new(0);
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
-    TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 unsafe impl GlobalAlloc for CountingAllocator {

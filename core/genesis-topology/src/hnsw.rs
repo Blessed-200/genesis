@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::thread;
 
 use fixedbitset::FixedBitSet;
-use genesis_math::{fast_metric_distance, SparseCliffordVector};
+use genesis_math::{fast_metric_distance, fast_metric_distance_from_dense, SparseCliffordVector};
 use genesis_types::{GenesisError, NodeId};
 use smallvec::SmallVec;
 
@@ -111,7 +111,7 @@ fn batch_distance_4(query: &SparseCliffordVector, batch: &SoaBatch4) -> [f64; SI
     let mut out = [f64::INFINITY; SIMD_BATCH_WIDTH];
     for (slot, d) in out.iter_mut().enumerate().take(batch.count) {
         let dense = core::array::from_fn(|blade| batch.coeffs_transposed[blade][slot]);
-        *d = genesis_math::fast_metric_distance_from_dense(&dense, query);
+        *d = fast_metric_distance_from_dense(&dense, query);
     }
     out
 }
@@ -168,7 +168,7 @@ unsafe fn batch_distance_4_avx2(
 
 mod layer0_codec {
     use super::TOTAL_BLADES;
-    use genesis_math::{fast_metric_distance_from_dense, SparseCliffordVector};
+    use genesis_math::SparseCliffordVector;
 
     #[cfg(feature = "hnsw-f16")]
     mod f16_kernel {
@@ -241,7 +241,7 @@ mod layer0_codec {
 
         fn distance(stored: &Self::Storage, query: &SparseCliffordVector) -> f64 {
             let dense = core::array::from_fn(|i| f64::from(stored[i]));
-            fast_metric_distance_from_dense(&dense, query)
+            super::fast_metric_distance_from_dense(&dense, query)
         }
 
         fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES] {

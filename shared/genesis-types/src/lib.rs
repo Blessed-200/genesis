@@ -195,13 +195,13 @@ mod integration_tests {
 
         // SpikeComponents — from_pairs now takes (u16, f64).
         let components = SpikeComponents::from_pairs([] as [(u16, f64); 0]);
-        let spike = SpikeEvent {
-            timestamp_ns: Timestamp::new(0),
-            origin_node_id: NodeId::try_new(0).expect("0 is inside the valid NodeId range"),
+        let spike = SpikeEvent::new(
             components,
-            total_dim: 16u64,
-            collapse_grade: None,
-        };
+            Timestamp::new(0),
+            NodeId::try_new(0).expect("0 is inside the valid NodeId range"),
+            16u64,
+            None,
+        );
         assert_eq!(spike.cardinality(), 0);
 
         // DomainConsolidationSignal — requires explicit state type.
@@ -271,13 +271,13 @@ mod integration_tests {
     fn spike_event_copy_bound_compile_time_no_heap() {
         fn require_copy<T: Copy>(_: T) {}
         let sc = SpikeComponents::from_pairs([(0u16, 1.0)]);
-        let e = SpikeEvent {
-            timestamp_ns: Timestamp::new(1),
-            origin_node_id: NodeId::try_new(1).expect("1 is inside the valid NodeId range"),
-            components: sc,
-            total_dim: 16u64,
-            collapse_grade: Some(0u16),
-        };
+        let e = SpikeEvent::new(
+            sc,
+            Timestamp::new(1),
+            NodeId::try_new(1).expect("1 is inside the valid NodeId range"),
+            16u64,
+            Some(0u16),
+        );
         require_copy(e); // Compile error if SpikeEvent is not Copy
         let _copy = e; // Second use — valid only if e is Copy
         let _ = e.cardinality(); // Original still usable

@@ -69,31 +69,26 @@ pub(crate) const CLIFFORD_NORM_WEIGHTS_F64: [f64; TOTAL_BLADES] = {
     w
 };
 
-/// Computes ⟨A·Ã⟩₀ = Σᵢ cᵢ² × `CLIFFORD_NORM_WEIGHTS[i]`.
+/// ⟨A·Ã⟩₀ with Kahan compensated summation.
 ///
-/// This is the **Lorentz-invariant** norm squared: preserved under boosts
-/// and rotations in G(1,3). It is NOT the L2 norm.
+/// Kahan summation reduces floating-point error from O(n·ε) to O(ε)
+/// for the signed Lorentz metric accumulation. Critical for correct
+/// null-vector detection in G(1,3) where timelike and spacelike
+/// contributions partially cancel.
 ///
-/// Result interpretation:
-/// - Positive → timelike multivector
-/// - Negative → spacelike multivector
-/// - Zero     → null (lightlike) multivector
-///
-/// **PROHIBITED** for use as the CS gate — use `max_abs_coeff` instead.
-/// The CS gate requires a bound independent of the metric signature.
-///
-/// AVX-512 path: the compiler auto-vectorizes this loop into 4× VFMADD231PD
-/// when `opt-level=3` and `target-cpu=icelake-server` or later.
-///
+/// INVARIANT: result matches `derive_all_metadata` `clifford_norm_sq`.
 /// AX-ID: AXIOMA-001
 #[inline]
 pub fn compute_clifford_norm_sq(coeffs: &[f64; 16]) -> f64 {
     let mut sum = 0.0f64;
-    // Compiler vectorizes into VFMADD231PD (AVX-512) at opt-level=3.
+    let mut comp = 0.0f64;
     for i in 0..16 {
         let coeff = coeffs[i];
-        // CRYSTAL: O4 — inevitable
-        sum = coeff.mul_add(coeff * CLIFFORD_NORM_WEIGHTS_F64[i], sum);
+        let term = coeff * coeff * CLIFFORD_NORM_WEIGHTS_F64[i];
+        let y = term - comp;
+        let t = sum + y;
+        comp = (t - sum) - y;
+        sum = t;
     }
     sum
 }
