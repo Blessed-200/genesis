@@ -1687,10 +1687,12 @@ mod tests {
         *seed
     }
 
+    const SIGNED_U53_SCALE: f64 = 2.0 / (1_u64 << 53) as f64;
+
     fn random_vec(seed: &mut u64) -> SparseCliffordVector {
         let dense = core::array::from_fn(|_| {
             let bits = next_u64(seed) >> 11;
-            (bits as f64) / ((1_u64 << 53) as f64) * 2.0 - 1.0
+            (bits as f64).mul_add(SIGNED_U53_SCALE, -1.0)
         });
         SparseCliffordVector::from_dense(&dense)
             .expect("deterministic random vector must be finite")
@@ -1719,8 +1721,8 @@ mod tests {
                 let scalar = fast_metric_distance(&query, &vectors[slot]);
                 assert!((distances[slot] - scalar).abs() < 1e-10);
             }
-            for slot in count..SIMD_BATCH_WIDTH {
-                assert!(distances[slot].is_infinite());
+            for distance in distances.iter().take(SIMD_BATCH_WIDTH).skip(count) {
+                assert!(distance.is_infinite());
             }
         }
     }
@@ -2407,7 +2409,7 @@ mod tests {
                 .enumerate()
                 .map(|(idx, v)| {
                     #[cfg(feature = "hnsw-f16")]
-                    let d = geometric_distance(v, &query);
+                    let d = crate::geometric_distance(v, &query);
                     #[cfg(not(feature = "hnsw-f16"))]
                     let d = fast_metric_distance(&query, v);
                     (idx, d)
@@ -2441,7 +2443,7 @@ mod tests {
         let mut g = HnswGraph::new(32);
         let n = 128_u64;
         for i in 0..n {
-            g.insert(make_id(i), &make_vec((i as f64) * 0.01 + 0.1))
+            g.insert(make_id(i), &make_vec((i as f64).mul_add(0.01, 0.1)))
                 .expect("insert should succeed");
         }
         for layer in &g.layer_neighbors {
@@ -2483,7 +2485,7 @@ mod tests {
         }
 
         for q in 0..100_u64 {
-            let query = make_vec((q as f64) * 0.013 + 0.25);
+            let query = make_vec((q as f64).mul_add(0.013, 0.25));
             let got = g.search_nearest(&query, 8);
             for id in got {
                 assert!(g.get_idx(id).is_some());
@@ -2524,11 +2526,11 @@ mod tests {
         let mut found = false;
         let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
         for _ in 0..2048 {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             let q0 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             let q1 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             let q15 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
             let query =
                 SparseCliffordVector::from_iter([(0, q0), (1, q1), (15, q15)]).expect("valid");

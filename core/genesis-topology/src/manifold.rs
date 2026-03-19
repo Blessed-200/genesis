@@ -284,7 +284,7 @@ impl ManifoldCollector {
     }
 
     /// Return the total edge count.
-    pub fn edge_count(&self) -> usize {
+    pub const fn edge_count(&self) -> usize {
         self.graph.edge_count()
     }
 

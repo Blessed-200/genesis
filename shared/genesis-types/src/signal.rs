@@ -278,8 +278,8 @@ pub enum SpikeComponentsError {
 /// values:  [f64; 16] = 128 bytes  (offset   0) ← SIMD-aligned: vmovapd/vloadpd
 /// indices: [u16; 16] =  32 bytes  (offset 128)
 /// count:   u8        =   1 byte   (offset 160)
-/// _pad:    [u8;  7]  =   7 bytes  (offset 161)
-/// _tail_pad:[u8; 24]  =  24 bytes  (offset 168)
+/// pad:      [u8;  7]  =   7 bytes  (offset 161)
+/// tail_pad: [u8; 24]  =  24 bytes  (offset 168)
 /// Total                192 bytes  (align 64)
 /// ```
 ///
@@ -303,11 +303,11 @@ pub struct SpikeComponents {
     /// Number of active (blade, coefficient) pairs. Invariant: `count ≤ SPIKE_MAX_COMPONENTS`.
     pub count: u8,
     /// Explicit payload padding to align the next field to an 8-byte boundary.
-    _pad: [u8; 7],
+    pad: [u8; 7],
     /// Explicit cache-line tail padding. Zero-initialized.
     /// Ensures deterministic raw-byte layout for DAX zero-copy.
     /// AX-ID: AXIOMA-018
-    _tail_pad: [u8; 24],
+    tail_pad: [u8; 24],
 }
 
 // Compile-time layout verification.
@@ -320,6 +320,33 @@ static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 64
 pub const SPIKE_EVENT_LAYOUT_VERSION: u32 = 2;
 
 impl SpikeComponents {
+    /// Returns `true` if all explicit padding fields are zeroed.
+    ///
+    /// Used to verify the DAX layout contract after construction or
+    /// deserialization without exposing private implementation details.
+    ///
+    /// AX-ID: AXIOMA-018
+    #[inline]
+    pub const fn padding_is_zeroed(&self) -> bool {
+        let mut i = 0;
+        while i < 7 {
+            if self.pad[i] != 0 {
+                return false;
+            }
+            i += 1;
+        }
+
+        let mut j = 0;
+        while j < 24 {
+            if self.tail_pad[j] != 0 {
+                return false;
+            }
+            j += 1;
+        }
+
+        true
+    }
+
     fn from_pairs_internal<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = (u16, f64)>,
@@ -429,8 +456,8 @@ impl SpikeComponents {
             indices,
             values,
             count: count_u8,
-            _pad: [0u8; 7],
-            _tail_pad: [0u8; 24],
+            pad: [0u8; 7],
+            tail_pad: [0u8; 24],
         }
     }
 
@@ -637,8 +664,8 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                     values,
                     indices,
                     count,
-                    _pad: [0u8; 7],
-                    _tail_pad: [0u8; 24],
+                    pad: [0u8; 7],
+                    tail_pad: [0u8; 24],
                 })
             }
 
@@ -674,8 +701,8 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                     values: values.ok_or_else(|| de::Error::missing_field("values"))?,
                     indices: indices.ok_or_else(|| de::Error::missing_field("indices"))?,
                     count: count.ok_or_else(|| de::Error::missing_field("count"))?,
-                    _pad: [0u8; 7],
-                    _tail_pad: [0u8; 24],
+                    pad: [0u8; 7],
+                    tail_pad: [0u8; 24],
                 })
             }
         }
@@ -704,7 +731,7 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
 /// origin_node_id:   NodeId(u64)      =   8 bytes  (offset 200)
 /// total_dim:        u64              =   8 bytes  (offset 208)
 /// collapse_grade:   Option<u16>      =   4 bytes  (offset 216)
-/// _tail_pad:        [u8; 36]         =  36 bytes  (offset 220)
+/// tail_pad:         [u8; 36]         =  36 bytes  (offset 220)
 /// Total                              = 256 bytes
 /// ```
 ///
@@ -743,7 +770,7 @@ pub struct SpikeEvent {
     /// Ensures deterministic raw-byte layout for DAX zero-copy.
     /// Version: SPIKE_EVENT_LAYOUT_VERSION = 2
     /// AX-ID: AXIOMA-018
-    _tail_pad: [u8; 36],
+    tail_pad: [u8; 36],
 }
 
 // Compile-time layout invariant: SpikeEvent keeps its hot payload on a 64-byte boundary.
@@ -768,7 +795,7 @@ impl SpikeEvent {
             origin_node_id,
             total_dim,
             collapse_grade,
-            _tail_pad: [0u8; 36],
+            tail_pad: [0u8; 36],
         }
     }
 
@@ -784,6 +811,25 @@ impl SpikeEvent {
     #[inline]
     pub const fn is_phase_collapse(&self) -> bool {
         self.collapse_grade.is_some()
+    }
+
+    /// Returns `true` if the explicit tail padding is fully zero-initialized.
+    ///
+    /// Used to verify the DAX layout contract after deserialization or
+    /// construction without exposing the private padding field.
+    ///
+    /// AX-ID: AXIOMA-018
+    #[inline]
+    pub const fn tail_padding_is_zeroed(&self) -> bool {
+        let mut i = 0;
+        while i < 36 {
+            if self.tail_pad[i] != 0 {
+                return false;
+            }
+            i += 1;
+        }
+
+        true
     }
 
     /// Number of non-zero components in the associated multivector snapshot.
@@ -1361,7 +1407,14 @@ mod tests {
             16,
             Some(1),
         );
-        assert_eq!(event._tail_pad, [0u8; 36]);
+        assert!(
+            event.components.padding_is_zeroed(),
+            "SpikeComponents padding must be zero after construction"
+        );
+        assert!(
+            event.tail_padding_is_zeroed(),
+            "SpikeEvent tail padding must be zero after construction"
+        );
     }
 
     /// SpikeEvent must be `Copy` — compile-time proof of zero per-spike heap alloc.
@@ -2010,17 +2063,26 @@ mod tests {
             let recovered: SpikeEvent = serde_json::from_str(&json).unwrap();
 
             assert_eq!(original, recovered);
-            assert_eq!(recovered._tail_pad, [0u8; 36]);
+            assert!(
+                recovered.tail_padding_is_zeroed(),
+                "SpikeEvent tail padding must be zero after deserialization"
+            );
 
-            let orig_bytes = unsafe {
+            // SAFETY: SpikeEvent is repr(C, align(64)) with all fields
+            // initialized. size_of::<SpikeEvent>() bytes starting at the
+            // struct's address are valid, initialized, and stable for the
+            // lifetime of `original`. The cast is read-only.
+            let orig_bytes: &[u8] = unsafe {
                 core::slice::from_raw_parts(
-                    &original as *const _ as *const u8,
+                    (&raw const original).cast::<u8>(),
                     core::mem::size_of::<SpikeEvent>(),
                 )
             };
-            let recv_bytes = unsafe {
+            // SAFETY: Same invariants as orig_bytes — recovered is a
+            // fully initialized SpikeEvent with zeroed tail padding.
+            let recv_bytes: &[u8] = unsafe {
                 core::slice::from_raw_parts(
-                    &recovered as *const _ as *const u8,
+                    (&raw const recovered).cast::<u8>(),
                     core::mem::size_of::<SpikeEvent>(),
                 )
             };
