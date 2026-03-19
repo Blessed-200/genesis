@@ -10,7 +10,7 @@ use genesis_types::NodeId;
 
 /// Deterministic LCG RNG for reproducible emergence tests.
 ///
-/// AX-ID: AXIOMA-005, AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+/// AX-ID: AXIOMA-005, AXIOMA-006, `H_dinámica` (`LEY_FUNDACIONAL` §3.2)
 #[derive(Clone, Copy)]
 struct Lcg64 {
     state: u64,
@@ -21,7 +21,7 @@ impl Lcg64 {
         Self { state: seed }
     }
 
-    fn next_u64(&mut self) -> u64 {
+    const fn next_u64(&mut self) -> u64 {
         self.state = self
             .state
             .wrapping_mul(6_364_136_223_846_793_005)
@@ -35,7 +35,7 @@ impl Lcg64 {
     }
 
     fn next_signed(&mut self, scale: f64) -> f64 {
-        (self.next_f64_unit() * 2.0 - 1.0) * scale
+        self.next_f64_unit().mul_add(2.0, -1.0) * scale
     }
 
     fn next_phase(&mut self) -> f64 {
@@ -159,11 +159,10 @@ fn kuramoto_synchronization_reduces_phase_variance() {
     let curvature = network.total_curvature();
 
     println!(
-        "Phase variance: {:.4} → {:.4} (reduction: {:.1}%)",
-        initial_variance, final_variance, reduction
+        "Phase variance: {initial_variance:.4} → {final_variance:.4} (reduction: {reduction:.1}%)"
     );
-    println!("Order parameter r = {:.4}", order);
-    println!("Total curvature = {:.6}", curvature);
+    println!("Order parameter r = {order:.4}");
+    println!("Total curvature = {curvature:.6}");
 
     assert!(final_variance < initial_variance * 0.5);
     assert!(final_variance > 0.01);
@@ -213,8 +212,12 @@ fn vfe_decreases_monotonically_over_learning_steps() {
     }
 
     println!(
-        "VFE trajectory: {:.6} → {:.6} → {:.6} → {:.6} → {:.6}",
-        trajectory[0], trajectory[1], trajectory[2], trajectory[3], trajectory[4]
+        "VFE trajectory: {a:.6} → {b:.6} → {c:.6} → {d:.6} → {e:.6}",
+        a = trajectory[0],
+        b = trajectory[1],
+        c = trajectory[2],
+        d = trajectory[3],
+        e = trajectory[4]
     );
 
     assert!(trajectory[4] < trajectory[0]);
@@ -238,14 +241,20 @@ fn criticality_monitor_reaches_soc_regime_under_dynamics() {
         let mut u = rng.next_f64_unit();
         u = u.clamp(1.0e-9, 1.0 - 1.0e-9);
         let size = u.powf(-1.0 / (tau_target - 1.0)).floor();
-        let size = size.clamp(1.0, u32::MAX as f64) as u32;
+        let size: u32 = if size >= f64::from(u32::MAX) {
+            u32::MAX
+        } else if size < 1.0 {
+            1
+        } else {
+            size as u32
+        };
         monitor.record_avalanche(size);
     }
 
     let tau = monitor
         .tau_exponent()
         .expect("debe haber suficientes avalanchas");
-    println!("Estimated τ = {:.4} (target: 2.0)", tau);
+    println!("Estimated τ = {tau:.4} (target: 2.0)");
     assert!((1.5..=2.5).contains(&tau));
 }
 
@@ -292,9 +301,9 @@ fn criticality_emerges_from_coupled_dynamics() {
         for i in 0..node_count {
             let node = NodeId::try_new(i as u64).expect("NodeId válido por construcción");
             let mut obs = latent[i];
-            obs[1] = 0.55 * phases[i].sin() + 0.15 * order;
-            obs[2] = 0.55 * phases[i].cos() - 0.1 * order;
-            obs[4] = 0.25 * curvature.tanh() + latent[i][4] * 0.5;
+            obs[1] = 0.55f64.mul_add(phases[i].sin(), 0.15 * order);
+            obs[2] = 0.55f64.mul_add(phases[i].cos(), -(0.1 * order));
+            obs[4] = 0.25f64.mul_add(curvature.tanh(), latent[i][4] * 0.5);
             obs[8] = 0.35 * (phases[i] - order).sin();
             obs[3] = 0.2 * (phases[(i + 1) % node_count] - phases[i]).sin();
             obs[5] = 0.15 * (phases[(i + node_count - 1) % node_count] - phases[i]).cos();
@@ -304,7 +313,7 @@ fn criticality_emerges_from_coupled_dynamics() {
                 .beliefs_raw(node)
                 .expect("nodo debe existir")
                 .mean_full;
-            minimizer.update_full(node, &obs, 0.035 + 0.015 * (1.0 - order));
+            minimizer.update_full(node, &obs, 0.015f64.mul_add(1.0 - order, 0.035));
             let after = minimizer
                 .beliefs_raw(node)
                 .expect("nodo debe existir")
@@ -324,12 +333,11 @@ fn criticality_emerges_from_coupled_dynamics() {
         .expect("debe haber suficientes avalanchas");
     let order = network.order_parameter();
     let curvature = network.total_curvature();
-    println!(
-        "τ = {:.4}, r = {:.4}, curvature = {:.6}",
-        tau, order, curvature
-    );
-    println!("Total avalanches recorded: {}", monitor.count());
-    println!("Triangle count built: {}", network.triangle_count());
+    let avalanche_count = monitor.count();
+    let triangle_count = network.triangle_count();
+    println!("τ = {tau:.4}, r = {order:.4}, curvature = {curvature:.6}");
+    println!("Total avalanches recorded: {avalanche_count}");
+    println!("Triangle count built: {triangle_count}");
 
     assert!((1.5..=2.5).contains(&tau));
     assert!(order > 0.1);
@@ -364,6 +372,6 @@ fn gauge_invariance_holds_under_local_transformation() {
         max_deviation = max_deviation.max(deviation);
     }
 
-    println!("Gauge invariance max deviation = {:.6}", max_deviation);
+    println!("Gauge invariance max deviation = {max_deviation:.6}");
     assert!(max_deviation < 0.05);
 }
