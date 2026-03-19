@@ -168,17 +168,21 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
     fn reduce_slice(oscs: &[crate::oscillator::QuantumOscillator]) -> [(f64, f64, f64); 5] {
         let mut acc = [(0.0f64, 0.0f64, 0.0f64); 5];
         for osc in oscs {
+            let phases = &osc.phases;
+            let amplitudes = &osc.amplitudes;
+            // loop-invariant, hoisted
+            // CRYSTAL: O5 — inevitable
             for (g, grade_acc) in acc.iter_mut().enumerate().take(N_GRADES) {
-                let a = osc.amplitudes[g];
+                let a = amplitudes[g];
                 #[cfg(feature = "poly_trig")]
                 {
-                    grade_acc.0 = a.mul_add(poly_cos(osc.phases[g]), grade_acc.0);
-                    grade_acc.1 = a.mul_add(poly_sin(osc.phases[g]), grade_acc.1);
+                    grade_acc.0 = a.mul_add(poly_cos(phases[g]), grade_acc.0);
+                    grade_acc.1 = a.mul_add(poly_sin(phases[g]), grade_acc.1);
                 }
                 #[cfg(not(feature = "poly_trig"))]
                 {
-                    grade_acc.0 = a.mul_add(osc.phases[g].cos(), grade_acc.0);
-                    grade_acc.1 = a.mul_add(osc.phases[g].sin(), grade_acc.1);
+                    grade_acc.0 = a.mul_add(phases[g].cos(), grade_acc.0);
+                    grade_acc.1 = a.mul_add(phases[g].sin(), grade_acc.1);
                 }
                 grade_acc.2 += a;
             }
@@ -252,6 +256,9 @@ pub fn synchrony_order_hubs(network: &QuantumKuramotoNetwork, hub_indices: &[usi
     const N_GRADES: usize = 5;
     const EPS: f64 = 1e-30;
     let mut r_total = 0.0f64;
+    let inv_grade_count = 1.0 / N_GRADES as f64;
+    // loop-invariant, hoisted
+    // CRYSTAL: O30 — inevitable
     for g in 0..N_GRADES {
         let (mut sc, mut ss, mut sa) = (0.0f64, 0.0f64, 0.0f64);
         for &idx in hub_indices {
@@ -266,7 +273,7 @@ pub fn synchrony_order_hubs(network: &QuantumKuramotoNetwork, hub_indices: &[usi
     }
     #[allow(clippy::cast_precision_loss)]
     {
-        r_total / N_GRADES as f64
+        r_total * inv_grade_count
     }
 }
 
