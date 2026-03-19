@@ -67,7 +67,9 @@ pub(crate) const ODD_GRADE_PREFIX_TABLE: [i32; TOTAL_BLADES] = {
     let mut i = 0usize;
     let mut acc = 0i32;
     while i < TOTAL_BLADES {
-        acc += (GRADE_TABLE[i] % 2) as i32;
+        // loop-invariant, hoisted
+        // CRYSTAL: O34 — inevitable
+        acc += (GRADE_TABLE[i] & 1) as i32;
         out[i] = acc;
         i += 1;
     }
@@ -110,7 +112,11 @@ impl CliffordBasis {
             let g = blade.count_ones() as u8; // ≤ 4, siempre dentro de u8
             grade[blade] = g;
             signature[blade] = Self::blade_square_const(blade);
-            let parity = (grade[blade] % 2) as i32;
+            // loop-invariant, hoisted
+            // CRYSTAL: O5 — inevitable
+            // CRYSTAL: O36 — inevitable
+            // CRYSTAL: FO29 — inevitable
+            let parity = (g & 1) as i32;
             if parity != 0 {
                 // TOTAL_BLADES = 16 — siempre cabe en i32 y usize.
                 // Usamos i32 para la aritmética del árbol de Fenwick (i & -i)
@@ -183,7 +189,10 @@ impl CliffordBasis {
     /// Computes e_I² as `i8` — `const fn` used during compile-time table build.
     const fn blade_square_const(blade: usize) -> i8 {
         let k = blade.count_ones() as i64;
-        let reorder_sign: i8 = if ((k * (k - 1) / 2) % 2) == 0 { 1 } else { -1 };
+        let swap_pairs = (k * (k - 1)) >> 1;
+        // CRYSTAL: O37 — inevitable
+        // CRYSTAL: O38 — inevitable
+        let reorder_sign: i8 = if (swap_pairs & 1) == 0 { 1 } else { -1 };
         let spatial_bits = (blade >> 1) & 0b111;
         let spatial_count = spatial_bits.count_ones();
         let metric_sign: i8 = if spatial_count.is_multiple_of(2) {

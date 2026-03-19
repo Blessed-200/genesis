@@ -91,7 +91,9 @@ pub fn compute_clifford_norm_sq(coeffs: &[f64; 16]) -> f64 {
     let mut sum = 0.0f64;
     // Compiler vectorizes into VFMADD231PD (AVX-512) at opt-level=3.
     for i in 0..16 {
-        sum += coeffs[i] * coeffs[i] * CLIFFORD_NORM_WEIGHTS_F64[i];
+        let coeff = coeffs[i];
+        // CRYSTAL: O4 — inevitable
+        sum = coeff.mul_add(coeff * CLIFFORD_NORM_WEIGHTS_F64[i], sum);
     }
     sum
 }
@@ -203,7 +205,8 @@ pub fn odd_grade(v: &SparseCliffordVector) -> SparseCliffordVector {
     let mut mask = v.active_mask;
     while mask != 0 {
         let i = mask.trailing_zeros() as usize;
-        if GRADE_TABLE[i] % 2 == 1 {
+        // CRYSTAL: O62 — inevitable
+        if (GRADE_TABLE[i] & 1) == 1 {
             buf[i] = v.coeffs[i];
         }
         mask &= mask - 1;
@@ -260,9 +263,10 @@ pub const fn max_grade(v: &SparseCliffordVector) -> u8 {
     while mask != 0 {
         let i = mask.trailing_zeros() as usize;
         let g = GRADE_TABLE[i];
-        if g > best {
-            best = g;
-        }
+        // CRYSTAL: O66 — inevitable
+        // CRYSTAL: FO57 — inevitable
+        let select_mask = ((g > best) as u8).wrapping_neg();
+        best = (best & !select_mask) | (g & select_mask);
         mask &= mask - 1;
     }
     best
@@ -278,9 +282,10 @@ pub const fn min_grade(v: &SparseCliffordVector) -> u8 {
     while mask != 0 {
         let i = mask.trailing_zeros() as usize;
         let g = GRADE_TABLE[i];
-        if g < best {
-            best = g;
-        }
+        // CRYSTAL: O67 — inevitable
+        // CRYSTAL: FO58 — inevitable
+        let select_mask = ((g < best) as u8).wrapping_neg();
+        best = (best & !select_mask) | (g & select_mask);
         mask &= mask - 1;
     }
     best

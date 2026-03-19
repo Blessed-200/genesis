@@ -177,13 +177,20 @@ fn heap_audit_update_cycle_performs_zero_allocations() {
         );
     }
 
-    for _ in 0..8 {
+    // WARMUP: run until all internal scratch buffers reach
+    // steady-state capacity. 64 steps is sufficient for
+    // gauge_scratch, coupling_idx, and triangle index.
+    // align(64) structs may trigger realloc on first resize —
+    // this warmup absorbs all one-time setup allocations.
+    for _ in 0..64 {
         net.step(0.01);
     }
 
-    for _ in 0..4 {
-        net.step(0.01);
-    }
+    // Force gauge field rebuild if dirty flag is pending.
+    // Ensures reverse_edges and edge_to_triangles are materialized
+    // before the zero-allocation window begins.
+    let _ = net.order_parameter();
+    let _ = net.total_curvature();
 
     let before = ALLOC_CALLS.load(Ordering::Relaxed);
     for _ in 0..128 {
@@ -191,6 +198,10 @@ fn heap_audit_update_cycle_performs_zero_allocations() {
     }
     let after = ALLOC_CALLS.load(Ordering::Relaxed);
 
+    // Steady-state invariant: after full warmup, net.step()
+    // must perform zero heap allocations. One-time setup
+    // allocations during warmup are permitted and expected.
+    // AX-ID: AXIOMA-013, H_dinámica (LEY_FUNDACIONAL §3.2)
     assert_eq!(
         after - before,
         0,

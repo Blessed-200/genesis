@@ -114,9 +114,8 @@ impl SparseDualVector {
             let abs = dual.value.abs();
             if abs > COGNITIVE_PLANCK_CONSTANT {
                 active_mask |= 1u16 << k;
-                if abs > max_abs_coeff_value {
-                    max_abs_coeff_value = abs;
-                }
+                // CRYSTAL: FO25 — inevitable
+                max_abs_coeff_value = max_abs_coeff_value.max(abs);
             }
             let weight = crate::grade::CLIFFORD_NORM_WEIGHTS_F64[k];
             clifford_norm_sq_value += dual.value * dual.value * weight;
