@@ -132,7 +132,8 @@ pub struct Timestamp(
 );
 
 /// Pair of Gaussian samples used in signal-processing paths.
-#[repr(C)]
+// CRYSTAL: FO32 — inevitable
+#[repr(C, align(64))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct GaussianPair {
@@ -142,8 +143,8 @@ pub struct GaussianPair {
     pub second: f64,
 }
 
-static_assertions::const_assert_eq!(core::mem::size_of::<GaussianPair>(), 16);
-static_assertions::const_assert_eq!(core::mem::align_of::<GaussianPair>(), 8);
+static_assertions::const_assert_eq!(core::mem::size_of::<GaussianPair>(), 64);
+static_assertions::const_assert_eq!(core::mem::align_of::<GaussianPair>(), 64);
 
 impl Timestamp {
     /// Zero timestamp (epoch origin of a local processing unit).
@@ -277,7 +278,7 @@ pub enum SpikeComponentsError {
 /// indices: [u16; 16] =  32 bytes  (offset 128)
 /// count:   u8        =   1 byte   (offset 160)
 /// _pad:    [u8;  7]  =   7 bytes  (offset 161)
-/// Total                168 bytes  (align 8)
+/// Total                192 bytes  (align 64)
 /// ```
 ///
 /// `values` is placed first so `&spike.values` == struct base address,
@@ -286,7 +287,10 @@ pub enum SpikeComponentsError {
 ///
 /// AX-ID: AXIOMA-018
 #[derive(Debug, Clone, Copy)]
-#[repr(C)]
+// CRYSTAL: FO34 — inevitable
+// CRYSTAL: FO35 — inevitable
+// CRYSTAL: FO36 — inevitable
+#[repr(C, align(64))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SpikeComponents {
     /// Coefficients corresponding to each index. Positions `count..` are `0.0`.
@@ -297,13 +301,13 @@ pub struct SpikeComponents {
     pub indices: [u16; SPIKE_MAX_COMPONENTS],
     /// Number of active (blade, coefficient) pairs. Invariant: `count ≤ SPIKE_MAX_COMPONENTS`.
     pub count: u8,
-    // Private padding to 8-byte alignment for #[repr(C)] stability.
+    // Private padding to keep the explicit payload compact before struct-level cache-line padding.
     _pad: [u8; 7],
 }
 
 // Compile-time layout verification.
-static_assertions::assert_eq_size!(SpikeComponents, [u8; 168]);
-static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 8);
+static_assertions::assert_eq_size!(SpikeComponents, [u8; 192]);
+static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 64);
 
 impl SpikeComponents {
     fn from_pairs_internal<I>(iter: I) -> Self
@@ -586,20 +590,27 @@ impl Hash for SpikeComponents {
 ///
 /// Layout (#[repr(C)]):
 /// ```text
-/// timestamp_ns:     Timestamp(u64)   =   8 bytes  (offset   0)
-/// origin_node_id:   NodeId(u64)      =   8 bytes  (offset   8)
-/// components:       SpikeComponents  = 168 bytes  (offset  16)
-/// total_dim:        u64              =   8 bytes  (offset 184)
-/// collapse_grade:   Option<u16>      =   4 bytes  (offset 192)
-/// trailing pad      (align 8)        =   4 bytes  (offset 196)
-/// Total                              = 200 bytes
+/// components:       SpikeComponents  = 192 bytes  (offset   0)
+/// timestamp_ns:     Timestamp(u64)   =   8 bytes  (offset 192)
+/// origin_node_id:   NodeId(u64)      =   8 bytes  (offset 200)
+/// total_dim:        u64              =   8 bytes  (offset 208)
+/// collapse_grade:   Option<u16>      =   4 bytes  (offset 216)
+/// trailing pad      (align 64)       =  36 bytes  (offset 220)
+/// Total                              = 256 bytes
 /// ```
 ///
 /// AX-ID: AXIOMA-003, AXIOMA-006, AXIOMA-018
 #[derive(Debug, Clone, Copy)]
-#[repr(C)]
+// CRYSTAL: FO37 — inevitable
+// CRYSTAL: FO38 — inevitable
+// CRYSTAL: FO39 — inevitable
+#[repr(C, align(64))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SpikeEvent {
+    /// Fixed-size multivector snapshot at the moment of firing.
+    /// Zero heap allocation. AX-ID: AXIOMA-018.
+    pub components: SpikeComponents,
+
     /// Monotonic nanosecond timestamp from the originating processing unit.
     /// NOT a global wall-clock — AXIOMA-002 prohibits global simulation clocks.
     pub timestamp_ns: Timestamp,
@@ -607,10 +618,6 @@ pub struct SpikeEvent {
     /// `NodeId` of the oscillator that fired this spike.
     /// Newtype prevents accidental transposition with `timestamp_ns`.
     pub origin_node_id: NodeId,
-
-    /// Fixed-size multivector snapshot at the moment of firing.
-    /// Zero heap allocation. AX-ID: AXIOMA-018.
-    pub components: SpikeComponents,
 
     /// Original `SparseCliffordVector::total_dim` for zero-copy reconstruction
     /// in CRATE-001. `u64` (not `usize`) for stable cross-platform DAX layout.
@@ -626,10 +633,9 @@ pub struct SpikeEvent {
     pub collapse_grade: Option<u16>,
 }
 
-// Compile-time layout invariant: SpikeEvent must fit within 208 bytes.
-// Actual: 8 + 8 + 168 + 8 + 4 (Option<u16>) + 4 (pad to align 8) = 200 bytes.
-static_assertions::const_assert!(core::mem::size_of::<SpikeEvent>() <= 208);
-static_assertions::const_assert!(core::mem::align_of::<SpikeEvent>() >= 8);
+// Compile-time layout invariant: SpikeEvent keeps its hot payload on a 64-byte boundary.
+static_assertions::const_assert_eq!(core::mem::size_of::<SpikeEvent>(), 256);
+static_assertions::const_assert_eq!(core::mem::align_of::<SpikeEvent>(), 64);
 
 impl SpikeEvent {
     /// Returns `true` if this spike is a spontaneous internal drive event
@@ -848,6 +854,8 @@ impl ConsolidationState for Certified {}
 ///
 /// AX-ID: AXIOMA-008 (Saturated), AXIOMA-009 (Certified)
 #[derive(Clone, Copy, Debug)]
+// CRYSTAL: FO40 — inevitable
+#[repr(C, align(64))]
 pub struct DomainConsolidationSignal<State: ConsolidationState> {
     /// Hierarchical domain identifier, e.g. `"physics::electromagnetism"`.
     /// Must be a compile-time string literal — no heap allocation.
@@ -864,16 +872,16 @@ pub struct DomainConsolidationSignal<State: ConsolidationState> {
 }
 
 // Compile-time ABI/layout invariants (no regression vs intended C-like shape):
-// &'static str (16 bytes) + Timestamp(u64) (8 bytes) + f64 (8 bytes) = 32 bytes, align 8.
-static_assertions::assert_eq_size!(DomainConsolidationSignal<Saturated>, [u8; 32]);
-static_assertions::assert_eq_size!(DomainConsolidationSignal<Certified>, [u8; 32]);
+// &'static str (16 bytes) + Timestamp(u64) (8 bytes) + f64 (8 bytes) = 32 bytes, rounded to 64.
+static_assertions::assert_eq_size!(DomainConsolidationSignal<Saturated>, [u8; 64]);
+static_assertions::assert_eq_size!(DomainConsolidationSignal<Certified>, [u8; 64]);
 static_assertions::const_assert_eq!(
     core::mem::align_of::<DomainConsolidationSignal<Saturated>>(),
-    8
+    64
 );
 static_assertions::const_assert_eq!(
     core::mem::align_of::<DomainConsolidationSignal<Certified>>(),
-    8
+    64
 );
 
 impl DomainConsolidationSignal<Saturated> {
@@ -1031,25 +1039,25 @@ mod tests {
     // SpikeComponents — layout and size
     // -----------------------------------------------------------------------
 
-    /// Verify exact struct size with `#[repr(C)]` layout.
+    /// Verify exact struct size with `#[repr(C, align(64))]` layout.
     ///
-    /// SpikeComponents: [u16;16]=32 + [f64;16]=128 + u8=1 + [u8;7]=7 = 168 bytes.
+    /// SpikeComponents payload is 168 bytes, rounded to 192 by cache-line alignment.
     ///
     /// AX-ID: AXIOMA-018
     #[test]
-    fn spike_components_size_is_168_bytes() {
+    fn spike_components_size_is_192_bytes() {
         assert_eq!(
             core::mem::size_of::<SpikeComponents>(),
-            168,
-            "SpikeComponents size changed — SoA([u16;16]=32, [f64;16]=128, u8=1, pad=7)"
+            192,
+            "SpikeComponents size changed — payload 168 bytes plus align(64) rounding"
         );
-        assert_eq!(core::mem::align_of::<SpikeComponents>(), 8);
+        assert_eq!(core::mem::align_of::<SpikeComponents>(), 64);
     }
 
     #[test]
     fn gaussian_pair_layout_and_copy_semantics() {
-        assert_eq!(core::mem::size_of::<GaussianPair>(), 16);
-        assert_eq!(core::mem::align_of::<GaussianPair>(), 8);
+        assert_eq!(core::mem::size_of::<GaussianPair>(), 64);
+        assert_eq!(core::mem::align_of::<GaussianPair>(), 64);
 
         fn require_copy<T: Copy>() {}
         require_copy::<GaussianPair>();
@@ -1063,18 +1071,18 @@ mod tests {
         assert_eq!(copy.second, -0.75);
     }
 
-    /// SpikeEvent size must not exceed 208 bytes (≤3 cache lines).
+    /// SpikeEvent is cache-line aligned and keeps the hot payload first.
     ///
     /// AX-ID: AXIOMA-018
     #[test]
-    fn spike_event_size_within_208_bytes() {
+    fn spike_event_size_is_256_bytes() {
         let sz = core::mem::size_of::<SpikeEvent>();
-        assert!(
-            sz <= 208,
-            "SpikeEvent size {} exceeds 208 bytes — review layout comment in SpikeEvent",
+        assert_eq!(
+            sz, 256,
+            "SpikeEvent size {} diverged from the align(64) layout contract",
             sz
         );
-        assert!(core::mem::align_of::<SpikeEvent>() >= 8);
+        assert_eq!(core::mem::align_of::<SpikeEvent>(), 64);
     }
 
     /// SpikeEvent must be `Copy` — compile-time proof of zero per-spike heap alloc.
