@@ -240,30 +240,48 @@ impl PhaseSemanticsEngine {
 
             let amplitude = osc.amplitude_norm();
             let gradient = lookup_delta_g(delta_g, osc.node_id);
-            let (coherence, divergence) = local_phase_stats(osc.node_id, phase, network);
-            let variance = wrapped_distance_sq(phase, mean_neighbor_phase(osc.node_id, network));
-            let stability = (1.0 - variance / STABILITY_VARIANCE_SCALE).clamp(0.0, 1.0);
-            let marker = marker_from_signals(phase, amplitude, gradient, coherence, divergence);
             self.entries.push(NodeSemanticEntry {
                 state: NodeSemanticState {
                     node: osc.node_id,
-                    marker,
+                    marker: SemanticMarker::Exploration,
                     phase,
                     amplitude,
-                    stability,
+                    stability: 0.0,
                 },
                 trace: SemanticTrace {
-                    previous_marker: marker,
+                    previous_marker: SemanticMarker::Exploration,
                     duration: 1,
                 },
                 delta_g: gradient,
-                phase_variance: variance,
-                local_coherence: coherence,
-                local_divergence: divergence,
+                phase_variance: 0.0,
+                local_coherence: 1.0,
+                local_divergence: 0.0,
             });
         }
 
         self.entries.sort_by_key(|entry| entry.state.node);
+        let neighbor_index = build_neighbor_index(&self.entries, &network.coupling);
+        let phases: Vec<f64> = self.entries.iter().map(|entry| entry.state.phase).collect();
+        for (idx, entry) in self.entries.iter_mut().enumerate() {
+            let phase = entry.state.phase;
+            let (coherence, divergence, mean_phase) =
+                local_phase_stats_indexed(idx, phase, &phases, &neighbor_index);
+            let variance = wrapped_distance_sq(phase, mean_phase);
+            let stability = (1.0 - variance / STABILITY_VARIANCE_SCALE).clamp(0.0, 1.0);
+            let marker = marker_from_signals(
+                phase,
+                entry.state.amplitude,
+                entry.delta_g,
+                coherence,
+                divergence,
+            );
+            entry.state.marker = marker;
+            entry.state.stability = stability;
+            entry.trace.previous_marker = marker;
+            entry.phase_variance = variance;
+            entry.local_coherence = coherence;
+            entry.local_divergence = divergence;
+        }
         self.refresh_traces();
         self.build_tension_edges(network);
         self.build_clusters(network);
@@ -365,7 +383,7 @@ impl PhaseSemanticsEngine {
     }
 
     fn build_tension_edges(&mut self, network: &QuantumKuramotoNetwork) {
-        for &(a, b, _) in &network.coupling {
+        for &(a, b, _, _) in &network.coupling {
             let state_a = self.node_semantic_state(a);
             let state_b = self.node_semantic_state(b);
             if state_a.marker != state_b.marker {
@@ -395,7 +413,7 @@ impl PhaseSemanticsEngine {
             let mut coherence_sum = 1.0;
             let mut count = 1.0;
 
-            for &(src, dst, _) in &network.coupling {
+            for &(src, dst, _, _) in &network.coupling {
                 if src != entry.state.node {
                     continue;
                 }
@@ -579,54 +597,55 @@ fn marker_from_signals(
     }
 }
 
-fn local_phase_stats(node: NodeId, phase: f64, network: &QuantumKuramotoNetwork) -> (f64, f64) {
+fn build_neighbor_index(
+    entries: &[NodeSemanticEntry],
+    edges: &[(NodeId, NodeId, f64, f64)],
+) -> Vec<Vec<usize>> {
+    let node_ids: Vec<NodeId> = entries.iter().map(|entry| entry.state.node).collect();
+    let mut node_to_neighbors = vec![Vec::new(); entries.len()];
+    for &(src, dst, _, _) in edges {
+        let Ok(src_idx) = node_ids.binary_search(&src) else {
+            continue;
+        };
+        let Ok(dst_idx) = node_ids.binary_search(&dst) else {
+            continue;
+        };
+        node_to_neighbors[src_idx].push(dst_idx);
+    }
+    node_to_neighbors
+}
+
+fn local_phase_stats_indexed(
+    node_idx: usize,
+    phase: f64,
+    phases: &[f64],
+    node_to_neighbors: &[Vec<usize>],
+) -> (f64, f64, f64) {
     let mut coherence_acc = 0.0;
     let mut divergence_acc = 0.0;
-    let mut count = 0.0;
+    let mut sum_cos = 0.0;
+    let mut sum_sin = 0.0;
+    let mut count = 0usize;
 
-    for &(src, dst, _) in &network.coupling {
-        if src != node {
-            continue;
-        }
-        let neighbor_phase = network
-            .oscillators
-            .iter()
-            .find(|osc| osc.node_id == dst)
-            .map_or(phase, |osc| wrap_phase(osc.primary_phase()));
+    for &neighbor_idx in &node_to_neighbors[node_idx] {
+        let neighbor_phase = phases[neighbor_idx];
         let divergence = wrapped_distance(phase, neighbor_phase);
         coherence_acc += 1.0 - (divergence / PI).clamp(0.0, 1.0);
         divergence_acc += divergence;
-        count += 1.0;
+        sum_cos += neighbor_phase.cos();
+        sum_sin += neighbor_phase.sin();
+        count += 1;
     }
 
-    if count == 0.0 {
-        (1.0, 0.0)
+    if count == 0 {
+        (1.0, 0.0, 0.0)
     } else {
-        (coherence_acc / count, divergence_acc / count)
-    }
-}
-
-fn mean_neighbor_phase(node: NodeId, network: &QuantumKuramotoNetwork) -> f64 {
-    let mut sum_cos = 0.0;
-    let mut sum_sin = 0.0;
-    let mut count = 0.0;
-
-    for &(src, dst, _) in &network.coupling {
-        if src != node {
-            continue;
-        }
-        if let Some(osc) = network.oscillators.iter().find(|osc| osc.node_id == dst) {
-            let phase = wrap_phase(osc.primary_phase());
-            sum_cos += phase.cos();
-            sum_sin += phase.sin();
-            count += 1.0;
-        }
-    }
-
-    if count == 0.0 {
-        0.0
-    } else {
-        wrap_phase(sum_sin.atan2(sum_cos))
+        let count_f = count as f64;
+        (
+            coherence_acc / count_f,
+            divergence_acc / count_f,
+            wrap_phase(sum_sin.atan2(sum_cos)),
+        )
     }
 }
 
