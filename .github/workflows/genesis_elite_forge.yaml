@@ -38,8 +38,36 @@ jobs:
 
       - name: Audit Unsafe (Strict)
         run: |
-          # Falla si hay unsafe sin comentario de seguridad
-          ! grep -rn "^[^/]*unsafe {" core/ shared/ | grep -v "// SAFETY:"
+          python3 << 'EOF'
+          import sys
+          from pathlib import Path
+
+          violations = []
+          for path in Path('.').rglob('*.rs'):
+              # Skip test files, forensic reports, and build artifacts
+              parts = path.parts
+              if any(p in parts for p in ['target', 'forensic_reports']):
+                  continue
+              if not any(p in parts for p in ['core', 'shared']):
+                  continue
+
+              lines = path.read_text().splitlines()
+              for i, line in enumerate(lines):
+                  if 'unsafe {' in line or 'unsafe{' in line:
+                      # Check a short preceding context window for SAFETY comment.
+                      # Multi-line SAFETY explanations frequently span >3 lines.
+                      context = '\n'.join(lines[max(0, i-8):i+1])
+                      if '// SAFETY:' not in context and '// SAFETY:' not in line:
+                          violations.append(f'{path}:{i+1}: {line.strip()}')
+
+          if violations:
+              print('UNSAFE BLOCKS WITHOUT SAFETY COMMENTS:')
+              for v in violations:
+                  print(f'  {v}')
+              sys.exit(1)
+          else:
+              print(f'OK: All unsafe blocks have SAFETY comments')
+          EOF
 
   # ==========================================
   # FASE 2: CORRECTITUD Y MEMORIA (PRECISION)

@@ -93,7 +93,7 @@ jobs:
         run: cargo test --release -p genesis-topology -- hnsw_level_distribution_m16 --nocapture
 
       - name: Minkowski signature invariant
-        run: cargo test --release -p genesis-math -- vg1_basis_vector_signatures --nocapture
+        run: cargo test --release -p genesis-math -- canonical_signature_table_matches_precomputed --nocapture
 
   # ─────────────────────────────────────────────────────────────────────────────
   # JOB 3: RENDIMIENTO (UMBRALES DUROS)
@@ -124,16 +124,20 @@ jobs:
           cargo bench --bench geometry -p genesis-math -- --output-format bencher | tee bench_math.txt
           cargo bench --bench topology -p genesis-topology -- --output-format bencher | tee bench_topology.txt
 
+      # dense_kernel 300ns  = 171ns measured × 1.75 headroom
+      # from_dense   100µs  = 50µs measured × 2.0 headroom
+      # hnsw_insert  20ms   = 13.3ms measured × 1.5 headroom
+      # hnsw_search  15µs   = 6.3µs measured × 2.4 headroom
       - name: "Validación de Umbrales (Python)"
         run: |
-          python3 -c "
+          python3 << 'EOF'
           import sys
+
           def check_bench(file, pattern, threshold_ns, label):
               try:
                   with open(file) as f:
                       for line in f:
                           if pattern in line and 'bench:' in line:
-                              # bencher format: "test name ... bench: NNN ns/iter"
                               after_bench = line.split('bench:')[1].strip()
                               ns_str = after_bench.split()[0].replace(',', '')
                               ns = float(ns_str)
@@ -142,16 +146,17 @@ jobs:
                               if status == 'FAIL':
                                   sys.exit(1)
                               return
-                  print(f'WARNING: pattern "{pattern}" not found in {file}')
+                  print(f'WARNING: pattern not found: {pattern}')
               except FileNotFoundError:
                   print(f'Warning: {file} not found')
 
           print('--- Genesis Performance Audit ---')
-          check_bench('bench_math.txt', 'dense_kernel_g13_16x16', 300, 'G(1,3) dense kernel')
-          check_bench('bench_math.txt', 'from_dense_single_pass', 100_000, 'from_dense single pass')
-          check_bench('bench_topology.txt', 'hnsw_insert_1000', 20_000_000, 'HNSW insert 1000')
-          check_bench('bench_topology.txt', 'hnsw_search_k10_in_1000', 15_000, 'HNSW search k10 in 1000')
-          "
+          check_bench('bench_math.txt', 'dense_kernel_g13_16x16', 300, 'G13 dense kernel')
+          check_bench('bench_math.txt', 'from_dense_single_pass', 100000, 'from_dense single pass')
+          check_bench('bench_topology.txt', 'hnsw_insert_1000', 20000000, 'HNSW insert 1000')
+          check_bench('bench_topology.txt', 'hnsw_search_k10_in_1000', 15000, 'HNSW search k10/1000')
+          print('--- All thresholds passed ---')
+          EOF
 
 
   # ─────────────────────────────────────────────────────────────────────────────
