@@ -116,6 +116,7 @@ pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetad
     let mut active_mask = 0u32;
     let mut max_abs_coeff = 0.0f64;
     let mut clifford_norm_sq = 0.0f64;
+    let mut comp_norm = 0.0f64;
 
     for k in 0..TOTAL_BLADES {
         let mut coeff = buf[k];
@@ -129,7 +130,11 @@ pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetad
             active_mask |= 1u32 << k;
             // CRYSTAL: FO100 — inevitable
             max_abs_coeff = max_abs_coeff.max(abs);
-            clifford_norm_sq += coeff * coeff * CLIFFORD_NORM_WEIGHTS_F64[k];
+            let term = coeff * coeff * CLIFFORD_NORM_WEIGHTS_F64[k];
+            let y_norm = term - comp_norm;
+            let t_norm = clifford_norm_sq + y_norm;
+            comp_norm = (t_norm - clifford_norm_sq) - y_norm;
+            clifford_norm_sq = t_norm;
         } else {
             buf[k] = 0.0;
         }
@@ -1137,8 +1142,13 @@ mod tests {
                 }
             }
             let mut clifford_norm_sq = 0.0f64;
+            let mut comp_norm = 0.0f64;
             for i in 0..TOTAL_BLADES {
-                clifford_norm_sq += buf[i] * buf[i] * CLIFFORD_NORM_WEIGHTS_F64[i];
+                let term = buf[i] * buf[i] * CLIFFORD_NORM_WEIGHTS_F64[i];
+                let y_norm = term - comp_norm;
+                let t_norm = clifford_norm_sq + y_norm;
+                comp_norm = (t_norm - clifford_norm_sq) - y_norm;
+                clifford_norm_sq = t_norm;
             }
             DerivedMetadata::new(active_mask, max_abs_coeff, clifford_norm_sq)
         }
