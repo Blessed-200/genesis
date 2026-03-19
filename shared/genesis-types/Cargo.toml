@@ -30,8 +30,9 @@ serde   = ["dep:serde"]
 # Comment preserved as integration instruction for FASE 6.
 
 [dev-dependencies]
-criterion = "0.5"
-ring      = "0.17"
+criterion  = "0.5"
+ring       = "0.17"
+serde_json = { version = "1", optional = false }
 
 [[bench]]
 name    = "hash_bench"

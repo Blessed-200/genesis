@@ -194,15 +194,24 @@ fn heap_audit_update_cycle_performs_zero_allocations() {
     let _ = net.order_parameter();
     let _ = net.total_curvature();
 
-    let before = ALLOC_CALLS.load(Ordering::Relaxed);
+    // Reset counter to zero immediately before the measurement
+    // window. This eliminates any allocations from test binary
+    // initialization, parallel test threads, or runtime setup
+    // that occurred before this point.
+    // The _guard mutex ensures no other test runs concurrently
+    // (TEST_LOCK), so the window is clean.
+    ALLOC_CALLS.store(0, Ordering::SeqCst);
+
+    let before = ALLOC_CALLS.load(Ordering::SeqCst);
     for _ in 0..128 {
         net.step(0.01);
     }
-    let after = ALLOC_CALLS.load(Ordering::Relaxed);
+    let after = ALLOC_CALLS.load(Ordering::SeqCst);
 
-    // Steady-state invariant: after full warmup, net.step()
-    // must perform zero heap allocations. One-time setup
-    // allocations during warmup are permitted and expected.
+    // Steady-state invariant: net.step() performs zero heap
+    // allocations in the measured window. Counter reset to 0
+    // immediately before the window eliminates init noise.
+    // TEST_LOCK ensures single-threaded execution of this test.
     // AX-ID: AXIOMA-013, H_dinámica (LEY_FUNDACIONAL §3.2)
     assert_eq!(
         after - before,
