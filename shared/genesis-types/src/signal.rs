@@ -278,8 +278,8 @@ pub enum SpikeComponentsError {
 /// values:  [f64; 16] = 128 bytes  (offset   0) ← SIMD-aligned: vmovapd/vloadpd
 /// indices: [u16; 16] =  32 bytes  (offset 128)
 /// count:   u8        =   1 byte   (offset 160)
-/// _pad:    [u8;  7]  =   7 bytes  (offset 161)
-/// _tail_pad:[u8; 24]  =  24 bytes  (offset 168)
+/// pad:      [u8;  7]  =   7 bytes  (offset 161)
+/// tail_pad: [u8; 24]  =  24 bytes  (offset 168)
 /// Total                192 bytes  (align 64)
 /// ```
 ///
@@ -303,11 +303,11 @@ pub struct SpikeComponents {
     /// Number of active (blade, coefficient) pairs. Invariant: `count ≤ SPIKE_MAX_COMPONENTS`.
     pub count: u8,
     /// Explicit payload padding to align the next field to an 8-byte boundary.
-    _pad: [u8; 7],
+    pad: [u8; 7],
     /// Explicit cache-line tail padding. Zero-initialized.
     /// Ensures deterministic raw-byte layout for DAX zero-copy.
     /// AX-ID: AXIOMA-018
-    _tail_pad: [u8; 24],
+    tail_pad: [u8; 24],
 }
 
 // Compile-time layout verification.
@@ -330,7 +330,7 @@ impl SpikeComponents {
     pub const fn padding_is_zeroed(&self) -> bool {
         let mut i = 0;
         while i < 7 {
-            if self._pad[i] != 0 {
+            if self.pad[i] != 0 {
                 return false;
             }
             i += 1;
@@ -338,7 +338,7 @@ impl SpikeComponents {
 
         let mut j = 0;
         while j < 24 {
-            if self._tail_pad[j] != 0 {
+            if self.tail_pad[j] != 0 {
                 return false;
             }
             j += 1;
@@ -456,8 +456,8 @@ impl SpikeComponents {
             indices,
             values,
             count: count_u8,
-            _pad: [0u8; 7],
-            _tail_pad: [0u8; 24],
+            pad: [0u8; 7],
+            tail_pad: [0u8; 24],
         }
     }
 
@@ -664,8 +664,8 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                     values,
                     indices,
                     count,
-                    _pad: [0u8; 7],
-                    _tail_pad: [0u8; 24],
+                    pad: [0u8; 7],
+                    tail_pad: [0u8; 24],
                 })
             }
 
@@ -701,8 +701,8 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                     values: values.ok_or_else(|| de::Error::missing_field("values"))?,
                     indices: indices.ok_or_else(|| de::Error::missing_field("indices"))?,
                     count: count.ok_or_else(|| de::Error::missing_field("count"))?,
-                    _pad: [0u8; 7],
-                    _tail_pad: [0u8; 24],
+                    pad: [0u8; 7],
+                    tail_pad: [0u8; 24],
                 })
             }
         }
@@ -731,7 +731,7 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
 /// origin_node_id:   NodeId(u64)      =   8 bytes  (offset 200)
 /// total_dim:        u64              =   8 bytes  (offset 208)
 /// collapse_grade:   Option<u16>      =   4 bytes  (offset 216)
-/// _tail_pad:        [u8; 36]         =  36 bytes  (offset 220)
+/// tail_pad:         [u8; 36]         =  36 bytes  (offset 220)
 /// Total                              = 256 bytes
 /// ```
 ///
@@ -770,7 +770,7 @@ pub struct SpikeEvent {
     /// Ensures deterministic raw-byte layout for DAX zero-copy.
     /// Version: SPIKE_EVENT_LAYOUT_VERSION = 2
     /// AX-ID: AXIOMA-018
-    _tail_pad: [u8; 36],
+    tail_pad: [u8; 36],
 }
 
 // Compile-time layout invariant: SpikeEvent keeps its hot payload on a 64-byte boundary.
@@ -795,7 +795,7 @@ impl SpikeEvent {
             origin_node_id,
             total_dim,
             collapse_grade,
-            _tail_pad: [0u8; 36],
+            tail_pad: [0u8; 36],
         }
     }
 
@@ -823,7 +823,7 @@ impl SpikeEvent {
     pub const fn tail_padding_is_zeroed(&self) -> bool {
         let mut i = 0;
         while i < 36 {
-            if self._tail_pad[i] != 0 {
+            if self.tail_pad[i] != 0 {
                 return false;
             }
             i += 1;
