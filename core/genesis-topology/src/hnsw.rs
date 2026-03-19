@@ -1719,8 +1719,8 @@ mod tests {
                 let scalar = fast_metric_distance(&query, &vectors[slot]);
                 assert!((distances[slot] - scalar).abs() < 1e-10);
             }
-            for slot in count..SIMD_BATCH_WIDTH {
-                assert!(distances[slot].is_infinite());
+            for distance in distances.iter().take(SIMD_BATCH_WIDTH).skip(count) {
+                assert!(distance.is_infinite());
             }
         }
     }
@@ -2407,7 +2407,7 @@ mod tests {
                 .enumerate()
                 .map(|(idx, v)| {
                     #[cfg(feature = "hnsw-f16")]
-                    let d = geometric_distance(v, &query);
+                    let d = crate::geometric_distance(v, &query);
                     #[cfg(not(feature = "hnsw-f16"))]
                     let d = fast_metric_distance(&query, v);
                     (idx, d)
@@ -2524,11 +2524,11 @@ mod tests {
         let mut found = false;
         let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
         for _ in 0..2048 {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             let q0 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             let q1 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             let q15 = ((seed >> 11) as f64) / ((1_u64 << 53) as f64);
             let query =
                 SparseCliffordVector::from_iter([(0, q0), (1, q1), (15, q15)]).expect("valid");

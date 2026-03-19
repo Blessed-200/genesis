@@ -320,6 +320,33 @@ static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 64
 pub const SPIKE_EVENT_LAYOUT_VERSION: u32 = 2;
 
 impl SpikeComponents {
+    /// Returns `true` if all explicit padding fields are zeroed.
+    ///
+    /// Used to verify the DAX layout contract after construction or
+    /// deserialization without exposing private implementation details.
+    ///
+    /// AX-ID: AXIOMA-018
+    #[inline]
+    pub const fn padding_is_zeroed(&self) -> bool {
+        let mut i = 0;
+        while i < 7 {
+            if self._pad[i] != 0 {
+                return false;
+            }
+            i += 1;
+        }
+
+        let mut j = 0;
+        while j < 24 {
+            if self._tail_pad[j] != 0 {
+                return false;
+            }
+            j += 1;
+        }
+
+        true
+    }
+
     fn from_pairs_internal<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = (u16, f64)>,
@@ -784,6 +811,25 @@ impl SpikeEvent {
     #[inline]
     pub const fn is_phase_collapse(&self) -> bool {
         self.collapse_grade.is_some()
+    }
+
+    /// Returns `true` if the explicit tail padding is fully zero-initialized.
+    ///
+    /// Used to verify the DAX layout contract after deserialization or
+    /// construction without exposing the private padding field.
+    ///
+    /// AX-ID: AXIOMA-018
+    #[inline]
+    pub const fn tail_padding_is_zeroed(&self) -> bool {
+        let mut i = 0;
+        while i < 36 {
+            if self._tail_pad[i] != 0 {
+                return false;
+            }
+            i += 1;
+        }
+
+        true
     }
 
     /// Number of non-zero components in the associated multivector snapshot.
@@ -1361,7 +1407,14 @@ mod tests {
             16,
             Some(1),
         );
-        assert_eq!(event._tail_pad, [0u8; 36]);
+        assert!(
+            event.components.padding_is_zeroed(),
+            "SpikeComponents padding must be zero after construction"
+        );
+        assert!(
+            event.tail_padding_is_zeroed(),
+            "SpikeEvent tail padding must be zero after construction"
+        );
     }
 
     /// SpikeEvent must be `Copy` — compile-time proof of zero per-spike heap alloc.
@@ -2010,17 +2063,26 @@ mod tests {
             let recovered: SpikeEvent = serde_json::from_str(&json).unwrap();
 
             assert_eq!(original, recovered);
-            assert_eq!(recovered._tail_pad, [0u8; 36]);
+            assert!(
+                recovered.tail_padding_is_zeroed(),
+                "SpikeEvent tail padding must be zero after deserialization"
+            );
 
-            let orig_bytes = unsafe {
+            // SAFETY: SpikeEvent is repr(C, align(64)) with all fields
+            // initialized. size_of::<SpikeEvent>() bytes starting at the
+            // struct's address are valid, initialized, and stable for the
+            // lifetime of `original`. The cast is read-only.
+            let orig_bytes: &[u8] = unsafe {
                 core::slice::from_raw_parts(
-                    &original as *const _ as *const u8,
+                    (&raw const original).cast::<u8>(),
                     core::mem::size_of::<SpikeEvent>(),
                 )
             };
-            let recv_bytes = unsafe {
+            // SAFETY: Same invariants as orig_bytes — recovered is a
+            // fully initialized SpikeEvent with zeroed tail padding.
+            let recv_bytes: &[u8] = unsafe {
                 core::slice::from_raw_parts(
-                    &recovered as *const _ as *const u8,
+                    (&raw const recovered).cast::<u8>(),
                     core::mem::size_of::<SpikeEvent>(),
                 )
             };
