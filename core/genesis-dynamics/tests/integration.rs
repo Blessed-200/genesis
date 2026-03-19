@@ -4,8 +4,8 @@
     clippy::uninlined_format_args
 )]
 
-use genesis_dynamics::*;
 use genesis_dynamics::kuramoto_critical_coupling;
+use genesis_dynamics::*;
 use genesis_types::NodeId;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
