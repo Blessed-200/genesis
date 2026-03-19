@@ -191,11 +191,14 @@ fn geometric_product_scalar_sparse(
     while mask_a != 0 {
         let i = mask_a.trailing_zeros() as usize;
         let coef_a = a_coeffs[i];
+        // loop-invariant, hoisted
+        // CRYSTAL: O13 — inevitable
+        let sign_row = &CAYLEY_SIGN_F64[i];
         let mut mask_b = b_mask;
         while mask_b != 0 {
             let j = mask_b.trailing_zeros() as usize;
             let k = i ^ j;
-            result_buf[k] += coef_a * b_coeffs[j] * CAYLEY_SIGN_F64[i][j];
+            result_buf[k] += coef_a * b_coeffs[j] * sign_row[j];
             mask_b &= mask_b - 1;
         }
         mask_a &= mask_a - 1;
@@ -209,9 +212,12 @@ fn geometric_product_scalar_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     for (i, &coef_a) in a_coeffs.iter().enumerate() {
+        // loop-invariant, hoisted
+        // CRYSTAL: O15 — inevitable
+        let sign_row = &CAYLEY_SIGN_F64[i];
         for (j, &coef_b) in b_coeffs.iter().enumerate() {
             let k = i ^ j;
-            result_buf[k] += coef_a * coef_b * CAYLEY_SIGN_F64[i][j];
+            result_buf[k] += coef_a * coef_b * sign_row[j];
         }
     }
 }

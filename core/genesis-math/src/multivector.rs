@@ -127,9 +127,8 @@ pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetad
         let abs = coeff.abs();
         if abs > COGNITIVE_PLANCK_CONSTANT {
             active_mask |= 1u32 << k;
-            if abs > max_abs_coeff {
-                max_abs_coeff = abs;
-            }
+            // CRYSTAL: FO100 — inevitable
+            max_abs_coeff = max_abs_coeff.max(abs);
             clifford_norm_sq += coeff * coeff * CLIFFORD_NORM_WEIGHTS_F64[k];
         } else {
             buf[k] = 0.0;
