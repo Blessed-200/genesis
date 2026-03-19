@@ -422,6 +422,9 @@ impl QuantumKuramotoNetwork {
             self.sat_scratch[i] = 1.0 - amp;
         }
 
+        let noise_enabled = self.temperature > 0.0;
+        // loop-invariant, hoisted
+        // CRYSTAL: O17 — inevitable
         let sqrt_2k_t_dt = self.temperature.mul_add(2.0 * dt, 0.0).sqrt();
 
         for i in 0..n {
@@ -468,7 +471,7 @@ impl QuantumKuramotoNetwork {
 
             for (g, &coupling_sum) in coupling_sums.iter().enumerate() {
                 let omega = self.oscillators[i].frequencies[g];
-                let eta = if self.temperature > 0.0 {
+                let eta = if noise_enabled {
                     self.next_gaussian() * sqrt_2k_t_dt
                 } else {
                     0.0
@@ -613,9 +616,13 @@ impl QuantumKuramotoNetwork {
         let (start, end) = coupling_offsets[i];
         let phi_i = &phase_scratch[i];
         for &(_, j_u32, gamma, gauge, _) in &coupling_idx[start..end] {
-            if oscillators[j_u32 as usize].state.contributes_to_sync() {
+            #[allow(clippy::cast_possible_truncation)]
+            let j = j_u32 as usize;
+            // loop-invariant, hoisted
+            // CRYSTAL: O40 — inevitable
+            if oscillators[j].state.contributes_to_sync() {
                 #[allow(clippy::cast_possible_truncation)]
-                let phi_j = &phase_scratch[j_u32 as usize];
+                let phi_j = &phase_scratch[j];
                 for (g, sum_g) in sums.iter_mut().enumerate() {
                     *sum_g = gamma.mul_add((phi_j[g] - phi_i[g] + gauge).sin(), *sum_g);
                 }
@@ -877,8 +884,11 @@ impl QuantumKuramotoNetwork {
     fn refresh_coupling_idx_fields(&mut self) {
         for entry in &mut self.coupling_idx {
             let public_idx = entry.4 as usize;
-            entry.2 = self.coupling[public_idx].2;
-            entry.3 = self.coupling[public_idx].3;
+            let (_, _, gamma, gauge) = self.coupling[public_idx];
+            // loop-invariant, hoisted
+            // CRYSTAL: O91 — inevitable
+            entry.2 = gamma;
+            entry.3 = gauge;
         }
     }
 
@@ -940,6 +950,8 @@ impl QuantumKuramotoNetwork {
             let src_idx = src_idx_u32 as usize;
             let mid_idx = mid_idx_u32 as usize;
             let edge_ij = edge_ij_u32 as usize;
+            // loop-invariant, hoisted
+            // CRYSTAL: O117 — inevitable
             let (start, end) = self.coupling_offsets[mid_idx];
             let src = self.oscillators[src_idx].node_id;
 
@@ -952,6 +964,8 @@ impl QuantumKuramotoNetwork {
                 if let Ok(edge_ki) = self.edge_position(dst, src) {
                     let triangle_idx = self.triangles.len();
                     let edge_jk = edge_jk_u32 as usize;
+                    // loop-invariant, hoisted
+                    // CRYSTAL: O123 — inevitable
                     self.triangles.push((edge_ij, edge_jk, edge_ki));
                     self.edge_to_triangles[edge_ij].push(triangle_idx);
                     self.edge_to_triangles[edge_jk].push(triangle_idx);

@@ -64,7 +64,10 @@ const fn sanitize_trace(trace: f64) -> f64 {
 
 fn target_from_sparse_obs(obs: Option<&SparseCliffordVector>) -> Option<[f64; 16]> {
     obs.map_or(Some([0.0; 16]), |o| {
-        let target: [f64; 16] = core::array::from_fn(|i| o.coeffs[i]);
+        let coeffs = &o.coeffs;
+        // loop-invariant, hoisted
+        // CRYSTAL: O18 — inevitable
+        let target: [f64; 16] = core::array::from_fn(|i| coeffs[i]);
         is_finite_vec16(&target).then_some(target)
     })
 }
@@ -353,15 +356,19 @@ impl VFEMinimizer {
             }
         }
         let belief = &self.beliefs[idx];
+        let mean_full = &belief.mean_full;
+        let precision_full = &belief.precision_full;
+        // loop-invariant, hoisted
+        // CRYSTAL: O29 — inevitable
         let target: [f64; 4] = obs.map_or([0.0; 4], |o| *o);
         // VFE sobre los 4 blades de grado 1 — Kahan summation.
         // Applies VFE_BLADE_WEIGHTS for consistency with compute_vfe_with_grad (FIX-3).
         let mut sum = 0.0f64;
         let mut comp = 0.0f64;
         for (k, &blade_idx) in GRADE1_BLADE_INDICES.iter().enumerate() {
-            let delta = belief.mean_full[blade_idx] - target[k];
+            let delta = mean_full[blade_idx] - target[k];
             let w = VFE_BLADE_WEIGHTS[blade_idx];
-            let weighted_precision = w * belief.precision_full[blade_idx];
+            let weighted_precision = w * precision_full[blade_idx];
             let term = delta.mul_add(delta * weighted_precision, 0.0);
             let y = term - comp;
             let t = sum + y;
@@ -405,6 +412,10 @@ impl VFEMinimizer {
         };
 
         let belief = &self.beliefs[idx];
+        let mean_full = &belief.mean_full;
+        let precision_full = &belief.precision_full;
+        // loop-invariant, hoisted
+        // CRYSTAL: O31 — inevitable
         let mut vfe = 0.0f64;
         let mut comp = 0.0f64;
         let mut grad = [0.0f64; 16];
@@ -414,8 +425,8 @@ impl VFEMinimizer {
         // direction inconsistent with the loss landscape (different metric in loss vs gradient).
         // Now both use the same weighted metric: F_i = w_i · Π_i · δ_i²
         for i in 0..16 {
-            let delta = belief.mean_full[i] - target[i];
-            let prec = belief.precision_full[i];
+            let delta = mean_full[i] - target[i];
+            let prec = precision_full[i];
             let w = VFE_BLADE_WEIGHTS[i];
             let weighted_precision = w * prec;
             let term = delta.mul_add(delta * weighted_precision, 0.0);
@@ -517,7 +528,9 @@ impl VFEMinimizer {
 
         let old_trace = fisher.trace;
         let error_mag = error_sq.sqrt();
-        fisher.trace = sanitize_trace(old_trace / step.mul_add(error_mag.max(TRACE_MIN), 1.0));
+        let trace_scale = step.mul_add(error_mag.max(TRACE_MIN), 1.0);
+        // CRYSTAL: O43 — inevitable
+        fisher.trace = sanitize_trace(old_trace / trace_scale);
         fisher.delta_g = 0.5_f64.mul_add((fisher.trace - old_trace).abs(), 0.0);
     }
 
@@ -563,7 +576,9 @@ impl VFEMinimizer {
 
         let old_trace = fisher.trace;
         let error_mag = error_sq.sqrt();
-        fisher.trace = sanitize_trace(old_trace / step.mul_add(error_mag.max(TRACE_MIN), 1.0));
+        let trace_scale = step.mul_add(error_mag.max(TRACE_MIN), 1.0);
+        // CRYSTAL: O46 — inevitable
+        fisher.trace = sanitize_trace(old_trace / trace_scale);
         fisher.delta_g = 0.5_f64.mul_add((fisher.trace - old_trace).abs(), 0.0);
     }
 

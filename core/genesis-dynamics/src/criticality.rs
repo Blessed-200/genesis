@@ -80,9 +80,11 @@ fn ks_p_value(z: f64) -> f64 {
     // alternating series: it measures the actual change in the estimate.
     let mut sum = 0.0f64;
     let mut prev_sum = f64::NAN; // NAN ensures first iteration never triggers break
+    let z_sq = z * z;
+    // CRYSTAL: O1 — inevitable
     for k in 1_u32..=20 {
         let k_f = f64::from(k);
-        let term = (-2.0 * (k_f * k_f).mul_add(z * z, 0.0)).exp();
+        let term = (-2.0 * (k_f * k_f).mul_add(z_sq, 0.0)).exp();
         if k % 2 == 1 {
             sum += term;
         } else {
@@ -112,8 +114,10 @@ impl CriticalityMonitor {
     /// Registra el tamaño de una avalancha.
     /// Sobrescribe la entrada más antigua cuando el buffer está lleno.
     pub fn record_avalanche(&mut self, size: u32) {
+        let capacity = self.capacity.get();
+        // CRYSTAL: O6 — inevitable
         self.avalanche_sizes[self.write_pos] = size;
-        self.write_pos = (self.write_pos + 1) % self.capacity.get();
+        self.write_pos = (self.write_pos + 1) % capacity;
         self.total_recorded += 1;
     }
 
@@ -217,6 +221,9 @@ impl CriticalityMonitor {
 
         // Estimar τ (Clauset); tau_exponent ya maneja internamente la condición de muestras suficientes
         let tau = self.tau_exponent()?;
+        let exponent = tau - 1.0;
+        // loop-invariant, hoisted
+        // CRYSTAL: O29 — inevitable
 
         // Ordenar para el test KS
         sizes.sort_unstable();
@@ -228,7 +235,6 @@ impl CriticalityMonitor {
         for (i, &s) in sizes.iter().enumerate() {
             let s_f = f64::from(s);
             let f_emp = (i as f64 + 1.0) / n_f;
-            let exponent = tau - 1.0; // > 0 para τ > 1
             let f_teo = if exponent > 0.0 {
                 1.0 - (s_f / x_min).powf(-exponent)
             } else {

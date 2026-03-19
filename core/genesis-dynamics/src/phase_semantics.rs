@@ -373,12 +373,13 @@ impl PhaseSemanticsEngine {
 
     fn refresh_traces(&mut self) {
         for entry in &mut self.entries {
-            if entry.trace.previous_marker == entry.state.marker {
-                entry.trace.duration = entry.trace.duration.saturating_add(1);
-            } else {
-                entry.trace.previous_marker = entry.state.marker;
-                entry.trace.duration = 1;
-            }
+            let same_marker = entry.trace.previous_marker == entry.state.marker;
+            let same_mask = (same_marker as u32).wrapping_neg();
+            let next_duration = entry.trace.duration.saturating_add(1);
+            // CRYSTAL: O88 — inevitable
+            entry.trace.duration = (next_duration & same_mask) | (1_u32 & !same_mask);
+            entry.trace.previous_marker =
+                [entry.state.marker, entry.trace.previous_marker][same_marker as usize];
         }
     }
 
@@ -663,12 +664,15 @@ fn dominant_and_entropy(entries: &[NodeSemanticEntry]) -> (SemanticMarker, f64) 
     }
 
     let total = entries.len() as f64;
+    let inv_total = 1.0 / total;
+    // loop-invariant, hoisted
+    // CRYSTAL: O57 — inevitable
     let mut entropy = 0.0;
     for count in counts {
         if count == 0 {
             continue;
         }
-        let p = count as f64 / total;
+        let p = count as f64 * inv_total;
         entropy -= p * p.ln();
     }
 
