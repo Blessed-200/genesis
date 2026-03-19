@@ -18,6 +18,9 @@ const N_TABLES: usize = 4;
 /// Total projection vectors needed.
 const TOTAL_PROJECTIONS: usize = N_TABLES * N_PROJECTIONS;
 
+/// Exact reciprocal of `2^53` for PRNG-to-`f64` conversion.
+const U53_RECIP: f64 = 1.0 / (1u64 << 53) as f64;
+
 /// Canonical grade-2 blade indices in G(1,3): e01, e02, e12, e03, e13, e23.
 const BIVECTOR_BLADES: [usize; 6] = [0b0011, 0b0101, 0b0110, 0b1001, 0b1010, 0b1100];
 
@@ -39,7 +42,7 @@ const PROJ_COEFFS: [[f64; 16]; TOTAL_PROJECTIONS] = {
             seed = seed
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1_442_695_040_888_963_407);
-            let sign = if (seed >> 63) == 0 { 1.0 } else { -1.0 };
+            let sign = seed_sign(seed);
             seed = seed
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1_442_695_040_888_963_407);
@@ -48,7 +51,9 @@ const PROJ_COEFFS: [[f64; 16]; TOTAL_PROJECTIONS] = {
             // (técnica estándar de conversión PRNG→[0,1): Vigna 2015, §2).
             // 1u64 << 53 = 2^53, exactamente representable como f64.
             #[allow(clippy::cast_precision_loss)]
-            let mag = ((seed >> 11) as f64) * (1.0 / (1u64 << 53) as f64);
+            let mag = ((seed >> 11) as f64) * U53_RECIP;
+            // loop-invariant, hoisted
+            // CRYSTAL: O3, O4 — inevitable
             out[p][blade] = sign * (mag * 0.9 + 0.1);
             b += 1;
         }
@@ -56,6 +61,15 @@ const PROJ_COEFFS: [[f64; 16]; TOTAL_PROJECTIONS] = {
     }
     out
 };
+
+#[inline]
+const fn seed_sign(seed: u64) -> f64 {
+    if (seed >> 63) == 0 {
+        1.0
+    } else {
+        -1.0
+    }
+}
 
 /// One LSH table: sorted (`bucket_id`, Vec<NodeId>) pairs, binary searched.
 struct LshTable {
@@ -367,12 +381,14 @@ mod tests {
                 seed = seed
                     .wrapping_mul(6_364_136_223_846_793_005)
                     .wrapping_add(1_442_695_040_888_963_407);
-                let sign = if (seed >> 63) == 0 { 1.0 } else { -1.0 };
+                let sign = seed_sign(seed);
                 seed = seed
                     .wrapping_mul(6_364_136_223_846_793_005)
                     .wrapping_add(1_442_695_040_888_963_407);
                 #[allow(clippy::cast_precision_loss)]
-                let mag = ((seed >> 11) as f64) * (1.0 / (1u64 << 53) as f64);
+                let mag = ((seed >> 11) as f64) * U53_RECIP;
+                // loop-invariant, hoisted
+                // CRYSTAL: O57, O58 — inevitable
                 out[p][b] = sign * (mag * 0.9 + 0.1);
                 b += 1;
             }
@@ -397,8 +413,11 @@ mod tests {
         coeffs: &[[f64; 16]; TOTAL_PROJECTIONS],
     ) -> u32 {
         let mut bits: u32 = 0;
+        let start = t * N_PROJECTIONS;
+        // loop-invariant, hoisted
+        // CRYSTAL: FO50 — inevitable
         for p in 0..N_PROJECTIONS {
-            let proj_idx = t * N_PROJECTIONS + p;
+            let proj_idx = start + p;
             if generic_project(vec, proj_idx, coeffs) >= 0.0 {
                 bits |= 1 << p;
             }
