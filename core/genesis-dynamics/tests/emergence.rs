@@ -127,8 +127,8 @@ fn belief_delta(before: &[f64; 16], after: &[f64; 16]) -> f64 {
 /// to `u32` with saturating behavior at the type boundaries.
 ///
 /// Precondition: `value` is the result of `.floor()` on a positive
-/// finite f64 from an inverse-CDF power-law sampler.
-/// Values >= u32::MAX saturate to u32::MAX; values < 1.0 clamp to 1.
+/// finite `f64` from an inverse-CDF power-law sampler.
+/// Values >= `u32::MAX` saturate to `u32::MAX`; values < `1.0` clamp to `1`.
 #[inline]
 fn power_law_sample_to_u32(value: f64) -> u32 {
     if value >= f64::from(u32::MAX) {
