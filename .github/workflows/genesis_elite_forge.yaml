@@ -29,12 +29,17 @@ jobs:
       - name: Formato y Clippy Pedantic
         run: |
           cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets -- -D clippy::pedantic -W clippy::nursery
+          cargo clippy --workspace --all-targets --all-features -- \
+            -D warnings \
+            -D clippy::pedantic \
+            -D clippy::nursery \
+            -A clippy::module_name_repetitions \
+            -A clippy::must_use_candidate
 
       - name: Audit Unsafe (Strict)
         run: |
           # Falla si hay unsafe sin comentario de seguridad
-          ! grep -rn "unsafe {" core/ shared/ | grep -v "// SAFETY:"
+          ! grep -rn "^[^/]*unsafe {" core/ shared/ | grep -v "// SAFETY:"
 
   # ==========================================
   # FASE 2: CORRECTITUD Y MEMORIA (PRECISION)

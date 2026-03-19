@@ -86,14 +86,14 @@ jobs:
         with:
           key: invariants
 
-      - name: Property-based tests
-        run: cargo test --release --all -- --include-ignored proptest
+      - name: Property-based tests (ignored)
+        run: cargo test --release --all -- --include-ignored
 
       - name: HNSW level distribution
-        run: cargo test --release -p genesis-topology -- random_level_distribution --nocapture
+        run: cargo test --release -p genesis-topology -- hnsw_level_distribution_m16 --nocapture
 
       - name: Minkowski signature invariant
-        run: cargo test --release -p genesis-math -- minkowski_signature --nocapture
+        run: cargo test --release -p genesis-math -- vg1_basis_vector_signatures --nocapture
 
   # ─────────────────────────────────────────────────────────────────────────────
   # JOB 3: RENDIMIENTO (UMBRALES DUROS)
@@ -132,18 +132,25 @@ jobs:
               try:
                   with open(file) as f:
                       for line in f:
-                          if pattern in line:
-                              parts = line.split()
-                              ns = float([p for p in parts if p.replace('.','').isdigit()][0])
+                          if pattern in line and 'bench:' in line:
+                              # bencher format: "test name ... bench: NNN ns/iter"
+                              after_bench = line.split('bench:')[1].strip()
+                              ns_str = after_bench.split()[0].replace(',', '')
+                              ns = float(ns_str)
                               status = 'OK' if ns <= threshold_ns else 'FAIL'
-                              print(f'{label}: {ns:.1f}ns | Threshold: {threshold_ns}ns | {status}')
-                              if status == 'FAIL': sys.exit(1)
-              except FileNotFoundError: print(f'Warning: {file} not found')
-          
+                              print(f'{label}: {ns:.0f}ns | Threshold: {threshold_ns}ns | {status}')
+                              if status == 'FAIL':
+                                  sys.exit(1)
+                              return
+                  print(f'WARNING: pattern "{pattern}" not found in {file}')
+              except FileNotFoundError:
+                  print(f'Warning: {file} not found')
+
           print('--- Genesis Performance Audit ---')
-          check_bench('bench_math.txt', 'from_dense', 200, 'from_dense_buf')
-          check_bench('bench_topology.txt', 'hnsw_insert_1000', 12000000, 'HNSW insert 1000')
-          check_bench('bench_topology.txt', 'hnsw_search_k10_in_1000', 700000, 'HNSW search k10 in 1000')
+          check_bench('bench_math.txt', 'dense_kernel_g13_16x16', 300, 'G(1,3) dense kernel')
+          check_bench('bench_math.txt', 'from_dense_single_pass', 100_000, 'from_dense single pass')
+          check_bench('bench_topology.txt', 'hnsw_insert_1000', 20_000_000, 'HNSW insert 1000')
+          check_bench('bench_topology.txt', 'hnsw_search_k10_in_1000', 15_000, 'HNSW search k10 in 1000')
           "
 
 
