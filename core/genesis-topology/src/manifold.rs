@@ -54,15 +54,20 @@ const POWER_REFINE_MAX_ITERS: usize = 800;
 /// CRATE-004 calculará coordenadas usando la fórmula de proyección basada en
 /// curvatura local: `r = tanh(K_avg_node / 2)`, ángulo desde sincronía Kuramoto.
 ///
-/// # Preparación para CRATE-004
-/// ```ignore
-/// // En DiscreteRicciFlow::step() (CRATE-004):
-/// let r = (k_avg_node / 2.0).tanh().clamp(0.0, 0.999);
-/// let theta = kuramoto_phase_primary;
-/// manifold.set_hyperbolic_coord(node_id, HyperbolicCoord::new(
-///     r * theta.cos(),
-///     r * theta.sin(),
-/// ));
+/// # Invariantes físicos del disco de Poincaré
+/// ```
+/// use genesis_topology::manifold::HyperbolicCoord;
+///
+/// // Every valid coordinate lives strictly inside the unit disk.
+/// // The boundary r=1 represents the point at infinity — excluded.
+/// let p = HyperbolicCoord::new(0.3, 0.4).unwrap(); // r²=0.25 < 1
+/// assert!(p.norm_sq() < 1.0);
+/// assert!(HyperbolicCoord::new(1.0, 0.0).is_none()); // r=1 rejected
+///
+/// // Hyperbolic distance to origin: d(0,p) = 2·arctanh(|p|)
+/// // For p=(0.3,0.4): |p|=0.5, so d=2·arctanh(0.5)≈1.0986
+/// let d = p.hyperbolic_distance_to_origin();
+/// assert!((d - 2.0_f64 * 0.5_f64.atanh()).abs() < 1e-12);
 /// ```
 ///
 /// AX-ID: AXIOMA-004 (paisaje de atractores), LEY_FUNDACIONAL §7.2
@@ -79,6 +84,22 @@ impl HyperbolicCoord {
     ///
     /// # Invariante
     /// Todo `HyperbolicCoord` válido satisface `self.norm_sq() < 1.0`.
+    ///
+    /// ```
+    /// use genesis_topology::manifold::HyperbolicCoord;
+    ///
+    /// // Poincaré disk invariant: all valid coordinates satisfy r² < 1
+    /// let coord = HyperbolicCoord::new(0.3, 0.4).expect("valid: 0.09+0.16=0.25 < 1");
+    /// assert!(coord.norm_sq() < 1.0);
+    ///
+    /// // Boundary is excluded: r = 1 represents the point at infinity
+    /// assert!(HyperbolicCoord::new(1.0, 0.0).is_none());
+    ///
+    /// // Hyperbolic distance to origin: d(0,p) = 2·arctanh(|p|)
+    /// let dist = coord.hyperbolic_distance_to_origin();
+    /// let expected = 2.0 * 0.5_f64.atanh(); // |p| = √0.25 = 0.5
+    /// assert!((dist - expected).abs() < 1e-12);
+    /// ```
     #[must_use]
     pub fn new(x: f64, y: f64) -> Option<Self> {
         if x.mul_add(x, y * y) < 1.0 && x.is_finite() && y.is_finite() {

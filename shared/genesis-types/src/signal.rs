@@ -484,7 +484,9 @@ impl SpikeComponents {
     /// headroom vs u8 without requiring u32 for the planned roadmap.
     ///
     /// # Example
-    /// ```rust,ignore
+    /// ```rust
+    /// use genesis_types::signal::SpikeComponents;
+    ///
     /// let sc = SpikeComponents::from_pairs([(0u16, 1.0), (3u16, -0.5)]);
     /// assert_eq!(sc.cardinality(), 2);
     /// ```

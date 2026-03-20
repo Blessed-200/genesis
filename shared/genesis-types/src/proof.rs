@@ -648,11 +648,31 @@ impl AxiomGuard {
     /// El token vincula el tipo de mutación `M` mediante `PhantomData`.
     ///
     /// Uso típico:
-    /// ```rust,ignore
-    /// let proof = mutation.propose()?;
-    /// if let Some(token) = AxiomGuard::verify_for::<MyMutation>(&proof, AxiomID::STRUCTURAL_REQUIRED) {
-    ///     mutation.apply(token)?;
-    /// }
+    /// ```rust
+    /// use genesis_types::proof::{AxiomGuard, AxiomID, Mutation, Proof, VerifiedProof, WitnessBuilder};
+    ///
+    /// # struct DummyMutation;
+    /// # impl Mutation for DummyMutation {
+    /// #     fn propose(&self) -> Result<Proof, genesis_types::GenesisError> {
+    /// #         let mut builder = WitnessBuilder::new();
+    /// #         builder.check(AxiomID::MinkowskiSignature, || true)?;
+    /// #         Ok(builder.build(0))
+    /// #     }
+    /// #
+    /// #     fn apply(&self, _token: VerifiedProof<'_, Self>) -> Result<(), genesis_types::GenesisError> {
+    /// #         Ok(())
+    /// #     }
+    /// #
+    /// #     fn name(&self) -> &'static str {
+    /// #         "dummy"
+    /// #     }
+    /// # }
+    /// let mutation = DummyMutation;
+    /// let proof = mutation.propose().expect("proof must be buildable");
+    ///
+    /// // Contract: verify_for emits a typed token when the proof satisfies the required axiom.
+    /// let token = AxiomGuard::verify_for::<DummyMutation>(&proof, &[AxiomID::MinkowskiSignature]);
+    /// assert!(token.is_some());
     /// ```
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.4
