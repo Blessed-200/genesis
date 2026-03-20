@@ -79,6 +79,13 @@ impl HyperbolicCoord {
     ///
     /// # Invariante
     /// Todo `HyperbolicCoord` válido satisface `self.norm_sq() < 1.0`.
+    ///
+    /// ```
+    /// use genesis_topology::HyperbolicCoord;
+    ///
+    /// let coord = HyperbolicCoord::new(0.3, 0.4).expect("valid coord");
+    /// assert!(coord.norm_sq() < 1.0);
+    /// ```
     #[must_use]
     pub fn new(x: f64, y: f64) -> Option<Self> {
         if x.mul_add(x, y * y) < 1.0 && x.is_finite() && y.is_finite() {

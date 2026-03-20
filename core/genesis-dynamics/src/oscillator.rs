@@ -129,11 +129,11 @@ impl QuantumOscillator {
     /// use genesis_dynamics::QuantumOscillator;
     /// use genesis_types::NodeId;
     ///
-    /// let node = NodeId::try_new(0).expect("NodeId válido");
+    /// let node = NodeId::try_new(0).unwrap();
     /// let osc = QuantumOscillator::new(node, [0.0; 5]);
     /// let (re, im) = osc.complex_state(0); // grado 0
-    /// let cluster_amplitude = re.hypot(im);
-    /// assert!(cluster_amplitude >= 0.0);
+    /// let amplitude: f64 = re.hypot(im);
+    /// assert!(amplitude >= 0.0);
     /// ```
     ///
     /// AX-ID: AXIOMA-006, LEY_FUNDACIONAL §3.2

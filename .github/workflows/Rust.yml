@@ -121,8 +121,11 @@ jobs:
 
       - name: Run Benchmarks (Math & Topology)
         run: |
-          cargo bench --bench geometry -p genesis-math -- --output-format bencher | tee bench_math.txt
-          cargo bench --bench topology -p genesis-topology -- --output-format bencher | tee bench_topology.txt
+          cargo bench --bench geometry -p genesis-math \
+            -- --output-format bencher 2>&1 | tee bench_math.txt
+          cargo bench --bench topology -p genesis-topology \
+            -- --output-format bencher --measurement-time 10 \
+            2>&1 | tee bench_topology.txt
 
       # dense_kernel 300ns  = 171ns measured × 1.75 headroom
       # from_dense   100µs  = 50µs measured × 2.0 headroom
