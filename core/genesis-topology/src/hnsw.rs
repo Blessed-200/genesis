@@ -2198,7 +2198,7 @@ mod tests {
     #[cfg(not(feature = "hnsw-f16"))]
     #[test]
     fn encode_layer0_returns_exact_f32_copy_without_feature() {
-        let input = core::array::from_fn(|i| (i as f32 * 1.25) - 7.0);
+        let input = core::array::from_fn(|i| (i as f32).mul_add(1.25, -7.0));
         let encoded = encode_layer0(&input).expect("finite input must encode");
 
         assert_eq!(encoded, input);

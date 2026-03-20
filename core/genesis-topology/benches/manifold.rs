@@ -10,7 +10,9 @@ use genesis_topology::{
 };
 use genesis_types::NodeId;
 
-fn next_u64(seed: &mut u64) -> u64 {
+const SIGNED_U53_SCALE: f64 = 2.0 / (1_u64 << 53) as f64;
+
+const fn next_u64(seed: &mut u64) -> u64 {
     *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
     *seed
 }
@@ -18,7 +20,7 @@ fn next_u64(seed: &mut u64) -> u64 {
 fn make_vec(seed: &mut u64) -> SparseCliffordVector {
     let dense = core::array::from_fn(|_| {
         let bits = next_u64(seed) >> 11;
-        (bits as f64) / ((1_u64 << 53) as f64) * 2.0 - 1.0
+        (bits as f64).mul_add(SIGNED_U53_SCALE, -1.0)
     });
     SparseCliffordVector::from_dense(&dense).expect("finite deterministic vector")
 }
@@ -47,7 +49,7 @@ fn bench_hnsw_search(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("search_10k_nodes_k5", 100), |b| {
         b.iter_custom(|iters| {
             let start = Instant::now();
-            for i in 0..iters as usize {
+            for i in 0..usize::try_from(iters).unwrap_or(usize::MAX) {
                 let q = &queries[i % queries.len()];
                 black_box(graph.search_nearest(black_box(q), 5));
             }
@@ -71,7 +73,7 @@ fn bench_hnsw_search(c: &mut Criterion) {
                     black_box(&candidates),
                 ));
             }
-        })
+        });
     });
 
     group.bench_function("scalar_distance_4x_raw", |b| {
@@ -82,7 +84,7 @@ fn bench_hnsw_search(c: &mut Criterion) {
                     black_box(&candidates),
                 ));
             }
-        })
+        });
     });
 
     let iterations = 50_000_u64;
@@ -102,8 +104,8 @@ fn bench_hnsw_search(c: &mut Criterion) {
     let scalar_ns = start_scalar.elapsed().as_nanos() as f64 / iterations as f64;
     black_box(sink);
 
-    eprintln!("batch_distance_4_raw: {:.2} ns per call", batch_ns);
-    eprintln!("scalar_distance_4x_raw: {:.2} ns per call", scalar_ns);
+    eprintln!("batch_distance_4_raw: {batch_ns:.2} ns per call");
+    eprintln!("scalar_distance_4x_raw: {scalar_ns:.2} ns per call");
     eprintln!(
         "batch_distance_4 / scalar_4x = {:.2}x",
         scalar_ns / batch_ns

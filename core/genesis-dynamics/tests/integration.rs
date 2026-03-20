@@ -4,6 +4,7 @@
     clippy::uninlined_format_args
 )]
 
+use genesis_dynamics::kuramoto_critical_coupling;
 use genesis_dynamics::*;
 use genesis_types::NodeId;
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -18,7 +19,7 @@ static TEST_LOCK: Mutex<()> = Mutex::new(());
 fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
     TEST_LOCK
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 unsafe impl GlobalAlloc for CountingAllocator {
@@ -119,7 +120,6 @@ fn stress_vfe_convergence_100_nodes() {
 #[test]
 fn critical_coupling_threshold() {
     let _guard = lock_tests();
-    use genesis_dynamics::kuramoto_critical_coupling;
     let kc = kuramoto_critical_coupling(1.0);
     assert!(
         (kc - 1.5958).abs() < 0.001,
