@@ -81,10 +81,19 @@ impl HyperbolicCoord {
     /// Todo `HyperbolicCoord` válido satisface `self.norm_sq() < 1.0`.
     ///
     /// ```
-    /// use genesis_topology::HyperbolicCoord;
+    /// use genesis_topology::manifold::HyperbolicCoord;
     ///
-    /// let coord = HyperbolicCoord::new(0.3, 0.4).expect("valid coord");
+    /// // Poincaré disk invariant: all valid coordinates satisfy r² < 1
+    /// let coord = HyperbolicCoord::new(0.3, 0.4).expect("valid: 0.09+0.16=0.25 < 1");
     /// assert!(coord.norm_sq() < 1.0);
+    ///
+    /// // Boundary is excluded: r = 1 represents the point at infinity
+    /// assert!(HyperbolicCoord::new(1.0, 0.0).is_none());
+    ///
+    /// // Hyperbolic distance to origin: d(0,p) = 2·arctanh(|p|)
+    /// let dist = coord.hyperbolic_distance_to_origin();
+    /// let expected = 2.0 * 0.5_f64.atanh(); // |p| = √0.25 = 0.5
+    /// assert!((dist - expected).abs() < 1e-12);
     /// ```
     #[must_use]
     pub fn new(x: f64, y: f64) -> Option<Self> {
