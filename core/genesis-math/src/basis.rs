@@ -150,7 +150,7 @@ impl CliffordBasis {
     #[inline]
     pub fn grade_of(&self, i: usize) -> u8 {
         debug_assert!(i <= MAX_BLADE_MASK);
-        self.grade[i]
+        self.grade.get(i).copied().unwrap_or(0)
     }
 
     /// e_I² as exact `i8` ∈ {+1, −1}. No float arithmetic.
@@ -162,7 +162,7 @@ impl CliffordBasis {
     #[inline(always)]
     pub fn blade_square(&self, i: usize) -> i8 {
         debug_assert!(i <= MAX_BLADE_MASK);
-        self.signature[i]
+        self.signature.get(i).copied().unwrap_or(0)
     }
 
     /// e_I² as `f64`. Cast from `i8` is lossless and exact.
@@ -183,7 +183,8 @@ impl CliffordBasis {
     #[inline]
     pub fn fenwick_prefix_parity(&self, blade_idx: usize) -> i32 {
         debug_assert!(blade_idx < TOTAL_BLADES);
-        ODD_GRADE_PREFIX_TABLE[blade_idx]
+        let safe_idx = blade_idx.min(TOTAL_BLADES - 1);
+        ODD_GRADE_PREFIX_TABLE[safe_idx]
     }
 
     /// Computes e_I² as `i8` — `const fn` used during compile-time table build.

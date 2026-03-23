@@ -17,7 +17,6 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicPtr, Ordering as AtomicOrdering};
 use std::sync::Arc;
-use std::thread;
 
 use fixedbitset::FixedBitSet;
 use genesis_math::{fast_metric_distance, fast_metric_distance_from_dense, SparseCliffordVector};
@@ -111,7 +110,8 @@ fn batch_distance_4(query: &SparseCliffordVector, batch: &SoaBatch4) -> [f64; SI
     let mut out = [f64::INFINITY; SIMD_BATCH_WIDTH];
     for (slot, d) in out.iter_mut().enumerate().take(batch.count) {
         let dense = core::array::from_fn(|blade| batch.coeffs_transposed[blade][slot]);
-        *d = fast_metric_distance_from_dense(&dense, query);
+        let dist = fast_metric_distance_from_dense(&dense, query);
+        *d = if dist.is_finite() { dist } else { f64::INFINITY };
     }
     out
 }
@@ -150,7 +150,12 @@ unsafe fn batch_distance_4_avx2(
         _mm256_storeu_pd(out.as_mut_ptr(), acc);
     }
     for value in &mut out {
-        *value = value.sqrt();
+        let safe = if value.is_finite() {
+            (*value).max(0.0)
+        } else {
+            f64::INFINITY
+        };
+        *value = safe.sqrt();
     }
     out
 }
@@ -643,7 +648,7 @@ impl HnswGraph {
     /// Create a new empty HNSW graph.
     ///
     /// AX-ID: AXIOMA-013
-    pub const fn new(ef_construction: usize) -> Self {
+    pub fn new(ef_construction: usize) -> Self {
         Self {
             nodes: Vec::new(),
             id_index: Vec::new(),
@@ -723,7 +728,11 @@ impl HnswGraph {
         // u uniforme en (0, 1): usa 53 bits y desplaza medio ULP para evitar 0 exacto.
         // x >> 11 ∈ [0, 2^53). Las conversiones son exactas en f64 para 53 bits.
         #[allow(clippy::cast_precision_loss)]
-        let u = (((x >> 11) as f64) + 0.5) * (1.0 / ((1_u64 << 53) as f64));
+        let mut u = (((x >> 11) as f64) + 0.5) * (1.0 / ((1_u64 << 53) as f64));
+        if !u.is_finite() {
+            return 0;
+        }
+        u = u.clamp(f64::MIN_POSITIVE, 1.0 - f64::EPSILON);
 
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let level = (-u.ln() * ml()).floor() as usize;
@@ -737,10 +746,6 @@ impl HnswGraph {
     ///
     /// If `id` is already present in the graph, insertion is idempotent and returns `Ok(())`
     /// without modifying the graph.
-    ///
-    /// # Panics
-    /// Panics if the internal entry point is `None` after the first insertion.
-    /// This cannot occur under normal usage: `entry` is set atomically on first insert.
     ///
     /// AX-ID: AXIOMA-013, `H_restricción`
     pub fn insert(&mut self, id: NodeId, vec: &SparseCliffordVector) -> Result<(), GenesisError> {
@@ -765,17 +770,22 @@ impl HnswGraph {
         self.insert_id_index(id, new_idx);
 
         if id.get() < u64::from(u32::MAX) {
-            // Mismo contrato: NodeId.get() ≤ N < usize::MAX en arquitecturas objetivo.
-            #[allow(clippy::cast_possible_truncation)]
-            let id_raw = id.get() as usize;
+            let Ok(id_raw) = usize::try_from(id.get()) else {
+                return Err(GenesisError::InvariantViolation { axiom_id: 4 });
+            };
             if id_raw >= self.direct_index.len() {
-                self.direct_index.resize(id_raw + 1, u32::MAX);
+                let Some(next_len) = id_raw.checked_add(1) else {
+                    return Err(GenesisError::InvariantViolation { axiom_id: 13 });
+                };
+                self.direct_index.resize(next_len, u32::MAX);
             }
             // Barrera Release: no necesaria sobre Vec<u32> con &mut self (single-writer).
             // Para publicar este índice a lectores concurrentes, direct_index debe ser
             // Vec<AtomicU32> con store(Release). Por ahora: single-threaded, sin contención.
-            self.direct_index[id_raw] =
-                u32::try_from(new_idx).expect("node count must stay below u32::MAX (≈4B nodes)");
+            let Ok(new_idx_u32) = u32::try_from(new_idx) else {
+                return Err(GenesisError::InvariantViolation { axiom_id: 13 });
+            };
+            self.direct_index[id_raw] = new_idx_u32;
             debug_assert!(
                 self.get_idx(id) == Some(new_idx),
                 "direct_index inconsistente con id_index para NodeId={}",
@@ -789,9 +799,9 @@ impl HnswGraph {
             return Ok(());
         }
 
-        let entry_idx = self.entry.expect(
-            "entry point is set on first insert; this branch is unreachable on second+ insert",
-        );
+        let Some(entry_idx) = self.entry else {
+            return Err(GenesisError::InvariantViolation { axiom_id: 13 });
+        };
         let entry_layer = self.entry_layer;
 
         // Phase 1: greedy descent from entry_layer to target_layer+1
@@ -1038,12 +1048,27 @@ impl HnswGraph {
                                 chunk_len += 1;
 
                                 if chunk_len == SIMD_BATCH_WIDTH {
-                                    let nodes = [
-                                        chunk[0].expect("full chunk slot 0 must exist"),
-                                        chunk[1].expect("full chunk slot 1 must exist"),
-                                        chunk[2].expect("full chunk slot 2 must exist"),
-                                        chunk[3].expect("full chunk slot 3 must exist"),
-                                    ];
+                                    let Some(c0) = chunk[0] else {
+                                        chunk = [None, None, None, None];
+                                        chunk_len = 0;
+                                        continue;
+                                    };
+                                    let Some(c1) = chunk[1] else {
+                                        chunk = [None, None, None, None];
+                                        chunk_len = 0;
+                                        continue;
+                                    };
+                                    let Some(c2) = chunk[2] else {
+                                        chunk = [None, None, None, None];
+                                        chunk_len = 0;
+                                        continue;
+                                    };
+                                    let Some(c3) = chunk[3] else {
+                                        chunk = [None, None, None, None];
+                                        chunk_len = 0;
+                                        continue;
+                                    };
+                                    let nodes = [c0, c1, c2, c3];
                                     let batch = SoaBatch4::from_nodes(&nodes);
                                     let distances = batch_distance_4(query, &batch);
                                     for slot in 0..SIMD_BATCH_WIDTH {
@@ -1079,7 +1104,9 @@ impl HnswGraph {
                                 (&self.nodes[c_idx].vec, c_idx),
                             ];
                             for (slot, item) in chunk.iter().enumerate().take(chunk_len) {
-                                tail[slot] = item.expect("tail slot must exist");
+                                if let Some(value) = *item {
+                                    tail[slot] = value;
+                                }
                             }
                             let batch = SoaBatch4::from_nodes(&tail[..chunk_len]);
                             let distances = batch_distance_4(query, &batch);
@@ -1146,12 +1173,11 @@ impl HnswGraph {
                 .out
                 .sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
 
-            let touched: Vec<usize> = scratch.visited_touched.drain(..).collect();
-            for idx in touched {
+            while let Some(idx) = scratch.visited_touched.pop() {
                 scratch.visited.set(idx, false);
             }
 
-            scratch.out.clone()
+            std::mem::take(&mut scratch.out)
         })
     }
 
@@ -1187,10 +1213,10 @@ impl HnswGraph {
     ///
     /// AX-ID: AXIOMA-013
     pub fn neighbors(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        let node = self.get_idx(id).map(|idx| &self.nodes[idx]);
+        let node_idx = self.get_idx(id);
         NeighborIter {
             graph: self,
-            node_idx: node.map(|_| self.get_idx(id).unwrap_or(0)),
+            node_idx,
             layer_pos: 0,
             edge_pos: 0,
             seen: SmallVec::new(), // BN-07: inline stack, no heap allocation for ≤128 IDs
@@ -1205,8 +1231,9 @@ impl HnswGraph {
         // (once for `node_vec`, once for `idx`), wasting a lookup per call.
         let candidates: SmallVec<[NodeId; M]> =
             self.get_idx(id).map_or_else(SmallVec::new, |idx| {
-                // SAFETY: `idx` comes from `self.get_idx(id)`, which guarantees an in-bounds index.
-                let node = unsafe { self.nodes.get_unchecked(idx) };
+                let Some(node) = self.nodes.get(idx) else {
+                    return SmallVec::new();
+                };
                 let nv = node.vec;
                 let layer0 = self.layer_neighbors[0].neighbors(idx);
                 let mut local = SmallVec::<[NodeId; M]>::with_capacity(layer0.len().min(M0));
@@ -1291,8 +1318,8 @@ impl HnswGraph {
         let mut node_ids = Vec::with_capacity(self.nodes.len());
         let mut dense_coeffs = Vec::with_capacity(self.nodes.len());
         let mut neighbor_offsets = Vec::with_capacity(self.nodes.len());
-        let mut neighbor_ids = Vec::new();
-        let mut neighbor_distances = Vec::new();
+        let mut neighbor_ids = Vec::with_capacity(self.edge_count_layer0_undirected);
+        let mut neighbor_distances = Vec::with_capacity(self.edge_count_layer0_undirected);
 
         for node in &self.nodes {
             node_ids.push(node.id);
@@ -1457,7 +1484,10 @@ impl LockFreeHnswIndex {
     fn load_snapshot(&self) -> Arc<HnswGraph> {
         loop {
             let ptr = self.head.load(AtomicOrdering::Acquire);
-            assert!(!ptr.is_null(), "LockFreeHnswIndex head must be initialized");
+            if ptr.is_null() {
+                std::hint::spin_loop();
+                continue;
+            }
 
             // SAFETY: `ptr` comes from `Arc::into_raw` and points to a live allocation
             // while held by `head`. We take a temporary strong ref then validate that
@@ -1562,37 +1592,9 @@ fn radix_sort_node_ids(index: &mut Vec<(NodeId, usize)>) {
     for pass in 0..8 {
         let shift = pass * 8;
         let mut counts = [0usize; 256];
-        let workers = thread::available_parallelism()
-            .map(std::num::NonZero::<usize>::get)
-            .unwrap_or(1)
-            .min(8);
-
-        if workers > 1 && src.len() >= 4_096 {
-            let chunk = src.len().div_ceil(workers);
-            thread::scope(|scope| {
-                let mut handles = Vec::new();
-                for part in src.chunks(chunk) {
-                    handles.push(scope.spawn(move || {
-                        let mut local = [0usize; 256];
-                        for &(id, _) in part {
-                            let bucket = ((id.get() >> shift) & 0xFF) as usize;
-                            local[bucket] += 1;
-                        }
-                        local
-                    }));
-                }
-                for handle in handles {
-                    let local = handle.join().expect("radix histogram worker panicked");
-                    for (i, value) in local.into_iter().enumerate() {
-                        counts[i] += value;
-                    }
-                }
-            });
-        } else {
-            for &(id, _) in &src {
-                let bucket = ((id.get() >> shift) & 0xFF) as usize;
-                counts[bucket] += 1;
-            }
+        for &(id, _) in &src {
+            let bucket = ((id.get() >> shift) & 0xFF) as usize;
+            counts[bucket] += 1;
         }
 
         let mut offsets = [0usize; 256];

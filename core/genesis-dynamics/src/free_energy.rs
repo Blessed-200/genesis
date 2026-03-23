@@ -43,7 +43,7 @@ pub(crate) const VFE_BLADE_WEIGHTS: [f64; 16] = [
 /// y para retrocompatibilidad del método `mean()`.
 pub(crate) const GRADE1_BLADE_INDICES: [usize; 4] = [1, 2, 4, 8];
 
-const fn is_finite_scalar(v: f64) -> bool {
+fn is_finite_scalar(v: f64) -> bool {
     v.is_finite()
 }
 
@@ -55,7 +55,7 @@ fn is_finite_vec16(values: &[f64; 16]) -> bool {
     values.iter().all(|&v| is_finite_scalar(v))
 }
 
-const fn sanitize_trace(trace: f64) -> f64 {
+fn sanitize_trace(trace: f64) -> f64 {
     if !trace.is_finite() {
         return 1.0;
     }
@@ -257,7 +257,10 @@ impl PagedIndex {
         let page = raw >> PAGE_BITS;
         let offset = raw & PAGE_MASK;
         if page >= self.pages.len() {
-            self.pages.resize_with(page + 1, || None);
+            let Some(required) = page.checked_add(1) else {
+                return;
+            };
+            self.pages.resize_with(required, || None);
         }
         let slots = self.pages[page].get_or_insert_with(|| Box::new([u32::MAX; PAGE_SIZE]));
         slots[offset] = val;
@@ -266,12 +269,19 @@ impl PagedIndex {
 
 impl VFEMinimizer {
     #[inline]
-    const fn bounded_step(dt: f64, trace: f64) -> f64 {
-        (dt / dt.mul_add(trace, 1.0)).min(0.9)
+    fn bounded_step(dt: f64, trace: f64) -> f64 {
+        if !dt.is_finite() || !trace.is_finite() || dt <= 0.0 {
+            return 0.0;
+        }
+        let denom = dt.mul_add(trace.max(0.0), 1.0);
+        if !denom.is_finite() || denom <= TRACE_MIN {
+            return 0.0;
+        }
+        (dt / denom).clamp(0.0, 0.9)
     }
 
     /// Creates an empty VFE minimiser with no registered nodes.
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             beliefs: Vec::new(),
             fisher: Vec::new(),
@@ -334,7 +344,9 @@ impl VFEMinimizer {
         let Ok(raw) = usize::try_from(id.get()) else {
             return None;
         };
-        self.id_to_idx.get(raw).map(|idx| idx as usize)
+        self.id_to_idx
+            .get(raw)
+            .and_then(|idx| usize::try_from(idx).ok())
     }
 
     /// VFE sobre el subespacio de grado 1 — retrocompatibilidad con callers `[f64;4]`.

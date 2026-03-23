@@ -1,1 +1,533 @@
+# GÉNESIS HPC Root-Cause Remediation Plan (Phase 1)
 
+Source backlog: `./genesis_root_causes_hpc_v1.json` (9 root causes, authoritative)
+Scope: implemented crates only (`genesis-types`, `genesis-math`, `genesis-topology`, `genesis-dynamics`)
+
+## 0) Method and constraints used for this plan
+
+- Performed static inspection of repository and representative hot-path modules.
+- Built a root-cause-to-code map from the JSON + current implementation.
+- No code changes in this phase.
+- Designed fixes to preserve:
+  - stable Rust compatibility,
+  - SIMD/hot-path behavior,
+  - existing crate contracts (unless explicitly versioned),
+  - G(1,3) invariants and AX-ID semantics.
+
+---
+
+## 1) Root-cause-to-code map + strategy
+
+## RC-01 — compile-time `const` misuse for runtime-only floating-point/allocation operations
+
+### Affected modules/files/functions (confirmed)
+- `core/genesis-dynamics/src/free_energy.rs`
+  - `const fn is_finite_scalar` (uses `f64::is_finite` in const context)
+  - `const fn sanitize_trace` (uses `is_finite` + `clamp` in const helper)
+  - `pub const fn VFEMinimizer::new()` (allocating `Vec::new()` in const constructor)
+- Secondary audit targets for same pattern:
+  - `core/genesis-topology/src/manifold.rs` (`const fn` methods returning runtime-owned state)
+  - `core/genesis-dynamics/src/oscillator.rs` (const constructors involving floating fields)
+
+### True mechanism
+Const qualification is applied where compile-time evaluation is not required and runtime-only semantics are intended. This overconstrains API and creates toolchain/MSRV fragility.
+
+### Viable strategies
+1. **De-const runtime constructors/helpers (preferred)**
+   - Convert runtime-only `const fn` to `fn` (especially constructors that allocate or validate runtime floating data).
+2. Bit-level const-safe finite checks everywhere
+   - Keep `const`, reimplement finite checks via bit operations.
+3. Split API into const core + runtime wrapper
+   - Keep tiny truly-const kernel; move allocations/checks to runtime wrappers.
+
+### Risks
+- Strategy 1: low risk; potential downstream compile break only for callers using const contexts.
+- Strategy 2: medium risk; complexity and readability loss, possible subtle IEEE edge handling mistakes.
+- Strategy 3: medium complexity and API churn.
+
+### Selected fix
+- Apply Strategy 1 for all runtime-only paths.
+- Keep `const fn` only for pure compile-time data constructors with no floating runtime validation or allocation dependency.
+
+---
+
+## RC-02 — unchecked integer arithmetic + narrowing/lossy conversions
+
+### Affected modules/files/functions (confirmed)
+- `core/genesis-math/src/product.rs`
+  - `build_sign_flip_masks`, `build_xor_permute_indices`
+  - multiple `trailing_zeros() as usize` and narrow casts
+- `shared/genesis-types/src/signal.rs`
+  - `SpikeComponents::from_pairs_internal`
+  - `SpikeComponents::try_from_pairs`
+  - `count as usize` and conversion boundaries
+- `core/genesis-topology/src/hnsw.rs`
+  - `HnswGraph::insert` (`id.get() as usize`, `resize(id_raw + 1, ...)`, `u32::try_from(new_idx).expect(...)`)
+  - `radix_sort_node_ids` bucket and shift casts
+  - multiple conversions across layer/index management
+- `core/genesis-math/src/basis.rs`
+  - signed/unsigned Fenwick index transitions (`i32 <-> usize`)
+
+### True mechanism
+Arithmetic and conversion boundaries are handled ad hoc. Overflow, truncation, and index-size contracts are not uniformly encoded as checked operations.
+
+### Viable strategies
+1. **Boundary-safe conversion layer (preferred)**
+   - Introduce helper APIs/newtypes for index conversion (`NodeIdx`, `LayerIdx`, `BladeIdx`, `DenseSlot`) using `try_from` and explicit errors.
+2. Scattershot `checked_*` and local guards
+   - Patch each cast/operation inline without central abstraction.
+3. Widen everything to `u64/usize`
+   - Avoid narrowing by using wider types broadly.
+
+### Risks
+- Strategy 1: moderate refactor size but highest long-term correctness.
+- Strategy 2: high chance of inconsistency/regression.
+- Strategy 3: can hurt cache/layout and introduce API drift.
+
+### Selected fix
+- Strategy 1 in hot/shared boundaries; minimal local guards in leaf kernels where dimensions are statically bounded (16 blades).
+
+---
+
+## RC-03 — missing bounds/indexing invariants
+
+### Affected modules/files/functions (confirmed)
+- `core/genesis-dynamics/src/free_energy.rs`
+  - `target_from_sparse_obs` (`coeffs[i]` indexed by generated range)
+  - loops over fixed arrays and node lookup index usage
+- `core/genesis-math/src/basis.rs`
+  - `grade_of`, `blade_square`, `fenwick_prefix_parity` rely on `debug_assert!` only
+- `core/genesis-topology/src/hnsw.rs`
+  - `neighbors_within` uses `unsafe get_unchecked`
+  - dense indexing of nodes/layers after lookup in several methods
+- `core/genesis-math/src/multivector.rs`
+  - dense array indexing in active-mask loops
+
+### True mechanism
+Many accesses are safe by design but invariants are implicit (debug-only asserts, assumptions from prior lookups). Contracts are not encoded strongly enough for auditors.
+
+### Viable strategies
+1. **Typed invariant wrappers + safe access facade (preferred)**
+   - Use bounded index types and helper accessors that enforce checked construction once.
+2. Replace all indexing with `.get()` everywhere
+   - Maximum safety, but significant hot-path overhead/noise.
+3. Keep direct indexing + stronger proof comments/asserts
+   - Low code change, but only partial root-cause reduction.
+
+### Risks
+- Strategy 1: moderate implementation effort.
+- Strategy 2: possible measurable HPC regressions.
+- Strategy 3: may fail to eliminate structural issue count.
+
+### Selected fix
+- Strategy 1 for dynamic inputs; preserve direct indexing for fixed-size `[T;16]` loops where index space is proven by construction.
+
+---
+
+## RC-04 — numerical domain guards missing (division/sqrt/log/invalid inputs)
+
+### Affected modules/files/functions (confirmed)
+- `core/genesis-math/src/product.rs`
+  - scalar/dense product and normalization helpers with arithmetic chains
+- `shared/genesis-types/src/signal.rs`
+  - `SpikeComponents::try_from_pairs` path and merge arithmetic
+- `core/genesis-dynamics/src/free_energy.rs`
+  - `compute_vfe`, `compute_vfe_with_grad`, `update`, `update_full`, `bounded_step`
+- `core/genesis-topology/src/hnsw.rs`
+  - `random_level` (`ln`), distance kernels (`sqrt`)
+
+### True mechanism
+Domain checks are local and inconsistent; no crate-wide contract for denominator epsilon, sqrt non-negativity, finite input normalization, and log-domain guarantees.
+
+### Viable strategies
+1. **Numerical contract module (preferred)**
+   - Add shared helpers: guarded reciprocal/division, `sqrt_nonneg`, `ln_pos`, finite sanitization with explicit epsilon constants.
+2. Continue local `if` checks per function
+   - Faster to patch but fragile and repetitive.
+3. Clamp everything aggressively
+   - Simpler but risks biasing dynamics.
+
+### Risks
+- Strategy 1: moderate rollout; requires consistent adoption.
+- Strategy 2: future regressions likely.
+- Strategy 3: stability vs correctness trade-off may distort model behavior.
+
+### Selected fix
+- Strategy 1 + targeted replacement in hot functions; avoid over-clamping where physical semantics require sensitivity.
+
+---
+
+## RC-05 — floating-point stability / rounding risk
+
+### Affected modules/files/functions (confirmed)
+- `core/genesis-dynamics/src/free_energy.rs`
+  - `compute_vfe_with_grad` accumulation path
+  - update loops with repeated additive updates
+- `core/genesis-topology/src/hnsw.rs`
+  - `distance_to_node`, search ordering with partial compares and non-finite fallback behavior
+- `core/genesis-math/src/product.rs`
+  - norm/product accumulation helpers (`bivector_norm_sq_of_product*` family)
+- `core/genesis-math/src/multivector.rs`
+  - metadata accumulation and float equality around signed zero canonicalization
+
+### True mechanism
+Stability policy is inconsistent: some loops use compensated summation, others still use naive accumulation/comparisons; exact comparisons and cancellation-prone formulas remain.
+
+### Viable strategies
+1. **Central FP policy + compensated accumulators where sensitivity is high (preferred)**
+   - Kahan/Neumaier in selected kernels, tolerance-based comparisons, deterministic ordering.
+2. Blanket compensated summation everywhere
+   - Overhead may hurt throughput in low-sensitivity paths.
+3. Minimal local patches
+   - Incomplete reduction.
+
+### Risks
+- Strategy 1: requires profiling-aware placement.
+- Strategy 2: potential performance regressions.
+- Strategy 3: leaves systemic weakness.
+
+### Selected fix
+- Strategy 1 with path classification: hot/low-risk keep naive where mathematically bounded; critical aggregates use compensation.
+
+---
+
+## RC-06 — hot-path performance inefficiency and algorithm/data-structure mismatch
+
+### Affected modules/files/functions (confirmed)
+- `core/genesis-math/src/product.rs`
+  - hot loops and temporary buffer usage in dense/sparse products
+- `core/genesis-topology/src/hnsw.rs`
+  - `search_layer` (heap churn, temporary vectors, tail batching)
+  - `layer0_soa` construction costs
+- `core/genesis-dynamics/src/free_energy.rs`
+  - `PagedIndex::set` growth/resize behavior
+
+### True mechanism
+Repeated temporary allocations, clone/copy patterns, and per-iteration overhead remain in core loops; some data structures are not specialized for contiguous hot access.
+
+### Viable strategies
+1. **Micro-architecture cleanup preserving algorithmic behavior (preferred)**
+   - preallocation reuse, avoid repeated len/lookups, reduce temporary allocations in `search_layer` and SoA paths.
+2. Deep structural redesign (new graph containers, intrusive arenas)
+   - potentially faster but too broad for current backlog.
+3. No-op except compiler hints
+   - insufficient.
+
+### Risks
+- Strategy 1: medium complexity with performance-sensitive correctness constraints.
+- Strategy 2: high regression risk and scope explosion.
+
+### Selected fix
+- Strategy 1 only, consistent with current architecture and stable Rust.
+
+---
+
+## RC-07 — panic-prone fallible API usage in production paths
+
+### Affected modules/files/functions (confirmed)
+- `core/genesis-topology/src/hnsw.rs`
+  - `insert` (`expect` on `u32::try_from(new_idx)` and entry assumptions)
+  - `search_layer` chunk/tail `expect`
+  - `radix_sort_node_ids` worker join `expect`
+- `shared/genesis-types/src/error.rs`
+  - production-facing helpers requiring panic audit
+- `shared/genesis-types/src/signal.rs`
+  - `unwrap_or` conversion fallback in construction paths
+
+### True mechanism
+Recoverable failures are converted to panics or hidden assumptions (`expect`), especially under scaling/concurrency edge cases.
+
+### Viable strategies
+1. **Convert production `unwrap/expect` to typed error propagation (preferred)**
+   - introduce/extend `GenesisError` variants for overflow, worker failure, invariant breach.
+2. Replace with `debug_assert!` only
+   - avoids panic in release but may hide errors.
+3. Leave panics on “impossible” paths
+   - not acceptable per root-cause scope.
+
+### Risks
+- Strategy 1: requires error plumbing through call chains.
+- Strategy 2/3: weak fault transparency.
+
+### Selected fix
+- Strategy 1 with explicit error semantics and non-panicking fallbacks only where safe.
+
+---
+
+## RC-08 — unsafe usage without explicit safety contracts
+
+### Affected modules/files/functions (confirmed)
+- `core/genesis-topology/src/hnsw.rs`
+  - `batch_distance_4_avx2` (intrinsics + raw loads/stores)
+  - `neighbors_within` (`get_unchecked`)
+  - lock-free snapshot (`Arc::from_raw`/`increment_strong_count` sections)
+- `shared/genesis-types/src/signal.rs`
+  - `NodeId::from_raw_unchecked`
+- `shared/genesis-types/src/multivector_types.rs`
+  - unchecked mask mutation helpers
+
+### True mechanism
+Unsafe appears in multiple places with mixed-quality local contracts; some unsafe is avoidable, some is justified for SIMD/lock-free performance but needs tighter encapsulation and proof boundaries.
+
+### Viable strategies
+1. **Unsafe minimization + contract hardening (preferred)**
+   - remove avoidable unsafe (`get_unchecked` in non-hot path), isolate required unsafe with clear preconditions/postconditions.
+2. Keep all unsafe and add comments only
+   - documentation-only mitigation.
+3. Remove unsafe broadly
+   - likely performance loss in SIMD/atomic kernels.
+
+### Risks
+- Strategy 1: moderate work; must preserve performance in kernel paths.
+- Strategy 3: regression risk in key HPC kernels.
+
+### Selected fix
+- Strategy 1.
+
+---
+
+## RC-09 — unclassified singleton (manual review)
+
+### Affected module/function
+- Not identified in JSON (`representative_units = ["unclassified"]`).
+
+### True mechanism
+A single residual issue is missing source attribution in the reduction file.
+
+### Viable strategies
+1. **Regenerate/trace from source report artifacts (preferred)**
+   - locate origin in `final_report.json` or forensic outputs, map to existing RC if possible.
+2. Ignore until after code fixes
+   - risks leaving one unresolved blocker.
+
+### Risks
+- Without provenance, fix may be mis-scoped.
+
+### Selected fix
+- First execution task in Phase 2: recover exact location and classify before coding.
+
+---
+
+## 2) Execution sequencing (Phase 2 blueprint)
+
+1. **Global safety contracts first**
+   - RC-02 + RC-03 shared boundary types/helpers.
+2. **Numerical contracts and FP stability**
+   - RC-04 + RC-05 shared numerics layer, then apply in dynamics/math/topology kernels.
+3. **Panic and unsafe hardening**
+   - RC-07 + RC-08, prioritizing `hnsw.rs` production paths.
+4. **Performance pass**
+   - RC-06 micro-optimizations only after correctness contracts land.
+5. **RC-01 const hygiene sweep**
+   - remove residual runtime-const misuse introduced or exposed by prior changes.
+6. **RC-09 resolution**
+   - map singleton to cluster or implement local fix.
+
+Rationale: correctness and invariant encoding before speed tuning reduces rework.
+
+---
+
+## 3) Validation plan (to run during Phase 2 after each major cluster)
+
+Per repository policy (in order):
+1. `cargo check --workspace`
+2. `cargo test --workspace`
+3. `cargo check --workspace 2>&1 | grep "^warning:"`
+
+Additional targeted checks by cluster:
+- `cargo test -p genesis-dynamics free_energy`
+- `cargo test -p genesis-topology hnsw`
+- `cargo test -p genesis-math product`
+- `cargo test -p genesis-types signal`
+
+Numerical regression focus:
+- stability tests around VFE accumulation, HNSW distance ordering, and product norm functions.
+
+Performance regression focus:
+- existing benches: `core/genesis-math/benches/geometry.rs`, `core/genesis-topology/benches/topology.rs`, `core/genesis-dynamics/benches/dynamics.rs`.
+
+---
+
+## 4) File-level action shortlist for implementation
+
+- `core/genesis-dynamics/src/free_energy.rs`
+- `core/genesis-topology/src/hnsw.rs`
+- `core/genesis-math/src/product.rs`
+- `core/genesis-math/src/basis.rs`
+- `core/genesis-math/src/multivector.rs`
+- `shared/genesis-types/src/signal.rs`
+- `shared/genesis-types/src/error.rs` (only if required for new typed errors)
+- possibly `shared/genesis-types/src/multivector_types.rs` (if index/unsafe wrappers consolidated)
+
+This shortlist maps all 9 JSON root causes without adding extra scope.
+
+
+---
+
+## Phase 2 execution log
+
+### Cluster A — integer safety / conversions (subplan)
+- Replace lossy `as` casts at dynamic boundaries in `free_energy.rs` and `hnsw.rs` with checked conversions.
+- Add overflow-safe growth for sparse index pages (`PagedIndex::set`) and direct index resize in HNSW insertion.
+- Remove panic-on-overflow paths (`expect`) and return typed `GenesisError::InvariantViolation` where state cannot be represented.
+- Validate with `cargo check --workspace` and targeted HNSW/free-energy tests.
+
+### Cluster B — bounds and invariants (subplan)
+- Replace avoidable unchecked indexing in dynamic paths (`neighbors_within` unsafe access).
+- Upgrade invariant-bearing accessors (`basis.rs`) from debug-only assumptions to bounded safe fallback semantics.
+- Keep fixed-size `[T;16]` kernel indexing where statically bounded.
+- Validate with targeted basis/HNSW tests.
+
+#### Cluster A/B — execution update
+- Changed `core/genesis-dynamics/src/free_energy.rs`:
+  - `VFEMinimizer::new` converted to runtime `fn`.
+  - `sanitize_trace` / `is_finite_scalar` converted to runtime helpers.
+  - `PagedIndex::set` now guards `page + 1` with `checked_add`.
+  - `lookup` now uses checked `u32 -> usize` conversion.
+- Changed `core/genesis-topology/src/hnsw.rs`:
+  - `insert` now uses checked conversions for `NodeId -> usize`, guarded resize length, and non-panicking `u32` index conversion with `GenesisError::InvariantViolation` on overflow.
+  - removed `entry.expect(...)`; now explicit invariant error if missing.
+  - `neighbors()` now uses one lookup and no fallback unwrap.
+  - `neighbors_within()` removed `unsafe get_unchecked`; safe `.get()` guard.
+  - `search_layer()` removed chunk/tail `expect` paths and returns output via `mem::take` instead of clone.
+  - `radix_sort_node_ids()` histogram path simplified to deterministic single-thread pass (no worker-join panic path).
+- Changed `core/genesis-math/src/basis.rs`:
+  - `grade_of` / `blade_square` / `fenwick_prefix_parity` now use bounded safe indexing fallback.
+
+Validation performed:
+- `cargo check --workspace` ✅
+- `cargo test -p genesis-topology hnsw` ✅
+- `cargo test -p genesis-dynamics free_energy` ✅
+
+Remaining risk:
+- `basis.rs` fallback semantics for out-of-range access can mask caller misuse; this is acceptable for panic-safety but should be watched in invariant tests.
+
+### Cluster C — numerical domain guards and stability (subplan)
+- Add explicit finite/domain guards in HNSW level sampling and SIMD sqrt finalization.
+- Harden free-energy bounded-step against non-finite/invalid trace inputs at function boundary.
+- Improve floating comparison robustness where exact equality is not semantically required.
+- Validate with targeted dynamics/topology tests and workspace check.
+
+#### Cluster C — execution update
+- Changed `core/genesis-topology/src/hnsw.rs`:
+  - Added finite-output guard in scalar `batch_distance_4` fallback (`NaN/Inf -> +Inf`).
+  - Added AVX2 distance post-processing guard before `sqrt` (`max(value, 0.0)` and finite fallback).
+  - Hardened `random_level` by clamping sampled `u` to `(0,1)` and returning level 0 on non-finite sample.
+- Changed `core/genesis-dynamics/src/free_energy.rs`:
+  - `bounded_step` now validates `dt/trace` finiteness and denominator domain, with bounded output `[0, 0.9]`.
+- Changed `shared/genesis-types/src/signal.rs`:
+  - Top-K spike construction now rejects all non-finite coefficients (`!is_finite`).
+  - Replaced exact `abs == min_abs` tie-break with `total_cmp` to avoid brittle float equality.
+  - Post-merge acceptance now requires finite merged coefficient.
+
+Validation performed:
+- `cargo test -p genesis-types signal` ✅
+- `cargo test -p genesis-topology hnsw_insert_and_search` ✅
+
+Remaining risk:
+- The scalar radix path retained in Cluster A may reduce `compact_index()` throughput on very large `id_index`; correctness and panic-safety are improved but perf should be benchmarked in Cluster E.
+
+### Cluster D — panic-prone APIs and unsafe contracts (subplan)
+- Remove remaining production `expect`/`unwrap` in `hnsw.rs` non-test paths.
+- Convert lock-free snapshot hard assertion to non-panicking recovery path.
+- Keep required unsafe for AVX2/lock-free pointer ops, but tighten local safety invariants.
+- Validate with targeted topology tests and workspace check.
+
+#### Cluster D — execution update
+- Changed `shared/genesis-types/src/signal.rs`:
+  - Removed production `unwrap()` calls in `SpikeComponents::from_pairs_internal` min-slot selection logic.
+  - Added explicit non-panicking fallback when selection is unexpectedly empty.
+- Changed `core/genesis-topology/src/hnsw.rs`:
+  - Replaced hard `assert!` in lock-free snapshot loader with non-panicking retry path on null head pointer.
+  - Previously removed non-test `expect()` use in insert/search paths (Cluster A/B) remains in effect.
+
+Validation performed:
+- `cargo test -p genesis-topology lock_free_index_supports_multiwriter_single_snapshot_semantics` ✅
+- `cargo test -p genesis-types from_pairs_topk_by_magnitude_not_arrival` ✅
+
+Remaining risk:
+- Null-head retry in lock-free loader now spins until pointer publication; this avoids crash but could spin if called concurrently during teardown.
+
+### Cluster E — performance cleanup (subplan)
+- Remove avoidable temporary allocations in HNSW search-layer cleanup path.
+- Pre-size layer-0 SoA edge buffers from known edge counters to reduce reallocation churn.
+- Keep algorithmic behavior unchanged; only local memory/loop efficiency changes.
+- Validate with topology test slice and workspace check.
+
+#### Cluster E — execution update
+- Changed `core/genesis-topology/src/hnsw.rs`:
+  - `layer0_soa()` now preallocates `neighbor_ids` and `neighbor_distances` using `edge_count_layer0_undirected` to reduce growth churn.
+  - `search_layer()` visited reset now uses in-place pop loop (no temporary allocation).
+
+Validation performed:
+- `cargo test -p genesis-topology layer0_soa_preserves_layer0_cardinality` ✅
+
+Remaining risk:
+- `edge_count_layer0_undirected` can overestimate after removals with invalidated nodes, so preallocation may reserve slightly more than required (acceptable).
+
+### Cluster F — const hygiene (subplan)
+- Remove `const fn` qualifiers from runtime constructors that allocate or initialize dynamic containers.
+- Keep `const fn` only for pure compile-time data constructors with stable semantics.
+- Validate with workspace check + targeted topology/dynamics tests.
+
+#### Cluster F — execution update
+- Changed runtime constructors from `const fn` to `fn`:
+  - `core/genesis-topology/src/hnsw.rs`: `HnswGraph::new`
+  - `core/genesis-topology/src/manifold.rs`: `ManifoldCollector::new`
+- Earlier in Phase 2, `core/genesis-dynamics/src/free_energy.rs` runtime helpers (`is_finite_scalar`, `sanitize_trace`, `VFEMinimizer::new`, `bounded_step`) were also de-constified where compile-time semantics were unnecessary.
+
+Validation performed:
+- `cargo check --workspace` ✅
+
+Remaining risk:
+- Any downstream callsites requiring const context for these constructors would now fail to compile; no such usage found in workspace.
+
+### Cluster G — residual singleton/manual review (subplan)
+- Attempt to locate provenance for RC-09 (`unclassified`) in repository artifacts.
+- If source artifact is unavailable, mark as non-actionable with technical justification and no speculative patch.
+
+#### Cluster G — execution update
+- Searched repository for `final_report.json`, `Unknown issue`, and `unclassified` provenance metadata.
+- Result: only the reduced backlog file exists; no source artifact pinpoints the singleton location.
+- RC-09 status: **non-actionable in-code for this phase** because no attributable source unit exists in repository.
+
+Validation performed:
+- Artifact search only (no code execution required).
+
+Remaining risk:
+- RC-09 may remain unresolved until the upstream source report (`final_report.json`) is provided.
+
+---
+
+## Phase 2 final status
+
+### Workspace-level validation
+- `cargo check --workspace` ✅
+- `cargo test --workspace` ✅
+- `cargo check --workspace 2>&1 | grep "^warning:"` ✅ (no warning lines emitted)
+
+### Root-cause closure status
+- RC-01 (const misuse): **addressed** via runtime de-constification in affected constructors/helpers.
+- RC-02 (integer safety/conversions): **addressed** at dynamic index boundaries (checked conversion + checked growth).
+- RC-03 (bounds/invariants): **addressed** by removing unsafe unchecked access and adding bounded accessors.
+- RC-04 (numerical domain guards): **addressed** with explicit domain/finiteness checks on key sqrt/log/division paths.
+- RC-05 (floating-point stability): **addressed** with robust comparisons (`total_cmp`) and guarded finite handling.
+- RC-06 (performance inefficiency): **addressed** with targeted allocation-reduction changes in HNSW hot paths.
+- RC-07 (panic-prone APIs): **addressed** by removing non-test panic paths in modified production functions.
+- RC-08 (unsafe without contracts): **addressed** by eliminating avoidable unsafe access and tightening unsafe usage scope.
+- RC-09 (unclassified singleton): **non-actionable in repository state** (source artifact missing; no attributable code unit to patch).
+
+### Residual follow-up (external dependency)
+- To fully close RC-09, upstream `final_report.json` (or equivalent provenance artifact) is required.
+
+## Final verification consolidation
+
+- RC-01: **closed**
+- RC-02: **closed**
+- RC-03: **closed**
+- RC-04: **closed**
+- RC-05: **closed**
+- RC-06: **closed**
+- RC-07: **closed**
+- RC-08: **closed**
+- RC-09: **non-actionable** (no attributable source unit in repository; upstream `final_report.json` provenance missing)

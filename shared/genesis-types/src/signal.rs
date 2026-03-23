@@ -374,7 +374,7 @@ impl SpikeComponents {
 
         for (idx, coef) in iter {
             // Thermal noise gate — AXIOMA-001.
-            if coef.is_nan() || coef.abs() <= COGNITIVE_PLANCK_CONSTANT {
+            if !coef.is_finite() || coef.abs() <= COGNITIVE_PLANCK_CONSTANT {
                 continue;
             }
             let abs = coef.abs();
@@ -385,25 +385,37 @@ impl SpikeComponents {
                 filled += 1;
                 if filled == K {
                     // Find the weakest slot.
-                    (min_slot, min_abs) = buf[..K]
+                    if let Some((slot, abs_slot)) = buf[..K]
                         .iter()
                         .enumerate()
                         .min_by(|(_, a), (_, b)| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)))
                         .map(|(i, &(a, _ix, _))| (i, a))
-                        .unwrap();
+                    {
+                        min_slot = slot;
+                        min_abs = abs_slot;
+                    } else {
+                        continue;
+                    }
                 }
             } else {
                 // Buffer full: replace weakest slot if this coef is stronger.
-                let stronger = abs > min_abs || (abs == min_abs && idx < buf[min_slot].1);
+                let stronger = match abs.total_cmp(&min_abs) {
+                    core::cmp::Ordering::Greater => true,
+                    core::cmp::Ordering::Equal => idx < buf[min_slot].1,
+                    core::cmp::Ordering::Less => false,
+                };
                 if stronger {
                     buf[min_slot] = (abs, idx, coef);
                     // Recompute min slot.
-                    (min_slot, min_abs) = buf[..K]
+                    if let Some((slot, abs_slot)) = buf[..K]
                         .iter()
                         .enumerate()
                         .min_by(|(_, a), (_, b)| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)))
                         .map(|(i, &(a, _ix, _))| (i, a))
-                        .unwrap();
+                    {
+                        min_slot = slot;
+                        min_abs = abs_slot;
+                    }
                 }
             }
         }
@@ -439,7 +451,7 @@ impl SpikeComponents {
                 read += 1;
             }
             // Re-apply Planck filtering to merged result.
-            if !acc.is_nan() && acc.abs() > COGNITIVE_PLANCK_CONSTANT {
+            if acc.is_finite() && acc.abs() > COGNITIVE_PLANCK_CONSTANT {
                 indices[count] = idx;
                 values[count] = acc;
                 count += 1;

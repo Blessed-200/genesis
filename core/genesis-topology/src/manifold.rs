@@ -223,7 +223,7 @@ impl ManifoldCollector {
     /// Create a new empty manifold.
     ///
     /// AX-ID: AXIOMA-013
-    pub const fn new(ef_construction: usize) -> Self {
+    pub fn new(ef_construction: usize) -> Self {
         Self {
             graph: HnswGraph::new(ef_construction),
             h1_state: IncrementalH1State::new(),
