@@ -19,7 +19,10 @@ use std::sync::atomic::{AtomicPtr, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use fixedbitset::FixedBitSet;
-use genesis_math::{fast_metric_distance, fast_metric_distance_from_dense, SparseCliffordVector};
+use genesis_math::{
+    fast_metric_distance, fast_metric_distance_sq, fast_metric_distance_sq_from_dense,
+    SparseCliffordVector,
+};
 use genesis_types::{GenesisError, NodeId};
 use smallvec::SmallVec;
 
@@ -86,9 +89,9 @@ impl SoaBatch4 {
     }
 }
 
-/// Compute Clifford grade-weighted distances from query to up to 4 candidates.
+/// Compute squared Clifford grade-weighted distances from query to up to 4 candidates.
 ///
-/// Returns `[d0, d1, d2, d3]` where `dᵢ = fast_metric_distance(query, batch[i])`.
+/// Returns `[d0², d1², d2², d3²]` where `dᵢ² = fast_metric_distance_sq(query, batch[i])`.
 /// Slots beyond `batch.count` are filled with `f64::INFINITY`.
 ///
 /// AX-ID: AXIOMA-001, AXIOMA-013
@@ -110,8 +113,12 @@ fn batch_distance_4(query: &SparseCliffordVector, batch: &SoaBatch4) -> [f64; SI
     let mut out = [f64::INFINITY; SIMD_BATCH_WIDTH];
     for (slot, d) in out.iter_mut().enumerate().take(batch.count) {
         let dense = core::array::from_fn(|blade| batch.coeffs_transposed[blade][slot]);
-        let dist = fast_metric_distance_from_dense(&dense, query);
-        *d = if dist.is_finite() { dist } else { f64::INFINITY };
+        let dist = fast_metric_distance_sq_from_dense(&dense, query);
+        *d = if dist.is_finite() {
+            dist
+        } else {
+            f64::INFINITY
+        };
     }
     out
 }
@@ -150,12 +157,11 @@ unsafe fn batch_distance_4_avx2(
         _mm256_storeu_pd(out.as_mut_ptr(), acc);
     }
     for value in &mut out {
-        let safe = if value.is_finite() {
+        *value = if value.is_finite() {
             (*value).max(0.0)
         } else {
             f64::INFINITY
         };
-        *value = safe.sqrt();
     }
     out
 }
@@ -229,7 +235,7 @@ mod layer0_codec {
         type Storage: Copy;
 
         fn encode(values: &[f32; TOTAL_BLADES]) -> Self::Storage;
-        fn distance(stored: &Self::Storage, query: &SparseCliffordVector) -> f64;
+        fn distance_sq(stored: &Self::Storage, query: &SparseCliffordVector) -> f64;
         fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES];
     }
 
@@ -244,9 +250,9 @@ mod layer0_codec {
             *values
         }
 
-        fn distance(stored: &Self::Storage, query: &SparseCliffordVector) -> f64 {
+        fn distance_sq(stored: &Self::Storage, query: &SparseCliffordVector) -> f64 {
             let dense = core::array::from_fn(|i| f64::from(stored[i]));
-            super::fast_metric_distance_from_dense(&dense, query)
+            super::fast_metric_distance_sq_from_dense(&dense, query)
         }
 
         fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES] {
@@ -273,8 +279,8 @@ mod layer0_codec {
             }
         }
 
-        fn distance(stored: &Self::Storage, query: &SparseCliffordVector) -> f64 {
-            super::fast_metric_distance_f16(stored, query)
+        fn distance_sq(stored: &Self::Storage, query: &SparseCliffordVector) -> f64 {
+            super::fast_metric_distance_f16_sq(stored, query)
         }
 
         fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES] {
@@ -509,7 +515,22 @@ fn encode_layer0(values: &[f32; TOTAL_BLADES]) -> Result<Layer0Coeffs, GenesisEr
 ///
 /// Panics only if the decompressed coefficients become non-finite, which
 /// violates the encoding invariants of `f32_to_f16_bits` for finite inputs.
+///
+/// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 pub fn fast_metric_distance_f16(stored: &[u16; 16], query: &SparseCliffordVector) -> f64 {
+    fast_metric_distance_f16_sq(stored, query).sqrt()
+}
+
+#[cfg(feature = "hnsw-f16")]
+#[allow(clippy::inline_always)]
+#[inline(always)]
+/// # Panics
+///
+/// Panics only if the decompressed coefficients become non-finite, which
+/// violates the encoding invariants of `f32_to_f16_bits` for finite inputs.
+///
+/// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
+pub fn fast_metric_distance_f16_sq(stored: &[u16; 16], query: &SparseCliffordVector) -> f64 {
     // NOTA ARQUITECTÓNICA:
     // Se usa compile-time dispatch en lugar de runtime dispatch para evitar
     // la pérdida de inlining y la penalización de `vzeroupper` en el hot loop.
@@ -555,7 +576,7 @@ pub fn fast_metric_distance_f16(stored: &[u16; 16], query: &SparseCliffordVector
         }
     }
 
-    fast_metric_distance_from_dense(&decompressed, query)
+    fast_metric_distance_sq_from_dense(&decompressed, query)
 }
 
 #[cfg(all(feature = "hnsw-f16", test))]
@@ -950,10 +971,10 @@ impl HnswGraph {
                 .copied()
                 .max_by(|a, b| {
                     let da = self.get_idx(*a).map_or(f64::INFINITY, |i| {
-                        self.distance_to_node(&self.nodes[idx].vec, i, layer)
+                        self.distance_to_node_sq(&self.nodes[idx].vec, i, layer)
                     });
                     let db = self.get_idx(*b).map_or(f64::INFINITY, |i| {
-                        self.distance_to_node(&self.nodes[idx].vec, i, layer)
+                        self.distance_to_node_sq(&self.nodes[idx].vec, i, layer)
                     });
                     da.total_cmp(&db)
                 });
@@ -965,14 +986,18 @@ impl HnswGraph {
         }
     }
 
-    fn distance_to_node(&self, query: &SparseCliffordVector, idx: usize, layer: usize) -> f64 {
+    fn distance_to_node_sq(&self, query: &SparseCliffordVector, idx: usize, layer: usize) -> f64 {
         if layer == 0 {
-            return <ActiveLayer0Codec as layer0_codec::Layer0Codec>::distance(
+            return <ActiveLayer0Codec as layer0_codec::Layer0Codec>::distance_sq(
                 &self.nodes[idx].layer0,
                 query,
             );
         }
-        fast_metric_distance(query, &self.nodes[idx].vec)
+        fast_metric_distance_sq(query, &self.nodes[idx].vec)
+    }
+
+    fn distance_to_node(&self, query: &SparseCliffordVector, idx: usize, layer: usize) -> f64 {
+        self.distance_to_node_sq(query, idx, layer).sqrt()
     }
 
     /// Greedy single-element search at a given layer.
@@ -984,13 +1009,13 @@ impl HnswGraph {
         layer: usize,
     ) -> usize {
         let mut current = start;
-        let mut current_dist = self.distance_to_node(query, current, layer);
+        let mut current_dist = self.distance_to_node_sq(query, current, layer);
         loop {
             let mut improved = false;
             if layer < self.nodes[current].max_layer + 1 {
                 for &nb_id in self.layer_neighbors[layer].neighbors(current) {
                     if let Some(nb_idx) = self.get_idx(nb_id) {
-                        let d = self.distance_to_node(query, nb_idx, layer);
+                        let d = self.distance_to_node_sq(query, nb_idx, layer);
                         if d < current_dist {
                             current = nb_idx;
                             current_dist = d;
@@ -1029,7 +1054,7 @@ impl HnswGraph {
                 scratch.visited.grow(self.nodes.len());
             }
 
-            let d0 = self.distance_to_node(query, entry_idx, layer);
+            let d0 = self.distance_to_node_sq(query, entry_idx, layer);
             scratch.visited.set(entry_idx, true);
             scratch.visited_touched.push(entry_idx);
             scratch
@@ -1155,7 +1180,7 @@ impl HnswGraph {
                                 }
                                 scratch.visited.set(nb_idx, true);
                                 scratch.visited_touched.push(nb_idx);
-                                let d = self.distance_to_node(query, nb_idx, layer);
+                                let d = self.distance_to_node_sq(query, nb_idx, layer);
 
                                 let worst = scratch
                                     .results
@@ -1689,7 +1714,7 @@ impl Iterator for NeighborIter<'_> {
 
 #[cfg(test)]
 mod tests {
-    use genesis_math::{fast_metric_distance, SparseCliffordVector};
+    use genesis_math::{fast_metric_distance, fast_metric_distance_sq, SparseCliffordVector};
     use proptest::prelude::*;
 
     use super::*;
@@ -1720,7 +1745,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_distance_4_matches_scalar_for_all_counts() {
+    fn batch_distance_4_matches_scalar_sq_for_all_counts() {
         let mut seed = 0x1234_5678_9ABC_DEF0;
         let query = random_vec(&mut seed);
 
@@ -1739,7 +1764,7 @@ mod tests {
             let distances = batch_distance_4(&query, &batch);
 
             for slot in 0..count {
-                let scalar = fast_metric_distance(&query, &vectors[slot]);
+                let scalar = fast_metric_distance_sq(&query, &vectors[slot]);
                 assert!((distances[slot] - scalar).abs() < 1e-10);
             }
             for distance in distances.iter().take(SIMD_BATCH_WIDTH).skip(count) {
@@ -2122,6 +2147,65 @@ mod tests {
                 "search_nearest devolvió NodeId duplicado"
             );
         }
+    }
+
+    #[test]
+    fn squared_distance_keeps_identical_neighbor_ordering() {
+        let mut g = HnswGraph::new(32);
+        let fixture = [
+            [
+                0.11, -0.22, 0.33, -0.44, 0.55, -0.66, 0.77, -0.88, 0.99, -0.10, 0.21, -0.32, 0.43,
+                -0.54, 0.65, -0.76,
+            ],
+            [
+                0.70, -0.60, 0.50, -0.40, 0.30, -0.20, 0.10, -0.05, 0.15, -0.25, 0.35, -0.45, 0.55,
+                -0.65, 0.75, -0.85,
+            ],
+            [
+                -0.35, 0.25, -0.15, 0.05, -0.95, 0.85, -0.75, 0.65, -0.55, 0.45, -0.35, 0.25,
+                -0.15, 0.05, -0.02, 0.01,
+            ],
+            [
+                0.12, 0.24, 0.36, 0.48, 0.60, 0.72, 0.84, 0.96, -0.11, -0.22, -0.33, -0.44, -0.55,
+                -0.66, -0.77, -0.88,
+            ],
+        ];
+
+        let mut vecs = Vec::with_capacity(fixture.len());
+        for (i, dense) in fixture.iter().enumerate() {
+            let v = SparseCliffordVector::from_dense(dense).expect("finite fixture");
+            g.insert(make_id(i as u64), &v).expect("fixture insert");
+            vecs.push(v);
+        }
+
+        let query = SparseCliffordVector::from_dense(&[
+            0.42, -0.38, 0.31, -0.27, 0.26, -0.22, 0.18, -0.14, 0.10, -0.08, 0.06, -0.04, 0.03,
+            -0.02, 0.01, -0.005,
+        ])
+        .expect("finite query");
+
+        let mut by_dist: Vec<(usize, f64)> = vecs
+            .iter()
+            .enumerate()
+            .map(|(idx, v)| (idx, fast_metric_distance(&query, v)))
+            .collect();
+        by_dist.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+
+        let mut by_dist_sq: Vec<(usize, f64)> = vecs
+            .iter()
+            .enumerate()
+            .map(|(idx, v)| (idx, fast_metric_distance_sq(&query, v)))
+            .collect();
+        by_dist_sq.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+
+        let ordered: Vec<usize> = by_dist.iter().map(|(idx, _)| *idx).collect();
+        let ordered_sq: Vec<usize> = by_dist_sq.iter().map(|(idx, _)| *idx).collect();
+        assert_eq!(ordered_sq, ordered);
+
+        let got = g.search_nearest(&query, fixture.len());
+        let expected_ids: Vec<NodeId> =
+            ordered.into_iter().map(|idx| make_id(idx as u64)).collect();
+        assert_eq!(got, expected_ids);
     }
     #[test]
     fn edge_density_within_bounds() {

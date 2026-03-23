@@ -667,6 +667,42 @@ pub(crate) const METRIC_WEIGHTS: [f64; TOTAL_BLADES] = {
     w
 };
 
+/// Distancia semántica al cuadrado diferenciada por grado en G(1,3).
+///
+/// ```text
+/// d²(x, y) = Σᵢ `METRIC_WEIGHTS[i]` · (xᵢ − yᵢ)²
+/// ```
+///
+/// Variante sin `sqrt` para comparaciones en hot path (HNSW heaps/ordenación).
+/// Conserva el mismo Cauchy–Schwarz gate sub-Planck que `fast_metric_distance`.
+///
+/// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
+#[inline]
+pub fn fast_metric_distance_sq(a: &SparseCliffordVector, b: &SparseCliffordVector) -> f64 {
+    // CS gate: evitar conexiones entre estados de energía sub-Planck
+    if a.max_abs_coeff * b.max_abs_coeff < COGNITIVE_PLANCK_CONSTANT {
+        return f64::MAX;
+    }
+
+    let mut sum = 0.0f64;
+    let union_mask = a.active_mask | b.active_mask;
+    if union_mask.count_ones() <= 8 {
+        let mut mask = union_mask;
+        while mask != 0 {
+            let i = mask.trailing_zeros() as usize;
+            let d = a.coeffs[i] - b.coeffs[i];
+            sum += d * d * METRIC_WEIGHTS[i];
+            mask &= mask - 1;
+        }
+    } else {
+        for (i, weight) in METRIC_WEIGHTS.iter().enumerate().take(TOTAL_BLADES) {
+            let d = a.coeffs[i] - b.coeffs[i];
+            sum += d * d * *weight;
+        }
+    }
+    sum
+}
+
 /// Distancia semántica diferenciada por grado en el espacio de coeficientes de G(1,3).
 ///
 /// ```text
@@ -697,28 +733,11 @@ pub(crate) const METRIC_WEIGHTS: [f64; TOTAL_BLADES] = {
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 #[inline]
 pub fn fast_metric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) -> f64 {
-    // CS gate: evitar conexiones entre estados de energía sub-Planck
-    if a.max_abs_coeff * b.max_abs_coeff < COGNITIVE_PLANCK_CONSTANT {
+    let dist_sq = fast_metric_distance_sq(a, b);
+    if dist_sq == f64::MAX {
         return f64::MAX;
     }
-
-    let mut sum = 0.0f64;
-    let union_mask = a.active_mask | b.active_mask;
-    if union_mask.count_ones() <= 8 {
-        let mut mask = union_mask;
-        while mask != 0 {
-            let i = mask.trailing_zeros() as usize;
-            let d = a.coeffs[i] - b.coeffs[i];
-            sum += d * d * METRIC_WEIGHTS[i];
-            mask &= mask - 1;
-        }
-    } else {
-        for (i, weight) in METRIC_WEIGHTS.iter().enumerate().take(TOTAL_BLADES) {
-            let d = a.coeffs[i] - b.coeffs[i];
-            sum += d * d * *weight;
-        }
-    }
-    sum.sqrt()
+    dist_sq.sqrt()
 }
 
 /// Variante para el path de compresión f16 en HNSW.
@@ -737,7 +756,7 @@ pub fn fast_metric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) 
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 #[inline]
-pub fn fast_metric_distance_from_dense(
+pub fn fast_metric_distance_sq_from_dense(
     a_dense: &[f64; TOTAL_BLADES],
     b: &SparseCliffordVector,
 ) -> f64 {
@@ -746,7 +765,18 @@ pub fn fast_metric_distance_from_dense(
         let d = a_dense[i] - b.coeffs[i];
         sum += d * d * *weight;
     }
-    sum.sqrt()
+    sum
+}
+
+/// Variante con `sqrt` para compatibilidad API.
+///
+/// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
+#[inline]
+pub fn fast_metric_distance_from_dense(
+    a_dense: &[f64; TOTAL_BLADES],
+    b: &SparseCliffordVector,
+) -> f64 {
+    fast_metric_distance_sq_from_dense(a_dense, b).sqrt()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1289,6 +1319,45 @@ mod tests {
             (dab - dba).abs() < 1e-12,
             "simetría violada: d(a,b)={dab}, d(b,a)={dba}"
         );
+    }
+
+    #[test]
+    fn metric_distance_sq_matches_squared_metric_distance() {
+        let a = SparseCliffordVector::from_iter([(0b0001, 1.0), (0b0011, -0.75), (0b0110, 0.25)])
+            .unwrap();
+        let b = SparseCliffordVector::from_iter([(0b0001, 0.25), (0b0010, 0.5), (0b0111, -0.4)])
+            .unwrap();
+
+        let d = fast_metric_distance(&a, &b);
+        let d_sq = fast_metric_distance_sq(&a, &b);
+        assert!((d_sq - d * d).abs() < 1e-12);
+    }
+
+    #[test]
+    fn metric_distance_sq_preserves_sub_planck_gate() {
+        let a = SparseCliffordVector::from_iter([(0b0000, 1e-20)]).unwrap();
+        let b = SparseCliffordVector::from_iter([(0b0001, 1e-20)]).unwrap();
+
+        assert_eq!(fast_metric_distance_sq(&a, &b), f64::MAX);
+        assert_eq!(fast_metric_distance(&a, &b), f64::MAX);
+    }
+
+    #[test]
+    fn metric_distance_sq_from_dense_matches_squared_dense_metric_distance() {
+        let dense = [
+            0.3, -0.2, 0.1, -0.4, 0.5, -0.6, 0.7, -0.8, 0.9, -1.0, 0.2, -0.3, 0.4, -0.5, 0.6, -0.7,
+        ];
+        let b = SparseCliffordVector::from_iter([
+            (0b0000, 0.1),
+            (0b0001, -0.3),
+            (0b0110, 0.9),
+            (0b1111, -0.2),
+        ])
+        .unwrap();
+
+        let d = fast_metric_distance_from_dense(&dense, &b);
+        let d_sq = fast_metric_distance_sq_from_dense(&dense, &b);
+        assert!((d_sq - d * d).abs() < 1e-12);
     }
 
     /// Invariant: `METRIC_WEIGHTS[i]` == GRADE_WEIGHTS[`GRADE_TABLE[i]`] for all i.

@@ -531,3 +531,32 @@ Remaining risk:
 - RC-07: **closed**
 - RC-08: **closed**
 - RC-09: **non-actionable** (no attributable source unit in repository; upstream `final_report.json` provenance missing)
+
+## Targeted Plan — Squared-distance HNSW metric path (2026-03-23)
+
+### Root cause
+- HNSW hot-path comparisons currently compute Euclidean distance via `sqrt` even when only relative ordering is needed. This adds avoidable scalar latency in `distance_to_node`, `search_layer`, `greedy_search_layer`, and `prune_layer`.
+
+### File-level actions
+1. `core/genesis-math/src/multivector.rs`
+   - Add `fast_metric_distance_sq` and `fast_metric_distance_sq_from_dense` public helpers.
+   - Preserve existing sub-Planck fallback and non-finite guards; only remove terminal `sqrt`.
+   - Keep `fast_metric_distance*` behavior unchanged by delegating to squared versions + `sqrt`.
+2. `core/genesis-topology/src/hnsw.rs`
+   - Switch internal comparison/heaps in `distance_to_node`, `search_layer`, `greedy_search_layer`, and `prune_layer` to squared distances.
+   - Compute `sqrt` only when API/tests require user-facing distance values.
+   - Keep ordering stable and deterministic, including non-finite handling.
+3. Tests/benches
+   - Add assertions that nearest-neighbor ordering is identical between squared and non-squared paths.
+   - Extend or add benchmark coverage to compare CPU time before/after (distance-heavy search path).
+
+### Validation steps
+- `cargo test -p genesis-math multivector`
+- `cargo test -p genesis-topology hnsw`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- Performance skill check: `cargo bench -p genesis-topology -- hnsw --output-format bencher`
+- Invariants post-change:
+  - `cargo test --release -p genesis-math -- invariant --nocapture`
+  - `cargo test --release -p genesis-topology -- invariant --nocapture`

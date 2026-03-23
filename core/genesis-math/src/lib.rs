@@ -61,7 +61,8 @@ pub use grade::{
     is_homogeneous, max_grade, min_grade, reverse, CLIFFORD_NORM_WEIGHTS, REVERSE_SIGN,
 };
 pub use multivector::{
-    fast_metric_distance, fast_metric_distance_from_dense, SparseCliffordVector,
+    fast_metric_distance, fast_metric_distance_from_dense, fast_metric_distance_sq,
+    fast_metric_distance_sq_from_dense, SparseCliffordVector,
 };
 pub use product::{
     bivector_norm_sq_of_product, bivector_norm_sq_of_product_lhs_dense, sparse_geometric_product,
