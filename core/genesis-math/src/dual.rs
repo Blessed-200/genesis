@@ -230,7 +230,7 @@ pub fn geometric_product_dual(
 
 #[cfg(test)]
 mod tests {
-    use super::{geometric_product_dual, hodge_dual, hodge_undual, Dual, SparseDualVector};
+    use super::{geometric_product_dual, Dual, SparseDualVector};
     use crate::SparseCliffordVector;
 
     #[test]
@@ -271,30 +271,46 @@ mod tests {
 
     #[test]
     fn hodge_double_dual_is_negation_in_g13() {
-        let scalar = SparseCliffordVector::from_iter([(0, 1.0)]).unwrap();
-        let double = hodge_undual(&hodge_dual(&scalar));
+        use crate::{hodge_dual, hodge_undual, SparseCliffordVector};
+
+        let a = SparseCliffordVector::from_iter([(0, 1.0)]).unwrap();
+        let got = hodge_undual(&hodge_dual(&a));
         assert!(
-            (double.coeffs[0] + 1.0).abs() < 1e-12,
-            "hodge_undual(hodge_dual(scalar)) should be -scalar, got {}",
-            double.coeffs[0]
+            (got.coeffs[0] + 1.0).abs() < 1e-12,
+            "double dual of scalar: expected -1.0, got {}",
+            got.coeffs[0]
         );
 
-        let e1 = SparseCliffordVector::from_iter([(0b0001, 1.0)]).unwrap();
-        let double_e1 = hodge_undual(&hodge_dual(&e1));
-        let orig = e1.coeffs[0b0001];
-        let got = double_e1.coeffs[0b0001];
+        let e1 = SparseCliffordVector::from_iter([(1, 1.0)]).unwrap();
+        let got_e1 = hodge_undual(&hodge_dual(&e1));
         assert!(
-            (got + orig).abs() < 1e-12,
-            "hodge_undual(hodge_dual(e1)) should be -e1, got {got}"
+            (got_e1.coeffs[1] + 1.0).abs() < 1e-12,
+            "double dual of e1: expected -1.0, got {}",
+            got_e1.coeffs[1]
         );
 
-        let biv = SparseCliffordVector::from_iter([(0b0011, 1.0)]).unwrap();
-        let double_biv = hodge_undual(&hodge_dual(&biv));
-        let orig_biv = biv.coeffs[0b0011];
-        let got_biv = double_biv.coeffs[0b0011];
+        let biv = SparseCliffordVector::from_iter([(3, 1.0)]).unwrap();
+        let got_biv = hodge_undual(&hodge_dual(&biv));
         assert!(
-            (got_biv + orig_biv).abs() < 1e-12,
-            "hodge_undual(hodge_dual(biv)) should be -biv, got {got_biv}"
+            (got_biv.coeffs[3] + 1.0).abs() < 1e-12,
+            "double dual of e1^e2: expected -1.0, got {}",
+            got_biv.coeffs[3]
+        );
+
+        let triv = SparseCliffordVector::from_iter([(7, 1.0)]).unwrap();
+        let got_triv = hodge_undual(&hodge_dual(&triv));
+        assert!(
+            (got_triv.coeffs[7] + 1.0).abs() < 1e-12,
+            "double dual of trivector: expected -1.0, got {}",
+            got_triv.coeffs[7]
+        );
+
+        let ps = SparseCliffordVector::from_iter([(15, 1.0)]).unwrap();
+        let got_ps = hodge_undual(&hodge_dual(&ps));
+        assert!(
+            (got_ps.coeffs[15] + 1.0).abs() < 1e-12,
+            "double dual of pseudoscalar: expected -1.0, got {}",
+            got_ps.coeffs[15]
         );
     }
 }

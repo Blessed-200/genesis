@@ -269,14 +269,13 @@ fn bench_dense_kernel_compare(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_comparison(c: &mut Criterion) {
+fn bench_naive_matmul_16x16(c: &mut Criterion) {
     let a = full_mv();
     let b = full_mv();
+    let mat_a = [[1.0_f64 / 16.0; 16]; 16];
+    let bm = [[1.0_f64 / 16.0; 16]; 16];
 
-    let mat_a = [[1.0f64 / 16.0; 16]; 16];
-    let mat_b = [[1.0f64 / 16.0; 16]; 16];
-
-    let mut group = c.benchmark_group("comparison");
+    let mut group = c.benchmark_group("comparison_baseline");
     group.bench_function("dense_kernel_g13_16x16", |bencher| {
         bencher.iter(|| {
             black_box(dense_geometric_product_g13(
@@ -285,17 +284,17 @@ fn bench_comparison(c: &mut Criterion) {
             ))
         });
     });
-    group.bench_function("naive_matmul_16x16_f64_baseline", |bencher| {
+    group.bench_function("naive_matmul_16x16_f64", |bencher| {
         bencher.iter(|| {
-            let mut mat_c = [[0.0f64; 16]; 16];
+            let mut out = [[0.0_f64; 16]; 16];
             for i in 0..16 {
-                for j in 0..16 {
-                    for k in 0..16 {
-                        mat_c[i][k] += mat_a[i][j] * mat_b[j][k];
+                for k in 0..16 {
+                    for j in 0..16 {
+                        out[i][j] += mat_a[i][k] * bm[k][j];
                     }
                 }
             }
-            black_box(mat_c)
+            criterion::black_box(out)
         });
     });
     group.finish();
@@ -381,10 +380,10 @@ criterion_group!(
     bench_single_blade_product,
     bench_sparse_geo_product_mask_patterns,
     bench_dense_kernel_compare,
-    bench_comparison,
     bench_bivector_norm_sq_of_product,
     bench_sparse_geo_product_contiguous_batch,
     bench_from_dense_single_pass,
     bench_elite_algebra_vs_matrix4,
 );
-criterion_main!(benches);
+criterion_group!(comparison_baseline, bench_naive_matmul_16x16);
+criterion_main!(benches, comparison_baseline);
