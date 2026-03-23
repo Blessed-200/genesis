@@ -232,4 +232,191 @@ core/genesis-dynamics/src/
 -For complex fixes or cross-module refactors, first produce and update ./PLANS.md.
 Do not implement until the plan maps root causes to concrete file-level actions and validation steps.
 
+---
+
+## Optimization hierarchy (MANDATORY)
+
+All implementations must follow this strict priority order:
+
+1. Algorithmic optimality (O-notation, asymptotics)
+2. Memory layout (cache locality, contiguous storage, SoA vs AoS)
+3. Branch elimination (branchless logic preferred)
+4. Vectorization (SIMD, unrolling where beneficial)
+5. Allocation minimization (stack > arena > heap)
+6. Instruction-level efficiency (fused ops, intrinsics when justified)
+
+A solution that is correct but suboptimal in any higher tier MUST be rejected.
+
+Agents must actively search for:
+- better asymptotic algorithms
+- better data layouts
+- opportunities for precomputation
+
+---
+
+## Hot path rules
+
+Hot paths MUST be identified explicitly.
+
+A function is considered hot if:
+- it is inside any loop over N elements
+- it is called per node / per edge / per timestep
+- it participates in VFE minimization or synchrony
+
+For hot paths:
+
+- No heap allocation
+- No trait object dispatch
+- No recursion
+- No HashMap / BTreeMap
+- Prefer:
+  - slices (`&[T]`)
+  - fixed-size arrays
+  - SmallVec (only if bounded)
+  - manual inlining (`#[inline(always)]` when justified)
+
+Agents must annotate hot paths in comments:
+```rust
+// HOT PATH: O(N), called per iteration of VFE minimization
+---
+
+## 3. 🧬 IDIOMATICITY ≠ PERFORMANCE (clave)
+
+Ahora mismo no lo separas. Añade:
+
+```md
+---
+
+## Idiomatic Rust vs Performance
+
+Idiomatic Rust is NOT sufficient.
+
+Agents must:
+
+- Prefer idiomatic constructs ONLY if they do not degrade performance
+- Replace iterator chains with loops if:
+  - it removes bounds checks
+  - it improves vectorization
+  - it avoids temporaries
+
+Example:
+
+// REJECT (alloc + iterator overhead)
+vec.iter().map(...).collect()
+
+// PREFERRED (hot path)
+for i in 0..n { ... }
+
+---
+
+## Numerical stability and precision
+
+All floating-point code must consider:
+
+- catastrophic cancellation
+- accumulation error
+- normalization stability
+
+Prefer:
+
+- Kahan summation when summing many values
+- fused multiply-add (FMA) patterns where possible
+- stable formulations over naive equations
+
+Agents must justify any non-trivial numeric transformation.
+
+---
+
+## Algorithmic superiority requirement
+
+Before modifying any function, agents must ask:
+
+"Is there a fundamentally better algorithm for this?"
+
+This includes:
+
+- replacing O(N²) with O(N log N) or O(N)
+- using spatial indexing instead of brute force
+- using algebraic identities to eliminate operations
+- exploiting structure of G(1,3) (sparsity, symmetry, XOR properties)
+
+If a superior algorithm exists, it MUST be implemented,
+even if it increases local code complexity.
+---
+
+## Data layout constraints
+
+Data layout is part of the architecture.
+
+Agents must evaluate:
+
+- AoS vs SoA
+- alignment (cache line awareness)
+- contiguous memory guarantees
+
+Rules:
+
+- Prefer SoA for batch operations
+- Precompute layouts at insertion time (not in hot loops)
+- Avoid transpose-on-the-fly (see SoaBatch4 note)
+
+All layout decisions must be justified in comments.
+
+---
+
+## Forbidden inefficiencies (expanded)
+
+Agents must detect and eliminate:
+
+- redundant recomputation inside loops
+- unnecessary cloning or copying
+- temporary allocations in hot paths
+- dynamic dispatch where static is possible
+- bounds checks inside tight loops (use unsafe ONLY if proven safe)
+
+Code that contains these must be rewritten, not patched.
+
+---
+
+## Performance validation
+
+Any non-trivial change must include:
+
+- reasoning about complexity (before/after)
+- expected cache behavior
+- allocation count impact
+
+For critical paths:
+
+- include micro-benchmark (criterion) if applicable
+
+Claims like "faster" without justification are invalid.
+
+---
+
+## Inlining policy
+
+Use:
+
+- #[inline] for small functions
+- #[inline(always)] ONLY for hot-path primitives
+
+Do not over-inline large functions (code bloat risk).
+
+---
+
+## Unsafe usage
+
+Unsafe is allowed ONLY if:
+
+- it removes bounds checks or branching in hot paths
+- it is proven memory-safe
+- it is documented with invariants
+
+Every unsafe block must include:
+
+// SAFETY: explanation of why this is valid
+
+
+
 *GÉNESIS Cognitive Core | AGENTS.md v4.0.0 | 384 tests, 0 failures*
