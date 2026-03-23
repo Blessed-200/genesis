@@ -14,9 +14,9 @@
 //! │    row = CAYLEY_SIGN[i]                                          │
 //! │    iterate active_mask_b via trailing_zeros()                    │
 //! │      k = i ^ j                                                   │
-//! │      contribution = coeffs_a[i] * coeffs_b[j]                   │
-//! │      if row[j] > 0: pos[k] += contribution                      │
-//! │      else:          neg[k] += contribution                       │
+//! │      term = coeffs_a[i] * coeffs_b[j]                           │
+//! │      if row[j] > 0: pos[k] += term                              │
+//! │      else:          neg[k] += term                              │
 //! └──────────────────────────────────────────────────────────────────┘
 //!          ↓
 //! ┌─ Reduction ──────────────────────────────────────── O(16) ───┐
@@ -303,13 +303,16 @@ unsafe fn geometric_product_x86_avx2_dense(
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    use std::arch::x86_64::{_mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_storeu_pd};
+    use std::arch::x86_64::{
+        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd,
+        _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
+    };
 
     // HOT PATH: O(16²), dense G(1,3) product on AVX2.
     // Sequential SIMD loads come from `sign_row[j..]` and `b_coeffs[j..]`; the
     // result update remains scalar scatter because `i ^ j` is intrinsic to the
-    // Clifford product.
-    let mut contrib = [0.0f64; 4];
+    // Clifford product. Keep lane values resident in registers to avoid
+    // store-to-load forwarding stalls from a stack scratch buffer.
     for i in 0..TOTAL_BLADES {
         let coef_a = a_coeffs[i];
         let coef_a_vec = _mm256_set1_pd(coef_a);
@@ -325,13 +328,19 @@ unsafe fn geometric_product_x86_avx2_dense(
                 let signs = _mm256_loadu_pd(sign_row.as_ptr().add(j));
                 _mm256_mul_pd(scaled, signs)
             };
-            // SAFETY: `contrib` is a stack-local 4-lane scratch buffer.
-            unsafe { _mm256_storeu_pd(contrib.as_mut_ptr(), products) };
+            // SAFETY: `products` is a live SIMD register. These extraction
+            // intrinsics shuffle within registers only, so the hot path avoids
+            // any intermediate stack buffer or reload from memory.
+            let v0 = _mm256_cvtsd_f64(products);
+            let v1 = _mm256_cvtsd_f64(_mm256_unpackhi_pd(products, products));
+            let hi128 = _mm256_extractf128_pd(products, 1);
+            let v2 = _mm_cvtsd_f64(hi128);
+            let v3 = _mm_cvtsd_f64(_mm_unpackhi_pd(hi128, hi128));
 
-            result_buf[i ^ j] += contrib[0];
-            result_buf[i ^ (j + 1)] += contrib[1];
-            result_buf[i ^ (j + 2)] += contrib[2];
-            result_buf[i ^ (j + 3)] += contrib[3];
+            result_buf[i ^ j] += v0;
+            result_buf[i ^ (j + 1)] += v1;
+            result_buf[i ^ (j + 2)] += v2;
+            result_buf[i ^ (j + 3)] += v3;
             j += 4;
         }
     }
@@ -344,12 +353,15 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    use std::arch::x86_64::{_mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_storeu_pd};
+    use std::arch::x86_64::{
+        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd,
+        _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
+    };
 
     // HOT PATH: O(16²), dense G(1,3) product on AVX2+FMA hardware.
     // The read side is fully sequential; scatter remains scalar so we preserve
     // the scalar accumulation order while still exposing contiguous SIMD loads.
-    let mut contrib = [0.0f64; 4];
+    // Keep lane values resident in registers to avoid store forwarding stalls.
     for i in 0..TOTAL_BLADES {
         let coef_a = a_coeffs[i];
         let coef_a_vec = _mm256_set1_pd(coef_a);
@@ -365,13 +377,19 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
                 let signs = _mm256_loadu_pd(sign_row.as_ptr().add(j));
                 _mm256_mul_pd(scaled, signs)
             };
-            // SAFETY: `contrib` is a stack-local 4-lane scratch buffer.
-            unsafe { _mm256_storeu_pd(contrib.as_mut_ptr(), products) };
+            // SAFETY: `products` is a live SIMD register. These extraction
+            // intrinsics shuffle within registers only, so the hot path avoids
+            // any intermediate stack buffer or reload from memory.
+            let v0 = _mm256_cvtsd_f64(products);
+            let v1 = _mm256_cvtsd_f64(_mm256_unpackhi_pd(products, products));
+            let hi128 = _mm256_extractf128_pd(products, 1);
+            let v2 = _mm_cvtsd_f64(hi128);
+            let v3 = _mm_cvtsd_f64(_mm_unpackhi_pd(hi128, hi128));
 
-            result_buf[i ^ j] += contrib[0];
-            result_buf[i ^ (j + 1)] += contrib[1];
-            result_buf[i ^ (j + 2)] += contrib[2];
-            result_buf[i ^ (j + 3)] += contrib[3];
+            result_buf[i ^ j] += v0;
+            result_buf[i ^ (j + 1)] += v1;
+            result_buf[i ^ (j + 2)] += v2;
+            result_buf[i ^ (j + 3)] += v3;
             j += 4;
         }
     }
@@ -426,12 +444,12 @@ unsafe fn geometric_product_aarch64_neon_dense(
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    use std::arch::aarch64::{vdupq_n_f64, vld1q_f64, vmulq_f64, vst1q_f64};
+    use std::arch::aarch64::{vdupq_n_f64, vgetq_lane_f64, vld1q_f64, vmulq_f64};
 
     // HOT PATH: O(16²), dense G(1,3) product on AArch64.
     // Hoist one sign row per `i` so the read side becomes sequential NEON loads
     // from `sign_row[j..]` and `b_coeffs[j..]`; the scatter store remains scalar.
-    let mut contrib = [0.0f64; 2];
+    // Keep lane values in the NEON register file to avoid a stack round-trip.
     for i in 0..TOTAL_BLADES {
         let coef_a = a_coeffs[i];
         let coef_a_vec = vdupq_n_f64(coef_a);
@@ -447,11 +465,13 @@ unsafe fn geometric_product_aarch64_neon_dense(
                 let scaled = vmulq_f64(coef_a_vec, b_vec);
                 vmulq_f64(scaled, signs_vec)
             };
-            // SAFETY: `contrib` is a stack-local 2-lane scratch buffer.
-            unsafe { vst1q_f64(contrib.as_mut_ptr(), products) };
+            // SAFETY: `products` is a live NEON register. Lane extraction is
+            // register-to-register, so there is no memory round-trip here.
+            let v0 = vgetq_lane_f64::<0>(products);
+            let v1 = vgetq_lane_f64::<1>(products);
 
-            result_buf[i ^ j] += contrib[0];
-            result_buf[i ^ (j + 1)] += contrib[1];
+            result_buf[i ^ j] += v0;
+            result_buf[i ^ (j + 1)] += v1;
             j += 2;
         }
     }
