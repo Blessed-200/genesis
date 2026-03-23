@@ -227,4 +227,9 @@ core/genesis-dynamics/src/
 - Solución pendiente: pre-construir SoA en inserción (persistent layout)
 - NO revertir — la infraestructura es correcta y necesaria para persistent SoA
 
+# ExecPlans
+
+-For complex fixes or cross-module refactors, first produce and update ./PLANS.md.
+Do not implement until the plan maps root causes to concrete file-level actions and validation steps.
+
 *GÉNESIS Cognitive Core | AGENTS.md v4.0.0 | 384 tests, 0 failures*
