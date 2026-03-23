@@ -604,6 +604,8 @@ pub struct HnswGraph {
     layer_neighbors: Vec<CsrNeighborList>,
     /// Directed edge count at layer 0 (stored as directed for O(1) updates).
     edge_count_layer0_undirected: usize,
+    #[cfg(test)]
+    fail_preinsert_index_conversion: bool,
 }
 
 /// Cache-optimised SoA view of layer-0 HNSW data.
@@ -659,7 +661,18 @@ impl HnswGraph {
             state: GraphState::Online,
             layer_neighbors: Vec::new(),
             edge_count_layer0_undirected: 0,
+            #[cfg(test)]
+            fail_preinsert_index_conversion: false,
         }
+    }
+
+    #[inline(always)]
+    fn prevalidate_internal_idx_u32(&self, new_idx: usize) -> Result<u32, GenesisError> {
+        #[cfg(test)]
+        if self.fail_preinsert_index_conversion {
+            return Err(GenesisError::InvariantViolation { axiom_id: 13 });
+        }
+        u32::try_from(new_idx).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })
     }
 
     fn ensure_layer_neighbors_initialized(&mut self) {
@@ -763,28 +776,39 @@ impl HnswGraph {
 
         let target_layer = Self::random_level(id);
         let new_idx = self.nodes.len();
+        let previous_entry = self.entry.map(|entry_idx| (entry_idx, self.entry_layer));
+
+        let direct_index_update = if id.get() < u64::from(u32::MAX) {
+            let id_raw = usize::try_from(id.get())
+                .map_err(|_| GenesisError::InvariantViolation { axiom_id: 4 })?;
+            let next_direct_len = if id_raw >= self.direct_index.len() {
+                Some(
+                    id_raw
+                        .checked_add(1)
+                        .ok_or(GenesisError::InvariantViolation { axiom_id: 13 })?,
+                )
+            } else {
+                None
+            };
+            let new_idx_u32 = self.prevalidate_internal_idx_u32(new_idx)?;
+            Some((id_raw, next_direct_len, new_idx_u32))
+        } else {
+            None
+        };
+
         self.nodes.push(HnswNode::new(id, *vec, target_layer)?);
         for layer in &mut self.layer_neighbors {
             layer.add_node();
         }
         self.insert_id_index(id, new_idx);
 
-        if id.get() < u64::from(u32::MAX) {
-            let Ok(id_raw) = usize::try_from(id.get()) else {
-                return Err(GenesisError::InvariantViolation { axiom_id: 4 });
-            };
-            if id_raw >= self.direct_index.len() {
-                let Some(next_len) = id_raw.checked_add(1) else {
-                    return Err(GenesisError::InvariantViolation { axiom_id: 13 });
-                };
+        if let Some((id_raw, next_direct_len, new_idx_u32)) = direct_index_update {
+            if let Some(next_len) = next_direct_len {
                 self.direct_index.resize(next_len, u32::MAX);
             }
             // Barrera Release: no necesaria sobre Vec<u32> con &mut self (single-writer).
             // Para publicar este índice a lectores concurrentes, direct_index debe ser
             // Vec<AtomicU32> con store(Release). Por ahora: single-threaded, sin contención.
-            let Ok(new_idx_u32) = u32::try_from(new_idx) else {
-                return Err(GenesisError::InvariantViolation { axiom_id: 13 });
-            };
             self.direct_index[id_raw] = new_idx_u32;
             debug_assert!(
                 self.get_idx(id) == Some(new_idx),
@@ -793,16 +817,11 @@ impl HnswGraph {
             );
         }
 
-        if self.entry.is_none() {
+        let Some((entry_idx, entry_layer)) = previous_entry else {
             self.entry = Some(new_idx);
             self.entry_layer = target_layer;
             return Ok(());
-        }
-
-        let Some(entry_idx) = self.entry else {
-            return Err(GenesisError::InvariantViolation { axiom_id: 13 });
         };
-        let entry_layer = self.entry_layer;
 
         // Phase 1: greedy descent from entry_layer to target_layer+1
         let mut current = entry_idx;
@@ -1807,6 +1826,35 @@ mod tests {
             "duplicate insert must not add a new node"
         );
         assert_eq!(g.get_vector(id), Some(&first));
+    }
+
+    #[test]
+    fn hnsw_insert_prevalidation_error_keeps_graph_unchanged() {
+        let mut g = HnswGraph::new(16);
+        let existing_id = make_id(0);
+        let failing_id = make_id(1);
+        assert!(g.insert(existing_id, &make_vec(0.3)).is_ok());
+
+        let nodes_before = g.node_count();
+        let id_index_before = g.id_index.len();
+        let direct_index_before = g.direct_index.clone();
+
+        g.fail_preinsert_index_conversion = true;
+        let first_err = g.insert(failing_id, &make_vec(0.6));
+        let second_err = g.insert(failing_id, &make_vec(0.6));
+
+        assert!(matches!(
+            first_err,
+            Err(GenesisError::InvariantViolation { axiom_id: 13 })
+        ));
+        assert!(matches!(
+            second_err,
+            Err(GenesisError::InvariantViolation { axiom_id: 13 })
+        ));
+        assert_eq!(g.node_count(), nodes_before);
+        assert_eq!(g.id_index.len(), id_index_before);
+        assert_eq!(g.direct_index, direct_index_before);
+        assert!(g.get_idx(failing_id).is_none());
     }
 
     #[test]
