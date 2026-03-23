@@ -560,3 +560,57 @@ Remaining risk:
 - Invariants post-change:
   - `cargo test --release -p genesis-math -- invariant --nocapture`
   - `cargo test --release -p genesis-topology -- invariant --nocapture`
+
+
+## Targeted Plan — HNSW layer-0 zero-overhead SoA slab pipeline (2026-03-23)
+
+### Objective
+- Eliminate per-query AoS→SoA transpose overhead in `search_layer()` by persisting a 64-byte-aligned layer-0 slab at insertion time and consuming it directly from the search hot path.
+
+### Invariants and contracts that must not break
+- Public API/signatures remain stable for `HnswGraph`, `search_nearest`, `remove_node`, `layer0_soa`, and `LockFreeHnswIndex`.
+- Layer-0 distance remains the grade-weighted Clifford metric over all 16 blades; no Euclidean/L2 regression.
+- `remove_node` remains zero-compaction and must exclude deleted nodes from results.
+- No `HashMap`/`BTreeMap`, no search-path heap allocation, no runtime AoS→SoA transpose.
+- Unsafe blocks must document alignment, bounds, and aliasing invariants.
+
+### Root cause
+- `SoaBatch4::from_nodes()` transposes 4 AoS vectors into temporary SoA storage on every layer-0 beam expansion. For high `ef`, transpose cost dominates arithmetic and defeats SIMD throughput.
+
+### File-level actions (`core/genesis-topology/src/hnsw.rs` only)
+1. Replace transient `SoaBatch4` / `batch_distance_4*` with persistent slab metadata:
+   - add `SLAB_LANES=8`, `SLAB_DIM=16`, `BLOCK_STRIDE=128`, `METRIC_WEIGHTS_F32`,
+   - add 64-byte-aligned flat slab storage plus `node_to_slab: Vec<u32>`.
+2. Rework insertion/removal:
+   - materialize slab coefficients at insertion time,
+   - grow slab by blocks,
+   - mark deleted lanes with `NaN` sentinel in blade 0.
+3. Rework layer-0 search hot path:
+   - precompute query `[f32; 16]` once,
+   - batch neighbor evaluation by slab block,
+   - dispatch to scalar or AVX2 slab kernel without runtime feature checks,
+   - reject non-finite lanes before candidate admission.
+4. Replace dynamic binary heaps in search hot path with fixed-capacity deterministic heaps for bounded candidate/result sets.
+5. Repurpose `HnswLayer0Soa` to expose slab + metadata instead of dense AoS coefficients.
+6. Migrate/add tests in `hnsw.rs` for:
+   - slab-vs-scalar distance agreement,
+   - grade-weighted-not-L2 ordering,
+   - NaN-lane deletion exclusion,
+   - insertion ordering into slab,
+   - deterministic fixed heap behavior,
+   - nearest-neighbor regression equivalence for slab path.
+
+### Microarchitectural risks to audit while implementing
+- Misaligned slab base causing AVX loads to straddle cache lines unpredictably.
+- Register pressure/spills in the AVX2 unrolled kernel.
+- Recomputing block loads or slab-index conversions inside tight loops.
+- False acceptance of NaN/Inf lanes into candidate heaps.
+- Borrow-checker regressions that reintroduce temporary `Vec` allocation in `search_layer()`.
+
+### Validation sequence
+- Pre-change invariant check: `cargo test --release -p genesis-topology -- invariant --nocapture`
+- Post-change targeted: `cargo test -p genesis-topology hnsw`
+- Post-change release slice: `cargo test -p genesis-topology --release 2>&1 | grep -E "FAILED|ok"`
+- Clippy gate: `cargo clippy -p genesis-topology -- -D warnings 2>&1 | grep "^error"`
+- Bench gate: `cargo bench -p genesis-topology --bench topology -- --output-format bencher 2>&1 | grep "bench:"`
+- Workspace gates required by repo policy: `cargo check --workspace`, `cargo test --workspace`, `cargo check --workspace 2>&1 | grep "^warning:"`

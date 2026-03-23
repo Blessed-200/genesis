@@ -7,27 +7,32 @@
     clippy::needless_continue
 )]
 
-use std::cell::RefCell;
 /// AX-ID: AXIOMA-013
 /// Hierarchical Navigable Small World graph for O(log N) semantic search.
 /// Exclusive metric: `geometric_distance` (grade-weighted fast_metric_distance).
 /// PROHIBITED: Delaunay triangulation. PROHIBITED: `HashMap` in hot path.
 /// Adjacency lists stored as sorted Vec<(`NodeId`, f64)> with binary search.
-use std::cmp::{Ordering, Reverse};
-use std::collections::BinaryHeap;
+use std::cmp::Ordering;
 use std::sync::atomic::{AtomicPtr, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use fixedbitset::FixedBitSet;
 use genesis_math::{
-    fast_metric_distance, fast_metric_distance_sq, fast_metric_distance_sq_from_dense,
-    SparseCliffordVector,
+    fast_metric_distance_sq, fast_metric_distance_sq_from_dense, SparseCliffordVector,
 };
 use genesis_types::{GenesisError, NodeId};
 use smallvec::SmallVec;
 
 const TOTAL_BLADES: usize = 16;
-const SIMD_BATCH_WIDTH: usize = 4;
+pub(crate) const SLAB_LANES: usize = 8;
+pub(crate) const SLAB_DIM: usize = TOTAL_BLADES;
+pub(crate) const BLOCK_STRIDE: usize = SLAB_DIM * SLAB_LANES;
+const MAX_FIXED_HEAP_CAPACITY: usize = 512;
+const MAX_LAYER0_NEIGHBORS: usize = M0;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+const METRIC_WEIGHTS_F32: [f32; TOTAL_BLADES] = [
+    2.0, 1.5, 1.5, 1.0, 1.5, 1.0, 1.0, 0.5, 1.5, 1.0, 1.0, 0.5, 1.0, 0.5, 0.5, 0.3,
+];
 
 const fn metric_weight_for_blade(blade: usize) -> f64 {
     match blade.count_ones() {
@@ -50,120 +55,244 @@ const METRIC_WEIGHTS: [f64; TOTAL_BLADES] = {
     weights
 };
 
-/// Four `SparseCliffordVector`s in SoA (Structure-of-Arrays) layout.
-///
-/// Layout (transposed): `coeffs_transposed[blade_idx][vec_idx]`
-///
-/// ```text
-/// blade 0  => [v0[0],  v1[0],  v2[0],  v3[0]]
-/// blade 1  => [v0[1],  v1[1],  v2[1],  v3[1]]
-/// ...
-/// blade 15 => [v0[15], v1[15], v2[15], v3[15]]
-/// ```
-///
-/// The `align(32)` guarantee allows AVX2 loads from each row with one 256-bit
-/// load instruction when the runtime path selects SIMD.
-///
-/// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
-#[repr(C, align(32))]
-struct SoaBatch4 {
-    /// `coeffs_transposed[i][j]` = vector `j`, blade `i`.
-    coeffs_transposed: [[f64; SIMD_BATCH_WIDTH]; TOTAL_BLADES],
-    /// Number of valid vectors in this batch (`1..=4`).
-    count: usize,
+#[repr(C, align(64))]
+#[derive(Clone)]
+struct SlabBlock {
+    lanes: [f32; BLOCK_STRIDE],
 }
 
-impl SoaBatch4 {
-    fn from_nodes(nodes: &[(&SparseCliffordVector, usize)]) -> Self {
-        debug_assert!(!nodes.is_empty() && nodes.len() <= SIMD_BATCH_WIDTH);
-        let mut coeffs_transposed = [[0.0; SIMD_BATCH_WIDTH]; TOTAL_BLADES];
-        for (vec_idx, (vector, _internal_idx)) in nodes.iter().enumerate() {
-            for (blade_idx, blade_row) in coeffs_transposed.iter_mut().enumerate() {
-                blade_row[vec_idx] = vector.coeffs[blade_idx];
-            }
-        }
+impl SlabBlock {
+    fn zeroed() -> Self {
         Self {
-            coeffs_transposed,
-            count: nodes.len(),
+            lanes: [f32::INFINITY; BLOCK_STRIDE],
         }
     }
 }
 
-/// Compute squared Clifford grade-weighted distances from query to up to 4 candidates.
-///
-/// Returns `[d0², d1², d2², d3²]` where `dᵢ² = fast_metric_distance_sq(query, batch[i])`.
-/// Slots beyond `batch.count` are filled with `f64::INFINITY`.
-///
-/// AX-ID: AXIOMA-001, AXIOMA-013
-fn batch_distance_4(query: &SparseCliffordVector, batch: &SoaBatch4) -> [f64; SIMD_BATCH_WIDTH] {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-            // SAFETY: Feature detection ensures AVX2+FMA support before executing
-            // AVX2/FMA intrinsics; violating this would execute unsupported
-            // instructions and cause an illegal-instruction trap at runtime.
-            let mut out = unsafe { batch_distance_4_avx2(query, batch) };
-            for d in out.iter_mut().skip(batch.count) {
-                *d = f64::INFINITY;
-            }
-            return out;
+#[derive(Clone, Default)]
+struct HnswLayer0Slab {
+    blocks: Vec<SlabBlock>,
+    node_to_slab: Vec<u32>,
+}
+
+#[derive(Clone)]
+struct SearchScratch {
+    visited: FixedBitSet,
+    visited_touched: Vec<usize>,
+    out: Vec<(usize, f64)>,
+    block_ids: [usize; MAX_LAYER0_NEIGHBORS],
+    block_masks: [u8; MAX_LAYER0_NEIGHBORS],
+}
+
+impl Default for SearchScratch {
+    fn default() -> Self {
+        Self {
+            visited: FixedBitSet::default(),
+            visited_touched: Vec::new(),
+            out: Vec::new(),
+            block_ids: [0; MAX_LAYER0_NEIGHBORS],
+            block_masks: [0; MAX_LAYER0_NEIGHBORS],
+        }
+    }
+}
+
+thread_local! {
+    static SEARCH_SCRATCH: RefCell<SearchScratch> = RefCell::new(SearchScratch::default());
+}
+
+#[derive(Clone)]
+struct FixedHeap<const CAP: usize> {
+    data: [(f32, u32); CAP],
+    len: usize,
+    limit: usize,
+}
+
+impl<const CAP: usize> FixedHeap<CAP> {
+    fn new(limit: usize) -> Self {
+        debug_assert!(limit <= CAP);
+        Self {
+            data: [(f32::INFINITY, u32::MAX); CAP],
+            len: 0,
+            limit,
         }
     }
 
-    let mut out = [f64::INFINITY; SIMD_BATCH_WIDTH];
-    for (slot, d) in out.iter_mut().enumerate().take(batch.count) {
-        let dense = core::array::from_fn(|blade| batch.coeffs_transposed[blade][slot]);
-        let dist = fast_metric_distance_sq_from_dense(&dense, query);
-        *d = if dist.is_finite() {
-            dist
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn worst(&self) -> f32 {
+        if self.len == 0 {
+            f32::INFINITY
         } else {
-            f64::INFINITY
+            self.data[self.len - 1].0
+        }
+    }
+
+    fn pop_best(&mut self) -> Option<(f32, u32)> {
+        if self.len == 0 {
+            return None;
+        }
+        let best = self.data[0];
+        let mut i = 1;
+        while i < self.len {
+            self.data[i - 1] = self.data[i];
+            i += 1;
+        }
+        self.len -= 1;
+        Some(best)
+    }
+
+    fn push_or_replace(&mut self, dist: f32, idx: u32) -> bool {
+        if !dist.is_finite() || self.limit == 0 {
+            return false;
+        }
+        if self.len == self.limit && compare_dist_idx((dist, idx), self.data[self.len - 1]).is_ge() {
+            return false;
+        }
+        let mut pos = self.len;
+        if self.len < self.limit {
+            self.data[pos] = (dist, idx);
+            self.len += 1;
+        } else {
+            pos = self.limit - 1;
+            self.data[pos] = (dist, idx);
+        }
+        while pos > 0 && compare_dist_idx(self.data[pos], self.data[pos - 1]).is_lt() {
+            self.data.swap(pos, pos - 1);
+            pos -= 1;
+        }
+        true
+    }
+
+    fn as_slice(&self) -> &[(f32, u32)] {
+        &self.data[..self.len]
+    }
+}
+
+#[inline]
+fn compare_dist_idx(lhs: (f32, u32), rhs: (f32, u32)) -> Ordering {
+    lhs.0.total_cmp(&rhs.0).then_with(|| lhs.1.cmp(&rhs.1))
+}
+
+fn slab_distance_scalar(
+    slab_ptr: *const f32,
+    block: usize,
+    query_f32: &[f32; SLAB_DIM],
+) -> [f32; SLAB_LANES] {
+    let mut out = [0.0_f32; SLAB_LANES];
+    let block_base = block * BLOCK_STRIDE;
+    let mut lane = 0;
+    while lane < SLAB_LANES {
+        let mut acc = 0.0_f64;
+        let mut dim0 = 0.0_f32;
+        let mut d = 0;
+        while d < SLAB_DIM {
+            let offset = block_base + d * SLAB_LANES + lane;
+            // SAFETY: slab storage is 64-byte aligned by construction, `block`
+            // is checked against the number of allocated blocks by the caller,
+            // and `offset < blocks * BLOCK_STRIDE` for all `d < SLAB_DIM` and
+            // `lane < SLAB_LANES`. Search reads through `&self`, so no mutable alias exists.
+            let v = unsafe { *slab_ptr.add(offset) };
+            if d == 0 {
+                dim0 = v;
+            }
+            let diff = f64::from(query_f32[d] - v);
+            acc += METRIC_WEIGHTS[d] * diff * diff;
+            d += 1;
+        }
+        out[lane] = if dim0.is_nan() || !acc.is_finite() {
+            f32::INFINITY
+        } else {
+            acc as f32
         };
+        lane += 1;
     }
     out
 }
 
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-#[target_feature(enable = "fma")]
-unsafe fn batch_distance_4_avx2(
-    query: &SparseCliffordVector,
-    batch: &SoaBatch4,
-) -> [f64; SIMD_BATCH_WIDTH] {
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+#[inline(always)]
+unsafe fn slab_distance_avx2(
+    slab_ptr: *const f32,
+    block: usize,
+    query_f32: &[f32; SLAB_DIM],
+) -> [f32; SLAB_LANES] {
     use std::arch::x86_64::{
-        _mm256_fmadd_pd, _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_setzero_pd,
-        _mm256_storeu_pd, _mm256_sub_pd,
+        _mm256_add_ps, _mm256_fmadd_ps, _mm256_load_ps, _mm256_mul_ps, _mm256_set1_ps,
+        _mm256_setzero_ps, _mm256_storeu_ps, _mm256_sub_ps,
     };
 
-    let mut acc = _mm256_setzero_pd();
-
-    for (blade, &w) in METRIC_WEIGHTS.iter().enumerate().take(TOTAL_BLADES) {
-        let q = query.coeffs[blade];
-        // SAFETY: `coeffs_transposed[blade]` points to at least 4 contiguous f64
-        // values and `_mm256_loadu_pd` supports unaligned addresses.
-        // If this invariant were violated, this would read past bounds (UB).
-        let batch_col = unsafe { _mm256_loadu_pd(batch.coeffs_transposed[blade].as_ptr()) };
-        let q_broadcast = _mm256_set1_pd(q);
-        let weight = _mm256_set1_pd(w);
-        let diff = _mm256_sub_pd(q_broadcast, batch_col);
-        let sq = _mm256_mul_pd(diff, diff);
-        acc = _mm256_fmadd_pd(weight, sq, acc);
+    macro_rules! fused_dim4 {
+        ($base:expr, $d0:expr, $d1:expr, $d2:expr, $d3:expr, $acc0:ident, $acc1:ident, $acc2:ident, $acc3:ident) => {{
+            let q0 = _mm256_set1_ps(query_f32[$d0]);
+            let q1 = _mm256_set1_ps(query_f32[$d1]);
+            let q2 = _mm256_set1_ps(query_f32[$d2]);
+            let q3 = _mm256_set1_ps(query_f32[$d3]);
+            let w0 = _mm256_set1_ps(METRIC_WEIGHTS_F32[$d0]);
+            let w1 = _mm256_set1_ps(METRIC_WEIGHTS_F32[$d1]);
+            let w2 = _mm256_set1_ps(METRIC_WEIGHTS_F32[$d2]);
+            let w3 = _mm256_set1_ps(METRIC_WEIGHTS_F32[$d3]);
+            let v0 = _mm256_load_ps($base.add($d0 * SLAB_LANES));
+            let v1 = _mm256_load_ps($base.add($d1 * SLAB_LANES));
+            let v2 = _mm256_load_ps($base.add($d2 * SLAB_LANES));
+            let v3 = _mm256_load_ps($base.add($d3 * SLAB_LANES));
+            let d0v = _mm256_sub_ps(q0, v0);
+            let d1v = _mm256_sub_ps(q1, v1);
+            let d2v = _mm256_sub_ps(q2, v2);
+            let d3v = _mm256_sub_ps(q3, v3);
+            $acc0 = _mm256_fmadd_ps(w0, _mm256_mul_ps(d0v, d0v), $acc0);
+            $acc1 = _mm256_fmadd_ps(w1, _mm256_mul_ps(d1v, d1v), $acc1);
+            $acc2 = _mm256_fmadd_ps(w2, _mm256_mul_ps(d2v, d2v), $acc2);
+            $acc3 = _mm256_fmadd_ps(w3, _mm256_mul_ps(d3v, d3v), $acc3);
+        }};
     }
 
-    let mut out = [0.0_f64; SIMD_BATCH_WIDTH];
-    // SAFETY: `out` has space for 4 contiguous f64 values; store writes exactly 32 bytes.
-    // If `out` had insufficient length, this would write out of bounds (UB).
+    let block_base = unsafe { slab_ptr.add(block * BLOCK_STRIDE) };
+    let mut acc0 = _mm256_setzero_ps();
+    let mut acc1 = _mm256_setzero_ps();
+    let mut acc2 = _mm256_setzero_ps();
+    let mut acc3 = _mm256_setzero_ps();
+    fused_dim4!(block_base, 0, 1, 2, 3, acc0, acc1, acc2, acc3);
+    fused_dim4!(block_base, 4, 5, 6, 7, acc0, acc1, acc2, acc3);
+    fused_dim4!(block_base, 8, 9, 10, 11, acc0, acc1, acc2, acc3);
+    fused_dim4!(block_base, 12, 13, 14, 15, acc0, acc1, acc2, acc3);
+
+    let total = _mm256_add_ps(_mm256_add_ps(acc0, acc1), _mm256_add_ps(acc2, acc3));
+    let mut out = [0.0_f32; SLAB_LANES];
     unsafe {
-        _mm256_storeu_pd(out.as_mut_ptr(), acc);
+        _mm256_storeu_ps(out.as_mut_ptr(), total);
     }
-    for value in &mut out {
-        *value = if value.is_finite() {
-            (*value).max(0.0)
-        } else {
-            f64::INFINITY
-        };
+    let nan_mask = unsafe { _mm256_load_ps(block_base) };
+    let mut dim0 = [0.0_f32; SLAB_LANES];
+    unsafe {
+        _mm256_storeu_ps(dim0.as_mut_ptr(), nan_mask);
+    }
+    let mut lane = 0;
+    while lane < SLAB_LANES {
+        if dim0[lane].is_nan() || !out[lane].is_finite() {
+            out[lane] = f32::INFINITY;
+        }
+        lane += 1;
     }
     out
+}
+
+fn slab_distance(
+    slab_ptr: *const f32,
+    block: usize,
+    query_f32: &[f32; SLAB_DIM],
+) -> [f32; SLAB_LANES] {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+    {
+        // SAFETY: target-feature gated at compile time, pointer invariants are
+        // enforced by the caller and match the scalar kernel requirements.
+        return unsafe { slab_distance_avx2(slab_ptr, block, query_f32) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
+    {
+        slab_distance_scalar(slab_ptr, block, query_f32)
+    }
 }
 
 // Política de mantenimiento para módulos críticos de topología.
@@ -231,6 +360,7 @@ mod layer0_codec {
     /// Trait sellado para codificación densa de layer-0.
     ///
     /// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+    #[allow(dead_code)]
     pub(super) trait Layer0Codec: sealed::Sealed {
         type Storage: Copy;
 
@@ -331,10 +461,11 @@ mod layer0_codec {
     }
 }
 
-#[cfg(feature = "hnsw-f16")]
+#[cfg(all(feature = "hnsw-f16", test))]
 type ActiveLayer0Codec = layer0_codec::F16Codec;
-#[cfg(not(feature = "hnsw-f16"))]
+#[cfg(all(not(feature = "hnsw-f16"), test))]
 type ActiveLayer0Codec = layer0_codec::F32Codec;
+#[cfg(test)]
 type Layer0Coeffs = <ActiveLayer0Codec as layer0_codec::Layer0Codec>::Storage;
 
 /// Maximum number of layers in the HNSW graph.
@@ -427,30 +558,11 @@ fn ml() -> f64 {
     1.0_f64 / (M as f64).ln()
 }
 
-/// Wrapper para f64 que implementa Ord (NaN nunca ocurre por contrato del CS gate).
-#[derive(Clone, Copy, PartialEq)]
-struct FiniteDist(f64);
-
-impl Eq for FiniteDist {}
-
-impl PartialOrd for FiniteDist {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for FiniteDist {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.partial_cmp(&other.0).unwrap_or(Ordering::Equal)
-    }
-}
-
 /// A node stored in the HNSW graph.
 #[derive(Clone)]
 struct HnswNode {
     id: NodeId,
     vec: SparseCliffordVector,
-    layer0: Layer0Coeffs,
     /// Maximum layer assigned to this node in the HNSW hierarchy.
     max_layer: usize,
 }
@@ -467,22 +579,8 @@ impl HnswNode {
     /// guard to detect any invariant breach before `encode_layer0`.
     ///
     /// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
-    fn new(id: NodeId, vec: SparseCliffordVector, max_layer: usize) -> Result<Self, GenesisError> {
-        let mut layer0 = [0.0_f32; TOTAL_BLADES];
-        for (idx, coeff) in vec.coeffs.iter().enumerate() {
-            let coeff_f32 = *coeff as f32;
-            debug_assert!(
-                coeff_f32.is_finite(),
-                "layer0 coefficient must be finite after f64->f32 projection"
-            );
-            layer0[idx] = coeff_f32;
-        }
-        Ok(Self {
-            id,
-            vec,
-            layer0: encode_layer0(&layer0)?,
-            max_layer,
-        })
+    fn new(id: NodeId, vec: SparseCliffordVector, max_layer: usize) -> Self {
+        Self { id, vec, max_layer }
     }
 }
 
@@ -496,6 +594,7 @@ impl HnswNode {
 /// path. In debug/test builds we assert this invariant before encoding.
 ///
 /// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+#[cfg(test)]
 fn encode_layer0(values: &[f32; TOTAL_BLADES]) -> Result<Layer0Coeffs, GenesisError> {
     if values.iter().any(|value| !value.is_finite()) {
         return Err(GenesisError::InvalidInput(
@@ -584,19 +683,6 @@ use layer0_codec::{
     f16_bits_to_f32_core as f16_bits_to_f32, f32_to_f16_bits_core as f32_to_f16_bits,
 };
 
-#[derive(Default)]
-struct SearchScratch {
-    candidates: BinaryHeap<Reverse<(FiniteDist, usize)>>,
-    results: BinaryHeap<(FiniteDist, usize)>,
-    visited: FixedBitSet,
-    visited_touched: Vec<usize>,
-    out: Vec<(usize, f64)>,
-}
-
-thread_local! {
-    static SEARCH_SCRATCH: RefCell<SearchScratch> = RefCell::new(SearchScratch::default());
-}
-
 /// Hierarchical Navigable Small World graph.
 ///
 /// Stores vectors and supports O(log N) approximate nearest-neighbour search
@@ -625,6 +711,8 @@ pub struct HnswGraph {
     layer_neighbors: Vec<CsrNeighborList>,
     /// Directed edge count at layer 0 (stored as directed for O(1) updates).
     edge_count_layer0_undirected: usize,
+    /// Persistent block-major SoA storage for layer-0 vectors.
+    layer0_soa: HnswLayer0Slab,
     #[cfg(test)]
     fail_preinsert_index_conversion: bool,
 }
@@ -639,8 +727,10 @@ pub struct HnswGraph {
 pub struct HnswLayer0Soa {
     /// Node IDs in dense internal-index order.
     pub node_ids: Vec<NodeId>,
-    /// Dense `[f64; 16]` blade coefficients for layer-0 vectors.
-    pub dense_coeffs: Vec<[f64; TOTAL_BLADES]>,
+    /// Persistent SoA slab flattened in `[block][dim][lane]` order.
+    pub slab: Vec<f32>,
+    /// Dense-index to slab-index mapping.
+    pub node_to_slab: Vec<u32>,
     /// Per-node offsets into `neighbor_ids` / `neighbor_distances`.
     pub neighbor_offsets: Vec<(usize, usize)>,
     /// Flattened neighbour IDs for layer 0.
@@ -682,17 +772,13 @@ impl HnswGraph {
             state: GraphState::Online,
             layer_neighbors: Vec::new(),
             edge_count_layer0_undirected: 0,
+            layer0_soa: HnswLayer0Slab::default(),
             #[cfg(test)]
             fail_preinsert_index_conversion: false,
         }
     }
 
-    #[inline(always)]
-    fn prevalidate_internal_idx_u32(&self, new_idx: usize) -> Result<u32, GenesisError> {
-        #[cfg(test)]
-        if self.fail_preinsert_index_conversion {
-            return Err(GenesisError::InvariantViolation { axiom_id: 13 });
-        }
+    fn prevalidate_internal_idx_u32(new_idx: usize) -> Result<u32, GenesisError> {
         u32::try_from(new_idx).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })
     }
 
@@ -703,6 +789,36 @@ impl HnswGraph {
         self.layer_neighbors = (0..MAX_LAYERS)
             .map(|layer| CsrNeighborList::new(0, if layer == 0 { M0 } else { M }))
             .collect();
+    }
+
+    fn dense_to_query_f32(query: &SparseCliffordVector) -> [f32; SLAB_DIM] {
+        core::array::from_fn(|i| query.coeffs[i] as f32)
+    }
+
+    fn write_node_to_slab(&mut self, dense_idx: usize, vec: &SparseCliffordVector) {
+        let slab_idx = dense_idx;
+        let block = slab_idx / SLAB_LANES;
+        let lane = slab_idx % SLAB_LANES;
+        if block >= self.layer0_soa.blocks.len() {
+            self.layer0_soa.blocks.push(SlabBlock::zeroed());
+        }
+        let block_ref = &mut self.layer0_soa.blocks[block];
+        let mut d = 0;
+        while d < SLAB_DIM {
+            block_ref.lanes[d * SLAB_LANES + lane] = vec.coeffs[d] as f32;
+            d += 1;
+        }
+        let slab_idx_u32 = u32::try_from(slab_idx).unwrap_or(u32::MAX - 1);
+        debug_assert_ne!(slab_idx_u32, u32::MAX);
+        self.layer0_soa.node_to_slab.push(slab_idx_u32);
+    }
+
+    #[inline]
+    fn layer0_slab_ptr(&self) -> *const f32 {
+        self.layer0_soa
+            .blocks
+            .first()
+            .map_or(std::ptr::null(), |block| block.lanes.as_ptr())
     }
 
     /// Lookup internal index by `NodeId`. O(1) average with direct index, fallback O(log N).
@@ -798,6 +914,10 @@ impl HnswGraph {
         let target_layer = Self::random_level(id);
         let new_idx = self.nodes.len();
         let previous_entry = self.entry.map(|entry_idx| (entry_idx, self.entry_layer));
+        #[cfg(test)]
+        if self.fail_preinsert_index_conversion {
+            return Err(GenesisError::InvariantViolation { axiom_id: 13 });
+        }
 
         let direct_index_update = if id.get() < u64::from(u32::MAX) {
             let id_raw = usize::try_from(id.get())
@@ -811,13 +931,14 @@ impl HnswGraph {
             } else {
                 None
             };
-            let new_idx_u32 = self.prevalidate_internal_idx_u32(new_idx)?;
+            let new_idx_u32 = Self::prevalidate_internal_idx_u32(new_idx)?;
             Some((id_raw, next_direct_len, new_idx_u32))
         } else {
             None
         };
 
-        self.nodes.push(HnswNode::new(id, *vec, target_layer)?);
+        self.nodes.push(HnswNode::new(id, *vec, target_layer));
+        self.write_node_to_slab(new_idx, vec);
         for layer in &mut self.layer_neighbors {
             layer.add_node();
         }
@@ -988,10 +1109,16 @@ impl HnswGraph {
 
     fn distance_to_node_sq(&self, query: &SparseCliffordVector, idx: usize, layer: usize) -> f64 {
         if layer == 0 {
-            return <ActiveLayer0Codec as layer0_codec::Layer0Codec>::distance_sq(
-                &self.nodes[idx].layer0,
-                query,
-            );
+            let query_f32 = Self::dense_to_query_f32(query);
+            let slab_idx = self.layer0_soa.node_to_slab[idx] as usize;
+            let block = slab_idx / SLAB_LANES;
+            let lane = slab_idx % SLAB_LANES;
+            let slab_ptr = self.layer0_slab_ptr();
+            if slab_ptr.is_null() {
+                return f64::INFINITY;
+            }
+            let distances = slab_distance(slab_ptr, block, &query_f32);
+            return f64::from(distances[lane]);
         }
         fast_metric_distance_sq(query, &self.nodes[idx].vec)
     }
@@ -1042,185 +1169,112 @@ impl HnswGraph {
     ) -> Vec<(usize, f64)> {
         SEARCH_SCRATCH.with(|cell| {
             let mut scratch = cell.borrow_mut();
-            scratch.candidates.clear();
-            scratch.results.clear();
             scratch.out.clear();
             scratch.visited_touched.clear();
-            scratch.candidates.reserve(ef.saturating_mul(2));
-            scratch.results.reserve(ef.saturating_add(1));
-            scratch.out.reserve(ef);
-
             if scratch.visited.len() < self.nodes.len() {
                 scratch.visited.grow(self.nodes.len());
             }
+            let limit = ef.min(MAX_FIXED_HEAP_CAPACITY);
+            let mut candidates = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
+            let mut results = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
+            let query_f32 = Self::dense_to_query_f32(query);
+            let slab_ptr = self.layer0_slab_ptr();
+            let slab_blocks = self.layer0_soa.blocks.len();
 
-            let d0 = self.distance_to_node_sq(query, entry_idx, layer);
+            let d0 = self.distance_to_node_sq(query, entry_idx, layer) as f32;
             scratch.visited.set(entry_idx, true);
             scratch.visited_touched.push(entry_idx);
-            scratch
-                .candidates
-                .push(Reverse((FiniteDist(d0), entry_idx)));
-            scratch.results.push((FiniteDist(d0), entry_idx));
+            candidates.push_or_replace(d0, entry_idx as u32);
+            results.push_or_replace(d0, entry_idx as u32);
 
-            while let Some(Reverse((FiniteDist(c_dist), c_idx))) = scratch.candidates.pop() {
-                if scratch.results.len() >= ef {
-                    let worst = scratch
-                        .results
-                        .peek()
-                        .map(|(FiniteDist(d), _)| *d)
-                        .unwrap_or(f64::INFINITY);
-                    if c_dist > worst {
-                        break;
-                    }
+            while let Some((c_dist, c_idx_u32)) = candidates.pop_best() {
+                if results.len() >= limit && c_dist > results.worst() {
+                    break;
                 }
 
-                if layer < self.nodes[c_idx].max_layer + 1 {
-                    let neighbors = self.layer_neighbors[layer].neighbors(c_idx);
-                    if layer == 0 {
-                        let mut chunk: [Option<(&SparseCliffordVector, usize)>; SIMD_BATCH_WIDTH] =
-                            [None, None, None, None];
-                        let mut chunk_len = 0_usize;
-
-                        for &nb_id in neighbors {
-                            if let Some(nb_idx) = self.get_idx(nb_id) {
-                                if scratch.visited[nb_idx] {
-                                    continue;
-                                }
-                                scratch.visited.set(nb_idx, true);
-                                scratch.visited_touched.push(nb_idx);
-                                chunk[chunk_len] = Some((&self.nodes[nb_idx].vec, nb_idx));
-                                chunk_len += 1;
-
-                                if chunk_len == SIMD_BATCH_WIDTH {
-                                    let Some(c0) = chunk[0] else {
-                                        chunk = [None, None, None, None];
-                                        chunk_len = 0;
-                                        continue;
-                                    };
-                                    let Some(c1) = chunk[1] else {
-                                        chunk = [None, None, None, None];
-                                        chunk_len = 0;
-                                        continue;
-                                    };
-                                    let Some(c2) = chunk[2] else {
-                                        chunk = [None, None, None, None];
-                                        chunk_len = 0;
-                                        continue;
-                                    };
-                                    let Some(c3) = chunk[3] else {
-                                        chunk = [None, None, None, None];
-                                        chunk_len = 0;
-                                        continue;
-                                    };
-                                    let nodes = [c0, c1, c2, c3];
-                                    let batch = SoaBatch4::from_nodes(&nodes);
-                                    let distances = batch_distance_4(query, &batch);
-                                    for slot in 0..SIMD_BATCH_WIDTH {
-                                        let d = distances[slot];
-                                        let nb_idx = nodes[slot].1;
-                                        let worst = scratch
-                                            .results
-                                            .peek()
-                                            .map(|(FiniteDist(dw), _)| *dw)
-                                            .unwrap_or(f64::INFINITY);
-
-                                        if scratch.results.len() < ef || d < worst {
-                                            scratch
-                                                .candidates
-                                                .push(Reverse((FiniteDist(d), nb_idx)));
-                                            scratch.results.push((FiniteDist(d), nb_idx));
-                                            if scratch.results.len() > ef {
-                                                scratch.results.pop();
-                                            }
-                                        }
-                                    }
-                                    chunk = [None, None, None, None];
-                                    chunk_len = 0;
-                                }
-                            }
+                let c_idx = c_idx_u32 as usize;
+                if layer > self.nodes[c_idx].max_layer {
+                    continue;
+                }
+                let neighbors = self.layer_neighbors[layer].neighbors(c_idx);
+                if layer == 0 && !slab_ptr.is_null() {
+                    // HOT PATH: O(M0), called per beam expansion at layer 0.
+                    let mut block_count = 0_usize;
+                    for &nb_id in neighbors {
+                        let Some(nb_idx) = self.get_idx(nb_id) else { continue };
+                        if scratch.visited[nb_idx] {
+                            continue;
                         }
-
-                        if chunk_len > 0 {
-                            let mut tail: [(&SparseCliffordVector, usize); SIMD_BATCH_WIDTH] = [
-                                (&self.nodes[c_idx].vec, c_idx),
-                                (&self.nodes[c_idx].vec, c_idx),
-                                (&self.nodes[c_idx].vec, c_idx),
-                                (&self.nodes[c_idx].vec, c_idx),
-                            ];
-                            for (slot, item) in chunk.iter().enumerate().take(chunk_len) {
-                                if let Some(value) = *item {
-                                    tail[slot] = value;
-                                }
+                        scratch.visited.set(nb_idx, true);
+                        scratch.visited_touched.push(nb_idx);
+                        let slab_idx = self.layer0_soa.node_to_slab[nb_idx] as usize;
+                        let block = slab_idx / SLAB_LANES;
+                        let lane = slab_idx % SLAB_LANES;
+                        let mut found = false;
+                        let mut i = 0;
+                        while i < block_count {
+                            if scratch.block_ids[i] == block {
+                                scratch.block_masks[i] |= 1_u8 << lane;
+                                found = true;
+                                break;
                             }
-                            let batch = SoaBatch4::from_nodes(&tail[..chunk_len]);
-                            let distances = batch_distance_4(query, &batch);
-                            for slot in 0..chunk_len {
-                                let d = distances[slot];
-                                let nb_idx = tail[slot].1;
-                                let worst = scratch
-                                    .results
-                                    .peek()
-                                    .map(|(FiniteDist(dw), _)| *dw)
-                                    .unwrap_or(f64::INFINITY);
-
-                                if scratch.results.len() < ef || d < worst {
-                                    scratch.candidates.push(Reverse((FiniteDist(d), nb_idx)));
-                                    scratch.results.push((FiniteDist(d), nb_idx));
-                                    if scratch.results.len() > ef {
-                                        scratch.results.pop();
-                                    }
-                                }
-                            }
+                            i += 1;
                         }
-                    } else {
-                        for &nb_id in neighbors {
-                            if let Some(nb_idx) = self.get_idx(nb_id) {
-                                if scratch.visited[nb_idx] {
-                                    continue;
+                        if !found && block_count < MAX_LAYER0_NEIGHBORS {
+                            scratch.block_ids[block_count] = block;
+                            scratch.block_masks[block_count] = 1_u8 << lane;
+                            block_count += 1;
+                        }
+                    }
+
+                    let mut i = 0;
+                    while i < block_count {
+                        let block = scratch.block_ids[i];
+                        let mask = scratch.block_masks[i];
+                        debug_assert!(block < slab_blocks, "block in bounds");
+                        debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
+                        let distances = slab_distance(slab_ptr, block, &query_f32);
+                        let mut lane = 0;
+                        while lane < SLAB_LANES {
+                            debug_assert!(lane < SLAB_LANES, "lane in bounds");
+                            if (mask & (1_u8 << lane)) != 0 {
+                                let nb_idx = block * SLAB_LANES + lane;
+                                if nb_idx >= self.nodes.len() {
+                                    break;
                                 }
-                                scratch.visited.set(nb_idx, true);
-                                scratch.visited_touched.push(nb_idx);
-                                let d = self.distance_to_node_sq(query, nb_idx, layer);
-
-                                let worst = scratch
-                                    .results
-                                    .peek()
-                                    .map(|(FiniteDist(dw), _)| *dw)
-                                    .unwrap_or(f64::INFINITY);
-
-                                if scratch.results.len() < ef || d < worst {
-                                    scratch.candidates.push(Reverse((FiniteDist(d), nb_idx)));
-                                    scratch.results.push((FiniteDist(d), nb_idx));
-                                    if scratch.results.len() > ef {
-                                        scratch.results.pop();
-                                    }
+                                let d = distances[lane];
+                                if results.push_or_replace(d, nb_idx as u32) {
+                                    candidates.push_or_replace(d, nb_idx as u32);
                                 }
                             }
+                            lane += 1;
+                        }
+                        scratch.block_masks[i] = 0;
+                        i += 1;
+                    }
+                } else {
+                    for &nb_id in neighbors {
+                        let Some(nb_idx) = self.get_idx(nb_id) else { continue };
+                        if scratch.visited[nb_idx] {
+                            continue;
+                        }
+                        scratch.visited.set(nb_idx, true);
+                        scratch.visited_touched.push(nb_idx);
+                        let d = self.distance_to_node_sq(query, nb_idx, layer) as f32;
+                        if results.push_or_replace(d, nb_idx as u32) {
+                            candidates.push_or_replace(d, nb_idx as u32);
                         }
                     }
                 }
             }
 
-            // PERF NOTE: The intermediate Vec here (result_pairs) is intentional.
-            // scratch.results (BinaryHeap) and scratch.out (Vec) are fields of the same
-            // struct — Rust's borrow checker cannot split them through &mut scratch.
-            // The Vec is bounded by ef (typically 200) so allocation is O(1) amortized.
-            // FIX-E.2 was reverted: field-split reborrow is not possible here because
-            // the closure already holds &mut scratch from the outer context.
-            let result_pairs: Vec<(usize, f64)> = scratch
-                .results
-                .iter()
-                .map(|(FiniteDist(d), idx)| (*idx, *d))
-                .collect();
-            scratch.out.extend(result_pairs);
-            scratch
-                .out
-                .sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
-
+            scratch.out.reserve(results.len());
+            for &(dist_sq, idx) in results.as_slice() {
+                scratch.out.push((idx as usize, f64::from(dist_sq)));
+            }
             while let Some(idx) = scratch.visited_touched.pop() {
                 scratch.visited.set(idx, false);
             }
-
             std::mem::take(&mut scratch.out)
         })
     }
@@ -1360,14 +1414,12 @@ impl HnswGraph {
     /// AX-ID: AXIOMA-013
     pub fn layer0_soa(&self) -> HnswLayer0Soa {
         let mut node_ids = Vec::with_capacity(self.nodes.len());
-        let mut dense_coeffs = Vec::with_capacity(self.nodes.len());
         let mut neighbor_offsets = Vec::with_capacity(self.nodes.len());
         let mut neighbor_ids = Vec::with_capacity(self.edge_count_layer0_undirected);
         let mut neighbor_distances = Vec::with_capacity(self.edge_count_layer0_undirected);
 
         for node in &self.nodes {
             node_ids.push(node.id);
-            dense_coeffs.push(decode_layer0_to_f64(&node.layer0));
             let start = neighbor_ids.len();
             let layer0 = self.layer_neighbors[0].neighbors(node_ids.len() - 1);
             neighbor_ids.reserve(layer0.len());
@@ -1384,7 +1436,13 @@ impl HnswGraph {
 
         HnswLayer0Soa {
             node_ids,
-            dense_coeffs,
+            slab: self
+                .layer0_soa
+                .blocks
+                .iter()
+                .flat_map(|block| block.lanes)
+                .collect(),
+            node_to_slab: self.layer0_soa.node_to_slab.clone(),
             neighbor_offsets,
             neighbor_ids,
             neighbor_distances,
@@ -1473,45 +1531,15 @@ impl HnswGraph {
         // because that would invalidate all internal indices stored in adjacency lists.
         self.nodes[idx].id = NodeId::INVALID;
         self.nodes[idx].max_layer = 0;
+        let slab_idx = self.layer0_soa.node_to_slab[idx] as usize;
+        let block = slab_idx / SLAB_LANES;
+        let lane = slab_idx % SLAB_LANES;
+        if let Some(block_ref) = self.layer0_soa.blocks.get_mut(block) {
+            block_ref.lanes[lane] = f32::NAN;
+        }
 
         Ok(())
     }
-}
-
-/// Benchmark helper: evaluate one batch of 4 distances with SIMD/scalar dispatch.
-///
-/// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
-pub fn benchmark_batch_distance_4(
-    query: &SparseCliffordVector,
-    candidates: &[SparseCliffordVector; SIMD_BATCH_WIDTH],
-) -> [f64; SIMD_BATCH_WIDTH] {
-    let nodes = [
-        (&candidates[0], 0),
-        (&candidates[1], 1),
-        (&candidates[2], 2),
-        (&candidates[3], 3),
-    ];
-    let batch = SoaBatch4::from_nodes(&nodes);
-    batch_distance_4(query, &batch)
-}
-
-/// Benchmark helper: scalar baseline for 4 sequential distance evaluations.
-///
-/// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
-pub fn benchmark_scalar_distance_4x(
-    query: &SparseCliffordVector,
-    candidates: &[SparseCliffordVector; SIMD_BATCH_WIDTH],
-) -> [f64; SIMD_BATCH_WIDTH] {
-    [
-        fast_metric_distance(query, &candidates[0]),
-        fast_metric_distance(query, &candidates[1]),
-        fast_metric_distance(query, &candidates[2]),
-        fast_metric_distance(query, &candidates[3]),
-    ]
-}
-
-fn decode_layer0_to_f64(stored: &Layer0Coeffs) -> [f64; TOTAL_BLADES] {
-    <ActiveLayer0Codec as layer0_codec::Layer0Codec>::decode_to_f64(stored)
 }
 
 impl LockFreeHnswIndex {
@@ -1745,31 +1773,21 @@ mod tests {
     }
 
     #[test]
-    fn batch_distance_4_matches_scalar_sq_for_all_counts() {
+    fn slab_distance_matches_scalar_all_counts() {
         let mut seed = 0x1234_5678_9ABC_DEF0;
         let query = random_vec(&mut seed);
 
-        for count in 1..=SIMD_BATCH_WIDTH {
-            let mut vectors = [query; SIMD_BATCH_WIDTH];
-            for item in vectors.iter_mut().take(count) {
-                *item = random_vec(&mut seed);
-            }
-            let nodes = [
-                (&vectors[0], 0),
-                (&vectors[1], 1),
-                (&vectors[2], 2),
-                (&vectors[3], 3),
-            ];
-            let batch = SoaBatch4::from_nodes(&nodes[..count]);
-            let distances = batch_distance_4(&query, &batch);
-
-            for slot in 0..count {
-                let scalar = fast_metric_distance_sq(&query, &vectors[slot]);
-                assert!((distances[slot] - scalar).abs() < 1e-10);
-            }
-            for distance in distances.iter().take(SIMD_BATCH_WIDTH).skip(count) {
-                assert!(distance.is_infinite());
-            }
+        let mut graph = HnswGraph::new(32);
+        for i in 0..SLAB_LANES {
+            let v = random_vec(&mut seed);
+            graph.insert(make_id(i as u64), &v).expect("insert");
+        }
+        let slab_ptr = graph.layer0_slab_ptr();
+        let query_f32 = HnswGraph::dense_to_query_f32(&query);
+        let distances = slab_distance_scalar(slab_ptr, 0, &query_f32);
+        for (slot, distance) in distances.iter().enumerate() {
+            let scalar = fast_metric_distance_sq(&query, &graph.nodes[slot].vec);
+            assert!((f64::from(*distance) - scalar).abs() < 1e-5);
         }
     }
 
@@ -1791,10 +1809,46 @@ mod tests {
             .sum();
 
         assert_eq!(soa.node_ids.len(), graph.node_count());
-        assert_eq!(soa.dense_coeffs.len(), graph.node_count());
+        assert_eq!(soa.node_to_slab.len(), graph.node_count());
+        assert_eq!(soa.slab.len(), graph.layer0_soa.blocks.len() * BLOCK_STRIDE);
         assert_eq!(soa.neighbor_offsets.len(), graph.node_count());
         assert_eq!(soa.neighbor_ids.len(), total_layer0);
         assert_eq!(soa.neighbor_distances.len(), total_layer0);
+    }
+
+    #[test]
+    fn slab_insertion_sequential_ordering() {
+        let mut graph = HnswGraph::new(16);
+        for i in 0..100_u64 {
+            graph.insert(make_id(i), &make_vec(i as f64 * 0.01 + 0.2)).expect("insert");
+        }
+        for (idx, slab_idx) in graph.layer0_soa.node_to_slab.iter().enumerate() {
+            assert_eq!(*slab_idx as usize, idx);
+        }
+    }
+
+    #[test]
+    fn slab_nan_lane_excluded_from_results() {
+        let mut graph = HnswGraph::new(16);
+        for i in 0..4_u64 {
+            graph.insert(make_id(i), &make_vec(i as f64 * 0.1 + 0.1)).expect("insert");
+        }
+        graph.remove_node(make_id(2)).expect("remove");
+        let results = graph.search_nearest(&make_vec(0.3), 3);
+        assert!(!results.contains(&make_id(2)));
+    }
+
+    #[test]
+    fn fixed_heap_deterministic_ordering() {
+        let mut a = FixedHeap::<8>::new(4);
+        let mut b = FixedHeap::<8>::new(4);
+        for item in [(1.0, 3), (1.0, 1), (0.5, 7), (0.5, 2), (2.0, 0)] {
+            a.push_or_replace(item.0, item.1);
+        }
+        for item in [(0.5, 2), (2.0, 0), (1.0, 1), (1.0, 3), (0.5, 7)] {
+            b.push_or_replace(item.0, item.1);
+        }
+        assert_eq!(a.as_slice(), b.as_slice());
     }
 
     #[test]
@@ -2481,7 +2535,7 @@ mod tests {
             let vector = SparseCliffordVector::from_dense(&input)
                 .expect("finite 16D input must be accepted");
 
-            let _node = HnswNode::new(make_id(999), vector, 0).expect("finite vector must create node");
+            let _node = HnswNode::new(make_id(999), vector, 0);
             let layer0_f32: [f32; TOTAL_BLADES] = core::array::from_fn(|i| input[i] as f32);
             let encoded = encode_layer0(&layer0_f32).expect("finite layer0 must encode");
 
@@ -2782,3 +2836,4 @@ mod scaling_tests {
         );
     }
 }
+use std::cell::RefCell;
