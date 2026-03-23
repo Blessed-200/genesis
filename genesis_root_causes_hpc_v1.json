@@ -1,0 +1,208 @@
+{
+  "report_type": "root_cause_reduction",
+  "source": "final_report.json",
+  "input_final_issues": 1131,
+  "root_cause_count": 9,
+  "root_causes": [
+    {
+      "id": "RC-01",
+      "pattern": "compile-time const misuse with runtime-only floating-point / allocation operations",
+      "mechanism": "The codebase applies const qualification to functions that rely on operations not consistently const-safe across toolchains or that should remain runtime-only. This creates compilation-boundary fragility and overconstrains APIs.",
+      "scope": "systemic",
+      "priority": "critical",
+      "issue_count": 4,
+      "unique_affected_units_count": 59,
+      "representative_titles": [
+        "is_finite() llamado en const fn - illegal operation",
+        "const fn no puede hacer heap allocations en compile-time"
+      ],
+      "representative_units": [
+        "genesis-dynamics::free_energy::is_finite_scalar@L46-48",
+        "genesis-dynamics::free_energy::sanitize_trace@L58-63",
+        "genesis-dynamics::free_energy::VFEMinimizer::new@L274-280"
+      ],
+      "fix_strategy": "Remove const from runtime-only helpers, or replace with explicit const-safe implementations only where compile-time evaluation is truly required. For floating-point finiteness checks, prefer runtime functions unless a bit-level const-safe check is proven necessary. For allocation-sensitive const code, move construction to runtime or replace with const-friendly fixed-size data structures.",
+      "expected_reduction": 0.004
+    },
+    {
+      "id": "RC-02",
+      "pattern": "unchecked integer arithmetic and lossy / narrowing conversions",
+      "mechanism": "Integer operations used in sizes, indices, masks, and offsets are not consistently protected against overflow, truncation, or silent wrapping. Conversion boundaries between signed/unsigned and wide/narrow types are not centralized.",
+      "scope": "systemic",
+      "priority": "critical",
+      "issue_count": 319,
+      "unique_affected_units_count": 362,
+      "representative_titles": [
+        "Operación aritmética '-' sin protección contra overflow",
+        "Operación aritmética '*' sin protección contra overflow",
+        "Operación aritmética '+' sin protección contra overflow",
+        "Conversión insegura con 'as usize'",
+        "Conversión insegura con 'as u32'"
+      ],
+      "representative_units": [
+        "genesis-math::product::build_sign_flip_masks@L73-92",
+        "genesis-types::signal::SpikeComponents::from_pairs_internal@L350-462",
+        "genesis-topology::hnsw::HnswGraph::insert@L746-846"
+      ],
+      "fix_strategy": "Introduce checked/saturating arithmetic at all size and index boundaries, replace ad hoc casts with validated conversions, and use dedicated newtypes for dimensions, indices, and offsets. Promote intermediate computations to wider types where needed, then validate before narrowing.",
+      "expected_reduction": 0.282
+    },
+    {
+      "id": "RC-03",
+      "pattern": "missing bounds / indexing invariants",
+      "mechanism": "Array and slice access is emitted as a large family of issues because the system does not encode fixed-size invariants or safe access contracts strongly enough. The same root cause appears as direct indexing, unchecked array access, and missing assert/get-based guards.",
+      "scope": "systemic",
+      "priority": "critical",
+      "issue_count": 279,
+      "unique_affected_units_count": 364,
+      "representative_titles": [
+        "Indexación sin verificación de límites",
+        "Acceso a índice sin assert ni validación",
+        "Unchecked array access: GRADE_TABLE[i]",
+        "Unchecked array access: coeffs[i]"
+      ],
+      "representative_units": [
+        "genesis-dynamics::free_energy::target_from_sparse_obs@L65-73",
+        "genesis-math::basis::grade_of@L151-154",
+        "genesis-topology::hnsw::HnswGraph::neighbors_within@L1203-1224"
+      ],
+      "fix_strategy": "Centralize indexing behind validated access APIs or encode fixed-size invariants in types. For truly fixed-length algebraic kernels, preserve direct indexing only when the dimension is proven statically. For dynamic inputs, use .get(), bounds validation, or domain-specific newtypes that cannot represent invalid indices.",
+      "expected_reduction": 0.247
+    },
+    {
+      "id": "RC-04",
+      "pattern": "numerical domain-guard missing for singularities and invalid inputs",
+      "mechanism": "The code frequently performs division, square root, logarithms, and related operations without a consistent global contract for valid numerical domains. This produces division-by-zero, division-by-small-value, and invalid-domain issues across crates.",
+      "scope": "systemic",
+      "priority": "critical",
+      "issue_count": 227,
+      "unique_affected_units_count": 360,
+      "representative_titles": [
+        "Potential division by zero without validation",
+        "Missing NaN/infinity checks in floating-point operations",
+        "sqrt() sin garantía de argumento no-negativo",
+        "log/ln sin garantía de argumento positivo",
+        "Division seguida de multiplicación amplifica errores"
+      ],
+      "representative_units": [
+        "genesis-math::product::geometric_product_scalar_dense@L209-223",
+        "genesis-types::signal::SpikeComponents::try_from_pairs@L517-532",
+        "genesis-dynamics::free_energy::VFEMinimizer::compute_vfe@L349-379"
+      ],
+      "fix_strategy": "Introduce a numerical contract layer that enforces denominator > epsilon, non-negative square-root arguments, and positive log/ln domains at boundaries. Prefer epsilon-guarded reciprocal helpers and centralized precondition checks over scattered local if-statements.",
+      "expected_reduction": 0.201
+    },
+    {
+      "id": "RC-05",
+      "pattern": "floating-point stability and rounding-risk issues",
+      "mechanism": "The code contains many cases of unstable accumulation, exact float comparisons, catastrophic cancellation, and error amplification. These are not domain validation failures; they are precision and stability problems in the numerical method itself.",
+      "scope": "systemic",
+      "priority": "high",
+      "issue_count": 177,
+      "unique_affected_units_count": 219,
+      "representative_titles": [
+        "NaN puede propagarse silenciosamente",
+        "Float subtraction - catastrophic cancellation risk",
+        "Floating-point equality comparison",
+        "Comparación f64 con == es frágil por errores de redondeo",
+        "Suma naive acumula error de redondeo - crítico en HPC"
+      ],
+      "representative_units": [
+        "genesis-dynamics::free_energy::VFEMinimizer::compute_vfe_with_grad@L402-440",
+        "genesis-topology::hnsw::HnswGraph::distance_to_node@L939-947",
+        "genesis-math::product::bivector_norm_sq_of_product@L830-882"
+      ],
+      "fix_strategy": "Replace naive summations with compensated summation where error matters, avoid exact equality on floats, use tolerances or interval-aware comparisons, and prefer numerically stable formulations for subtractions and chained operations.",
+      "expected_reduction": 0.157
+    },
+    {
+      "id": "RC-06",
+      "pattern": "hot-path performance inefficiency and algorithm/data-structure mismatch",
+      "mechanism": "The report groups together repeated inefficiencies that are architectural rather than local: unnecessary allocations, repeated len() in loops, resize churn, stable sorts where unstable sorts suffice, clones in hot paths, and complexity that could be specialized.",
+      "scope": "systemic",
+      "priority": "medium",
+      "issue_count": 76,
+      "unique_affected_units_count": 272,
+      "representative_titles": [
+        "Nested loops detected - O(n²) or worse complexity",
+        "Vec sin capacidad inicial puede causar re-allocations",
+        "len() evaluado en cada iteración",
+        "resize() inicializa elementos innecesariamente",
+        "Posible clone innecesario"
+      ],
+      "representative_units": [
+        "genesis-math::product::bivector_norm_sq_of_product_lhs_dense@L893-954",
+        "genesis-topology::hnsw::HnswGraph::search_layer@L982-1156",
+        "genesis-dynamics::free_energy::PagedIndex::set@L256-264"
+      ],
+      "fix_strategy": "Apply preallocation, remove repeated length lookups from loops, replace stable sorts with sort_unstable where ordering stability is unnecessary, eliminate unnecessary clones, and redesign hot-path data structures for dense-access patterns when keys are contiguous.",
+      "expected_reduction": 0.067
+    },
+    {
+      "id": "RC-07",
+      "pattern": "panic-prone fallible API usage in production paths",
+      "mechanism": "The code uses expect/unwrap and direct panic paths in places where recoverable failure or invariant enforcement would be safer. This turns boundary conditions into crashes and hides the true failure mode.",
+      "scope": "systemic",
+      "priority": "high",
+      "issue_count": 30,
+      "unique_affected_units_count": 162,
+      "representative_titles": [
+        "Uso de .expect() puede causar panic",
+        "expect() con mensaje genérico poco útil para debugging",
+        "Panic path without safety documentation: unwrap()",
+        "Unwrap usage in production code"
+      ],
+      "representative_units": [
+        "genesis-topology::hnsw::HnswGraph::insert@L746-846",
+        "genesis-topology::hnsw::radix_sort_node_ids@L1553-1616",
+        "genesis-types::error::GenesisError@L103-458"
+      ],
+      "fix_strategy": "Convert recoverable fallible paths to Result/Option propagation, reserve debug_assert! for internal invariants, and replace unwrap/expect in production surfaces with explicit error handling and well-typed failure modes.",
+      "expected_reduction": 0.027
+    },
+    {
+      "id": "RC-08",
+      "pattern": "unsafe usage without explicit safety contracts",
+      "mechanism": "Unsafe blocks and unchecked low-level operations are present without a strong enough safety-contract layer. The system flags documentation gaps, but the real issue is lack of encapsulation and proof-carrying boundaries around unsafe code.",
+      "scope": "systemic",
+      "priority": "high",
+      "issue_count": 18,
+      "unique_affected_units_count": 122,
+      "representative_titles": [
+        "Uso de unsafe sin documentación visible",
+        "Unsafe block without SAFETY documentation",
+        "Unchecked operation: get_unchecked"
+      ],
+      "representative_units": [
+        "genesis-topology::hnsw::HnswGraph::search_layer@L982-1156",
+        "genesis-topology::hnsw::HnswGraph::remove_node@L1338-1407",
+        "genesis-topology::hnsw::batch_distance_4_avx2@L122-156"
+      ],
+      "fix_strategy": "Encapsulate unsafe in narrow modules with explicit SAFETY contracts, add proof-style comments tied to invariants, and prefer safe APIs when the performance delta is not measurable. For hot kernels, keep unsafe only where the proof is local and stable.",
+      "expected_reduction": 0.016
+    },
+    {
+      "id": "RC-09",
+      "pattern": "unclassified singleton requiring manual review",
+      "mechanism": "One issue remains unclassified in the report and should be manually inspected rather than over-fitted into a broader cluster.",
+      "scope": "local",
+      "priority": "medium",
+      "issue_count": 1,
+      "unique_affected_units_count": 1,
+      "representative_titles": [
+        "Unknown issue"
+      ],
+      "representative_units": [
+        "unclassified"
+      ],
+      "fix_strategy": "Manual review only. Inspect the source unit and decide whether it belongs to an existing cluster or requires a new rule.",
+      "expected_reduction": 0.001
+    }
+  ],
+  "global_fix_strategy": {
+    "phase_1": "Collapse the 1131 issues into the 8 actionable systemic clusters above, plus one manual-review singleton.",
+    "phase_2": "Apply global contracts first: integer safety, bounds invariants, numerical domain guards, and stable floating-point policies.",
+    "phase_3": "Then address hot-path optimization, panic-prone APIs, and unsafe encapsulation.",
+    "phase_4": "Only after those foundations are fixed, re-run the auditor to measure residual local opportunities."
+  }
+}
