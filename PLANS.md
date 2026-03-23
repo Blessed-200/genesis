@@ -3,6 +3,29 @@
 Source backlog: `./genesis_root_causes_hpc_v1.json` (9 root causes, authoritative)
 Scope: implemented crates only (`genesis-types`, `genesis-math`, `genesis-topology`, `genesis-dynamics`)
 
+## 0.1 Dense G(1,3) kernel sequential-read restructure (2026-03-23)
+
+### Root cause
+- `core/genesis-math/src/product.rs` AVX2/FMA and NEON dense kernels still depend on per-`j` gather/permutation of `a_coeffs`, so LLVM/hardware sees non-sequential reads in the hottest loop.
+- `core/genesis-math/src/experimental/kernel_dense_g13.rs` baseline dense kernel uses `k`-outer accumulation, so the benchmarked reference path does not expose the intended sequential `sign_row[j]`/`b[j]` stream.
+
+### File-level actions
+1. `core/genesis-math/src/product.rs`
+   - Restructure dense scalar loop as explicit hot-path `i`-outer / `j`-inner row-hoist.
+   - Replace AVX2, AVX2+FMA, and NEON dense loops with sequential SIMD loads from `sign_row[j..]` and `b_coeffs[j..]`, keeping the unavoidable `result[i ^ j]` update as scalar scatter.
+   - Preserve strict-mode reduction order and public API semantics.
+2. `core/genesis-math/src/experimental/kernel_dense_g13.rs`
+   - Align the dense benchmark kernel with the same `i`-outer / `j`-inner access pattern so the benchmark measures the sequential-read layout directly.
+
+### Validation
+- Invariants first: `cargo test --release -p genesis-math -- invariant --nocapture`
+- Math correctness: `cargo test -p genesis-math --release`
+- Performance: `cargo bench -p genesis-math --bench geometry -- comparison_baseline --output-format bencher`
+- Workspace gates: `cargo test --workspace --release`, `cargo clippy --workspace -- -D warnings`, `cargo check --workspace`
+- ASM spot-check: `RUSTFLAGS="--emit=asm" cargo build --release -p genesis-math` + grep for vector loads/moves in dense kernel symbols.
+
+---
+
 ## 0) Method and constraints used for this plan
 
 - Performed static inspection of repository and representative hot-path modules.
