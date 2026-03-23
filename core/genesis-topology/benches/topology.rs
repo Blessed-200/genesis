@@ -9,7 +9,7 @@
 use std::time::{Duration, Instant};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use genesis_math::SparseCliffordVector;
+use genesis_math::{fast_metric_distance, fast_metric_distance_sq, SparseCliffordVector};
 use genesis_topology::{
     benchmark_rank_by_gaussian_elimination, benchmark_xor_row_elimination, geometric_distance,
     CliffordHashTable, CohomologyValidator, HnswGraph, ManifoldCollector, RipsComplex,
@@ -131,6 +131,51 @@ fn bench_geometric_distance_pair(c: &mut Criterion) {
     let b = make_vec(2);
     c.bench_function("geometric_distance_pair", |b_| {
         b_.iter(|| black_box(geometric_distance(black_box(&a), black_box(&b))))
+    });
+}
+
+fn bench_metric_distance_sq_vs_sqrt(c: &mut Criterion) {
+    let query = make_vec(500);
+    let candidates: Vec<SparseCliffordVector> = (0..10_000u64).map(make_vec).collect();
+
+    let mut baseline: Vec<(usize, f64)> = candidates
+        .iter()
+        .enumerate()
+        .map(|(idx, v)| (idx, fast_metric_distance(&query, v)))
+        .collect();
+    baseline.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    let baseline_order: Vec<usize> = baseline.iter().map(|(idx, _)| *idx).collect();
+
+    let mut squared: Vec<(usize, f64)> = candidates
+        .iter()
+        .enumerate()
+        .map(|(idx, v)| (idx, fast_metric_distance_sq(&query, v)))
+        .collect();
+    squared.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    let squared_order: Vec<usize> = squared.iter().map(|(idx, _)| *idx).collect();
+    assert_eq!(
+        squared_order, baseline_order,
+        "squared distances must preserve nearest-neighbor ordering"
+    );
+
+    c.bench_function("metric_distance_pair_sqrt", |b| {
+        b.iter(|| {
+            let mut acc = 0.0_f64;
+            for v in &candidates {
+                acc += fast_metric_distance(black_box(&query), black_box(v));
+            }
+            black_box(acc)
+        })
+    });
+
+    c.bench_function("metric_distance_pair_sq", |b| {
+        b.iter(|| {
+            let mut acc = 0.0_f64;
+            for v in &candidates {
+                acc += fast_metric_distance_sq(black_box(&query), black_box(v));
+            }
+            black_box(acc)
+        })
     });
 }
 
@@ -288,6 +333,7 @@ criterion_group!(
     bench_hnsw_insert_1000,
     bench_hnsw_search_k10_in_1000,
     bench_geometric_distance_pair,
+    bench_metric_distance_sq_vs_sqrt,
     bench_lsh_candidates_adversarial_percentiles,
     bench_compute_lambda2_n1000,
     bench_manifold_lambda2_percentiles,
