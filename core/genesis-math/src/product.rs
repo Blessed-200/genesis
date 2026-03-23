@@ -578,15 +578,19 @@ unsafe fn geometric_product_aarch64_neon_dense(
             let base = pair_idx * 2;
             let idx0 = base ^ j;
             let idx1 = (base + 1) ^ j;
+            let signs0: &[f64; TOTAL_BLADES] = &CAYLEY_SIGN_F64[idx0];
+            let signs1: &[f64; TOTAL_BLADES] = &CAYLEY_SIGN_F64[idx1];
 
-            // FIX-A: Build NEON register without intermediate stack array.
-            // vdupq_n_f64 + vsetq_lane_f64 operates purely on registers —
-            // eliminates the store+load cycle of the former `lhs_arr: [f64;2]`.
+            // HOT PATH: O(16²), dense G(1,3) product kernel on AArch64.
+            // Hoist the full sign rows once per accumulator pair so LLVM can keep
+            // the row bases live and issue sequential L1-resident lane reads for `j`.
+            // This removes repeated i8→f64 conversion and avoids rebuilding sign
+            // scalars from the 2D table inside the innermost loop.
             // SAFETY: vdupq_n_f64 and vsetq_lane_f64 are register-only NEON ops;
-            // no memory access. Values are finite f64 multiplied by ±1 (CAYLEY_SIGN).
+            // no memory access. Values are finite f64 multiplied by ±1.0.
             let lhs = unsafe {
-                let v0 = a_coeffs[idx0] * CAYLEY_SIGN_F64[idx0][j];
-                let v1 = a_coeffs[idx1] * CAYLEY_SIGN_F64[idx1][j];
+                let v0 = a_coeffs[idx0] * signs0[j];
+                let v1 = a_coeffs[idx1] * signs1[j];
                 let r = vdupq_n_f64(v0);
                 vsetq_lane_f64::<1>(v1, r)
             };

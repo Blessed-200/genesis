@@ -614,3 +614,45 @@ Remaining risk:
 - Clippy gate: `cargo clippy -p genesis-topology -- -D warnings 2>&1 | grep "^error"`
 - Bench gate: `cargo bench -p genesis-topology --bench topology -- --output-format bencher 2>&1 | grep "bench:"`
 - Workspace gates required by repo policy: `cargo check --workspace`, `cargo test --workspace`, `cargo check --workspace 2>&1 | grep "^warning:"`
+
+
+## Targeted Plan — genesis-math NEON sign hoist + Hodge correction + diagnostic benchmark (2026-03-23)
+
+### Objective
+- Remove avoidable sign-conversion overhead from the AArch64 NEON dense geometric-product hot loop.
+- Reassert the G(1,3) Hodge double-dual invariant `⋆⁻¹(⋆A) = -A` across grades.
+- Add a diagnostic Criterion baseline comparing the 256-multiply G(1,3) product against naive 16×16 matmul.
+
+### Invariants and contracts that must not break
+- `core/genesis-math` public APIs and signatures remain unchanged.
+- G(1,3) Minkowski sign semantics continue to come from the precomputed Cayley tables; no XOR-only sign recomputation.
+- `hodge_dual`/`hodge_undual` must satisfy the Minkowski pseudoscalar relation with `I² = -1`.
+- No changes to `hnsw.rs`, topology crates, or dynamics crates.
+- Hot-path changes must avoid heap allocation and preserve contiguous stack-local buffers.
+
+### Root cause
+- The NEON dense kernel still performs `i8 -> f64` sign conversion inside the innermost `j` loop, creating avoidable scalar work and pipeline pressure.
+- `hodge_undual` may be using the wrong pseudoscalar-side sign convention if the new regression test exposes `+A` instead of `-A`.
+- The existing benchmark baseline uses a differently named matmul case and does not explicitly report the requested comparison group.
+
+### File-level actions
+1. `core/genesis-math/src/product.rs`
+   - Hoist `CAYLEY_SIGN_F64[idx0]` and `CAYLEY_SIGN_F64[idx1]` row references outside the NEON inner loop.
+   - Keep accesses sequential via the hoisted row slices; do not recompute signs.
+2. `core/genesis-math/src/dual.rs`
+   - Add the full five-grade Hodge double-dual negation test.
+   - If needed, fix `hodge_undual` with coefficient negation only, preserving stack-only execution.
+3. `core/genesis-math/src/semantic.rs`
+   - Audit `hodge_undual` callers and remove any manual compensation only if present.
+4. `core/genesis-math/benches/geometry.rs`
+   - Add the requested `comparison_baseline` group and `bench_naive_matmul_16x16` function.
+   - Keep the dense G(1,3) kernel benchmark in the same comparison group for ratio reporting.
+
+### Validation steps
+- `cargo test --release -p genesis-math -- invariant --nocapture`
+- `cargo test -p genesis-math --release 2>&1 | tail -5`
+- `cargo test -p genesis-math --release dual 2>&1 | tail -10`
+- `cargo bench -p genesis-math --bench geometry -- comparison_baseline --output-format bencher`
+- `cargo test --workspace --release 2>&1 | grep -E "FAILED|^test result"`
+- `cargo clippy --workspace -- -D warnings 2>&1 | grep "^error"`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
