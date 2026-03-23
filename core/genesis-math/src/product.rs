@@ -68,8 +68,10 @@ pub(crate) const CAYLEY_SIGN_F64: [[f64; 16]; 16] = {
     t
 };
 
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 const SIGN_FLIP_BIT: u64 = 1u64 << 63;
 
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 const fn build_sign_flip_masks() -> [[u64; TOTAL_BLADES]; TOTAL_BLADES] {
     let mut out = [[0u64; TOTAL_BLADES]; TOTAL_BLADES];
     let mut j = 0;
@@ -91,6 +93,7 @@ const fn build_sign_flip_masks() -> [[u64; TOTAL_BLADES]; TOTAL_BLADES] {
     out
 }
 
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[allow(clippy::cast_possible_wrap)]
 const fn build_xor_permute_indices() -> [[i64; TOTAL_BLADES]; TOTAL_BLADES] {
     let mut out = [[0i64; TOTAL_BLADES]; TOTAL_BLADES];
@@ -111,7 +114,9 @@ const fn build_xor_permute_indices() -> [[i64; TOTAL_BLADES]; TOTAL_BLADES] {
     out
 }
 
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 const SIGN_FLIP_MASKS: [[u64; TOTAL_BLADES]; TOTAL_BLADES] = build_sign_flip_masks();
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 const XOR_PERMUTE_INDICES: [[i64; TOTAL_BLADES]; TOTAL_BLADES] = build_xor_permute_indices();
 
 /// Selection policy for geometric-product execution.
@@ -211,13 +216,16 @@ fn geometric_product_scalar_dense(
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    for (i, &coef_a) in a_coeffs.iter().enumerate() {
-        // loop-invariant, hoisted
-        // CRYSTAL: O15 — inevitable
+    // HOT PATH: O(16²), dense G(1,3) geometric product.
+    // Keep `i` outer so `sign_row[j]` and `b_coeffs[j]` stream sequentially; the
+    // only non-sequential access left is the algebraically unavoidable scatter
+    // store into `result_buf[i ^ j]`.
+    for i in 0..TOTAL_BLADES {
+        let coef_a = a_coeffs[i];
         let sign_row = &CAYLEY_SIGN_F64[i];
-        for (j, &coef_b) in b_coeffs.iter().enumerate() {
+        for j in 0..TOTAL_BLADES {
             let k = i ^ j;
-            result_buf[k] += coef_a * coef_b * sign_row[j];
+            result_buf[k] += coef_a * b_coeffs[j] * sign_row[j];
         }
     }
 }
@@ -295,161 +303,38 @@ unsafe fn geometric_product_x86_avx2_dense(
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    use std::arch::x86_64::{
-        _mm256_add_pd, _mm256_castsi256_pd, _mm256_i64gather_pd, _mm256_loadu_si256, _mm256_mul_pd,
-        _mm256_set1_pd, _mm256_storeu_pd, _mm256_xor_pd,
-    };
+    use std::arch::x86_64::{_mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_storeu_pd};
 
-    let mut acc0 = _mm256_set1_pd(0.0);
-    let mut acc1 = _mm256_set1_pd(0.0);
-    let mut acc2 = _mm256_set1_pd(0.0);
-    let mut acc3 = _mm256_set1_pd(0.0);
+    // HOT PATH: O(16²), dense G(1,3) product on AVX2.
+    // Sequential SIMD loads come from `sign_row[j..]` and `b_coeffs[j..]`; the
+    // result update remains scalar scatter because `i ^ j` is intrinsic to the
+    // Clifford product.
+    let mut contrib = [0.0f64; 4];
+    for i in 0..TOTAL_BLADES {
+        let coef_a = a_coeffs[i];
+        let coef_a_vec = _mm256_set1_pd(coef_a);
+        let sign_row = &CAYLEY_SIGN_F64[i];
 
-    for (j, &coef_b) in b_coeffs.iter().enumerate() {
-        let b_vec = _mm256_set1_pd(coef_b);
+        let mut j = 0usize;
+        while j < TOTAL_BLADES {
+            // SAFETY: `j` advances in multiples of 4 over a fixed-size 16-lane
+            // array, so both sequential loads stay within bounds.
+            let products = unsafe {
+                let b_vec = _mm256_loadu_pd(b_coeffs.as_ptr().add(j));
+                let scaled = _mm256_mul_pd(coef_a_vec, b_vec);
+                let signs = _mm256_loadu_pd(sign_row.as_ptr().add(j));
+                _mm256_mul_pd(scaled, signs)
+            };
+            // SAFETY: `contrib` is a stack-local 4-lane scratch buffer.
+            unsafe { _mm256_storeu_pd(contrib.as_mut_ptr(), products) };
 
-        let idx0 = _mm256_loadu_si256(XOR_PERMUTE_INDICES[j][0..4].as_ptr().cast());
-        let idx1 = _mm256_loadu_si256(XOR_PERMUTE_INDICES[j][4..8].as_ptr().cast());
-        let idx2 = _mm256_loadu_si256(XOR_PERMUTE_INDICES[j][8..12].as_ptr().cast());
-        let idx3 = _mm256_loadu_si256(XOR_PERMUTE_INDICES[j][12..16].as_ptr().cast());
-
-        let sign0 =
-            _mm256_castsi256_pd(_mm256_loadu_si256(SIGN_FLIP_MASKS[j][0..4].as_ptr().cast()));
-        let sign1 =
-            _mm256_castsi256_pd(_mm256_loadu_si256(SIGN_FLIP_MASKS[j][4..8].as_ptr().cast()));
-        let sign2 = _mm256_castsi256_pd(_mm256_loadu_si256(
-            SIGN_FLIP_MASKS[j][8..12].as_ptr().cast(),
-        ));
-        let sign3 = _mm256_castsi256_pd(_mm256_loadu_si256(
-            SIGN_FLIP_MASKS[j][12..16].as_ptr().cast(),
-        ));
-
-        let lanes0 = _mm256_xor_pd(_mm256_i64gather_pd(a_coeffs.as_ptr(), idx0, 8), sign0);
-        let lanes1 = _mm256_xor_pd(_mm256_i64gather_pd(a_coeffs.as_ptr(), idx1, 8), sign1);
-        let lanes2 = _mm256_xor_pd(_mm256_i64gather_pd(a_coeffs.as_ptr(), idx2, 8), sign2);
-        let lanes3 = _mm256_xor_pd(_mm256_i64gather_pd(a_coeffs.as_ptr(), idx3, 8), sign3);
-
-        acc0 = _mm256_add_pd(acc0, _mm256_mul_pd(lanes0, b_vec));
-        acc1 = _mm256_add_pd(acc1, _mm256_mul_pd(lanes1, b_vec));
-        acc2 = _mm256_add_pd(acc2, _mm256_mul_pd(lanes2, b_vec));
-        acc3 = _mm256_add_pd(acc3, _mm256_mul_pd(lanes3, b_vec));
+            result_buf[i ^ j] += contrib[0];
+            result_buf[i ^ (j + 1)] += contrib[1];
+            result_buf[i ^ (j + 2)] += contrib[2];
+            result_buf[i ^ (j + 3)] += contrib[3];
+            j += 4;
+        }
     }
-
-    _mm256_storeu_pd(result_buf[0..4].as_mut_ptr(), acc0);
-    _mm256_storeu_pd(result_buf[4..8].as_mut_ptr(), acc1);
-    _mm256_storeu_pd(result_buf[8..12].as_mut_ptr(), acc2);
-    _mm256_storeu_pd(result_buf[12..16].as_mut_ptr(), acc3);
-}
-
-#[cfg(target_arch = "x86_64")]
-const fn blade_mul_index_const(a: usize, b: usize) -> usize {
-    a ^ b
-}
-
-#[cfg(target_arch = "x86_64")]
-const fn blade_mul_sign_const(a: usize, b: usize) -> i8 {
-    CAYLEY_SIGN[a][b]
-}
-
-#[cfg(target_arch = "x86_64")]
-const fn lane_sign_pattern<const J: usize, const KBASE: usize>() -> [i8; 4] {
-    [
-        blade_mul_sign_const(blade_mul_index_const(KBASE, J), J),
-        blade_mul_sign_const(blade_mul_index_const(KBASE + 1, J), J),
-        blade_mul_sign_const(blade_mul_index_const(KBASE + 2, J), J),
-        blade_mul_sign_const(blade_mul_index_const(KBASE + 3, J), J),
-    ]
-}
-
-#[cfg(target_arch = "x86_64")]
-const fn lane_sign_mask_bits<const J: usize, const KBASE: usize>() -> [u64; 4] {
-    let signs = lane_sign_pattern::<J, KBASE>();
-    [
-        if signs[0] < 0 { SIGN_FLIP_BIT } else { 0 },
-        if signs[1] < 0 { SIGN_FLIP_BIT } else { 0 },
-        if signs[2] < 0 { SIGN_FLIP_BIT } else { 0 },
-        if signs[3] < 0 { SIGN_FLIP_BIT } else { 0 },
-    ]
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn permute_src<const J: usize, const KBASE: usize>(
-    a0: std::arch::x86_64::__m256d,
-    a1: std::arch::x86_64::__m256d,
-    a2: std::arch::x86_64::__m256d,
-    a3: std::arch::x86_64::__m256d,
-) -> std::arch::x86_64::__m256d {
-    use std::arch::x86_64::_mm256_permute4x64_pd;
-
-    let src_idx = (KBASE / 4) ^ (J / 4);
-    let src = match src_idx {
-        0 => a0,
-        1 => a1,
-        2 => a2,
-        _ => a3,
-    };
-
-    match J & 3 {
-        0 => src,
-        1 => _mm256_permute4x64_pd(src, 0xB1),
-        2 => _mm256_permute4x64_pd(src, 0x4E),
-        _ => _mm256_permute4x64_pd(src, 0x1B),
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2,fma")]
-#[allow(clippy::too_many_arguments)]
-unsafe fn apply_j_once<const J: usize>(
-    a0: std::arch::x86_64::__m256d,
-    a1: std::arch::x86_64::__m256d,
-    a2: std::arch::x86_64::__m256d,
-    a3: std::arch::x86_64::__m256d,
-    b_coeffs: &[f64; TOTAL_BLADES],
-    mut acc0: std::arch::x86_64::__m256d,
-    mut acc1: std::arch::x86_64::__m256d,
-    mut acc2: std::arch::x86_64::__m256d,
-    mut acc3: std::arch::x86_64::__m256d,
-) -> (
-    std::arch::x86_64::__m256d,
-    std::arch::x86_64::__m256d,
-    std::arch::x86_64::__m256d,
-    std::arch::x86_64::__m256d,
-) {
-    use std::arch::x86_64::{
-        _mm256_broadcast_sd, _mm256_fmadd_pd, _mm256_fnmadd_pd, _mm256_xor_pd,
-    };
-
-    // SAFETY: J is const-generic in 0..=15 at call sites.
-    let b_vec = _mm256_broadcast_sd(unsafe { b_coeffs.get_unchecked(J) });
-
-    macro_rules! update_acc {
-        ($kbase:expr, $acc:ident) => {{
-            let lanes = permute_src::<J, $kbase>(a0, a1, a2, a3);
-            let signs = lane_sign_pattern::<{ J }, { $kbase }>();
-            if signs == [1, 1, 1, 1] {
-                $acc = _mm256_fmadd_pd(lanes, b_vec, $acc);
-            } else if signs == [-1, -1, -1, -1] {
-                $acc = _mm256_fnmadd_pd(lanes, b_vec, $acc);
-            } else {
-                let mask_bits = lane_sign_mask_bits::<{ J }, { $kbase }>();
-                // SAFETY: bit-pattern reinterpretation between 32-byte vector payloads.
-                let sign_mask = unsafe {
-                    std::mem::transmute::<[u64; 4], std::arch::x86_64::__m256d>(mask_bits)
-                };
-                let signed_lanes = _mm256_xor_pd(lanes, sign_mask);
-                $acc = _mm256_fmadd_pd(signed_lanes, b_vec, $acc);
-            }
-        }};
-    }
-
-    update_acc!(0, acc0);
-    update_acc!(4, acc1);
-    update_acc!(8, acc2);
-    update_acc!(12, acc3);
-
-    (acc0, acc1, acc2, acc3)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -459,46 +344,37 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    use std::arch::x86_64::{_mm256_add_pd, _mm256_loadu_pd, _mm256_setzero_pd, _mm256_storeu_pd};
+    use std::arch::x86_64::{_mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_storeu_pd};
 
-    let a_ptr = a_coeffs.as_ptr();
-    let a0 = _mm256_loadu_pd(a_ptr);
-    let a1 = _mm256_loadu_pd(a_ptr.add(4));
-    let a2 = _mm256_loadu_pd(a_ptr.add(8));
-    let a3 = _mm256_loadu_pd(a_ptr.add(12));
+    // HOT PATH: O(16²), dense G(1,3) product on AVX2+FMA hardware.
+    // The read side is fully sequential; scatter remains scalar so we preserve
+    // the scalar accumulation order while still exposing contiguous SIMD loads.
+    let mut contrib = [0.0f64; 4];
+    for i in 0..TOTAL_BLADES {
+        let coef_a = a_coeffs[i];
+        let coef_a_vec = _mm256_set1_pd(coef_a);
+        let sign_row = &CAYLEY_SIGN_F64[i];
 
-    let mut ea0 = _mm256_setzero_pd();
-    let mut ea1 = _mm256_setzero_pd();
-    let mut ea2 = _mm256_setzero_pd();
-    let mut ea3 = _mm256_setzero_pd();
+        let mut j = 0usize;
+        while j < TOTAL_BLADES {
+            // SAFETY: `j` advances in multiples of 4 over a fixed-size 16-lane
+            // array, so both sequential loads stay within bounds.
+            let products = unsafe {
+                let b_vec = _mm256_loadu_pd(b_coeffs.as_ptr().add(j));
+                let scaled = _mm256_mul_pd(coef_a_vec, b_vec);
+                let signs = _mm256_loadu_pd(sign_row.as_ptr().add(j));
+                _mm256_mul_pd(scaled, signs)
+            };
+            // SAFETY: `contrib` is a stack-local 4-lane scratch buffer.
+            unsafe { _mm256_storeu_pd(contrib.as_mut_ptr(), products) };
 
-    let mut oa0 = _mm256_setzero_pd();
-    let mut oa1 = _mm256_setzero_pd();
-    let mut oa2 = _mm256_setzero_pd();
-    let mut oa3 = _mm256_setzero_pd();
-
-    (ea0, ea1, ea2, ea3) = apply_j_once::<0>(a0, a1, a2, a3, b_coeffs, ea0, ea1, ea2, ea3);
-    (oa0, oa1, oa2, oa3) = apply_j_once::<1>(a0, a1, a2, a3, b_coeffs, oa0, oa1, oa2, oa3);
-    (ea0, ea1, ea2, ea3) = apply_j_once::<2>(a0, a1, a2, a3, b_coeffs, ea0, ea1, ea2, ea3);
-    (oa0, oa1, oa2, oa3) = apply_j_once::<3>(a0, a1, a2, a3, b_coeffs, oa0, oa1, oa2, oa3);
-    (ea0, ea1, ea2, ea3) = apply_j_once::<4>(a0, a1, a2, a3, b_coeffs, ea0, ea1, ea2, ea3);
-    (oa0, oa1, oa2, oa3) = apply_j_once::<5>(a0, a1, a2, a3, b_coeffs, oa0, oa1, oa2, oa3);
-    (ea0, ea1, ea2, ea3) = apply_j_once::<6>(a0, a1, a2, a3, b_coeffs, ea0, ea1, ea2, ea3);
-    (oa0, oa1, oa2, oa3) = apply_j_once::<7>(a0, a1, a2, a3, b_coeffs, oa0, oa1, oa2, oa3);
-    (ea0, ea1, ea2, ea3) = apply_j_once::<8>(a0, a1, a2, a3, b_coeffs, ea0, ea1, ea2, ea3);
-    (oa0, oa1, oa2, oa3) = apply_j_once::<9>(a0, a1, a2, a3, b_coeffs, oa0, oa1, oa2, oa3);
-    (ea0, ea1, ea2, ea3) = apply_j_once::<10>(a0, a1, a2, a3, b_coeffs, ea0, ea1, ea2, ea3);
-    (oa0, oa1, oa2, oa3) = apply_j_once::<11>(a0, a1, a2, a3, b_coeffs, oa0, oa1, oa2, oa3);
-    (ea0, ea1, ea2, ea3) = apply_j_once::<12>(a0, a1, a2, a3, b_coeffs, ea0, ea1, ea2, ea3);
-    (oa0, oa1, oa2, oa3) = apply_j_once::<13>(a0, a1, a2, a3, b_coeffs, oa0, oa1, oa2, oa3);
-    (ea0, ea1, ea2, ea3) = apply_j_once::<14>(a0, a1, a2, a3, b_coeffs, ea0, ea1, ea2, ea3);
-    (oa0, oa1, oa2, oa3) = apply_j_once::<15>(a0, a1, a2, a3, b_coeffs, oa0, oa1, oa2, oa3);
-
-    let r_ptr = result_buf.as_mut_ptr();
-    _mm256_storeu_pd(r_ptr, _mm256_add_pd(ea0, oa0));
-    _mm256_storeu_pd(r_ptr.add(4), _mm256_add_pd(ea1, oa1));
-    _mm256_storeu_pd(r_ptr.add(8), _mm256_add_pd(ea2, oa2));
-    _mm256_storeu_pd(r_ptr.add(12), _mm256_add_pd(ea3, oa3));
+            result_buf[i ^ j] += contrib[0];
+            result_buf[i ^ (j + 1)] += contrib[1];
+            result_buf[i ^ (j + 2)] += contrib[2];
+            result_buf[i ^ (j + 3)] += contrib[3];
+            j += 4;
+        }
+    }
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
@@ -550,58 +426,34 @@ unsafe fn geometric_product_aarch64_neon_dense(
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    use std::arch::aarch64::{
-        float64x2_t, vdupq_n_f64, vfmaq_f64, vld1q_f64, vsetq_lane_f64, vst1q_f64,
-    };
+    use std::arch::aarch64::{vdupq_n_f64, vld1q_f64, vmulq_f64, vst1q_f64};
 
-    let mut accumulators = [vdupq_n_f64(0.0); TOTAL_BLADES / 2];
-    for (pair_idx, accumulator) in accumulators.iter_mut().enumerate() {
-        let base = pair_idx * 2;
-        // SAFETY: `base` and `base + 1` are within `result_buf` bounds by construction.
-        *accumulator = unsafe { vld1q_f64(result_buf.as_ptr().add(base)) };
-    }
+    // HOT PATH: O(16²), dense G(1,3) product on AArch64.
+    // Hoist one sign row per `i` so the read side becomes sequential NEON loads
+    // from `sign_row[j..]` and `b_coeffs[j..]`; the scatter store remains scalar.
+    let mut contrib = [0.0f64; 2];
+    for i in 0..TOTAL_BLADES {
+        let coef_a = a_coeffs[i];
+        let coef_a_vec = vdupq_n_f64(coef_a);
+        let sign_row = &CAYLEY_SIGN_F64[i];
 
-    // NEON path — versión definitiva: sin array signed, accesos lineales, SIMD puro.
-    // AX-ID: AXIOMA-001, AXIOMA-011
-    for (j, &coef_b) in b_coeffs.iter().enumerate() {
-        // Filtro sub-Planck: evita trabajo innecesario en coeficientes pequeños.
-        if coef_b.abs() <= COGNITIVE_PLANCK_CONSTANT {
-            continue;
-        }
-
-        let b_vec: float64x2_t = vdupq_n_f64(coef_b);
-
-        // Procesar cada par de acumuladores (8 pares para TOTAL_BLADES = 16).
-        // Los índices base^j y (base+1)^j se calculan sobre la marcha, eliminando
-        // el array temporal `signed` y sus 16 multiplicaciones por iteración.
-        for (pair_idx, accumulator) in accumulators.iter_mut().enumerate() {
-            let base = pair_idx * 2;
-            let idx0 = base ^ j;
-            let idx1 = (base + 1) ^ j;
-            let signs0: &[f64; TOTAL_BLADES] = &CAYLEY_SIGN_F64[idx0];
-            let signs1: &[f64; TOTAL_BLADES] = &CAYLEY_SIGN_F64[idx1];
-
-            // HOT PATH: O(16²), dense G(1,3) product kernel on AArch64.
-            // Hoist the full sign rows once per accumulator pair so LLVM can keep
-            // the row bases live and issue sequential L1-resident lane reads for `j`.
-            // This removes repeated i8→f64 conversion and avoids rebuilding sign
-            // scalars from the 2D table inside the innermost loop.
-            // SAFETY: vdupq_n_f64 and vsetq_lane_f64 are register-only NEON ops;
-            // no memory access. Values are finite f64 multiplied by ±1.0.
-            let lhs = unsafe {
-                let v0 = a_coeffs[idx0] * signs0[j];
-                let v1 = a_coeffs[idx1] * signs1[j];
-                let r = vdupq_n_f64(v0);
-                vsetq_lane_f64::<1>(v1, r)
+        let mut j = 0usize;
+        while j < TOTAL_BLADES {
+            // SAFETY: `j` advances in multiples of 2 over a fixed-size 16-lane
+            // array, so both sequential loads stay within bounds.
+            let products = unsafe {
+                let signs_vec = vld1q_f64(sign_row.as_ptr().add(j));
+                let b_vec = vld1q_f64(b_coeffs.as_ptr().add(j));
+                let scaled = vmulq_f64(coef_a_vec, b_vec);
+                vmulq_f64(scaled, signs_vec)
             };
-            *accumulator = vfmaq_f64(*accumulator, lhs, b_vec);
-        }
-    }
+            // SAFETY: `contrib` is a stack-local 2-lane scratch buffer.
+            unsafe { vst1q_f64(contrib.as_mut_ptr(), products) };
 
-    for (pair_idx, accumulator) in accumulators.iter().enumerate() {
-        let base = pair_idx * 2;
-        // SAFETY: `base` and `base + 1` are within `result_buf` bounds by construction.
-        unsafe { vst1q_f64(result_buf.as_mut_ptr().add(base), *accumulator) };
+            result_buf[i ^ j] += contrib[0];
+            result_buf[i ^ (j + 1)] += contrib[1];
+            j += 2;
+        }
     }
 }
 

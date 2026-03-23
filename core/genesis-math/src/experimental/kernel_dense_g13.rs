@@ -14,22 +14,10 @@
 //!   equivalencia, sin impacto en el dispatch productivo.
 
 use crate::basis::TOTAL_BLADES;
-use crate::sign::CAYLEY_SIGN;
+use crate::product::CAYLEY_SIGN_F64;
 
 /// Dense product result buffer for G(1,3).
 pub type DenseBuf = [f64; TOTAL_BLADES];
-
-#[allow(clippy::inline_always)]
-// Inlining forzado: función en hot-path del producto geométrico.
-// Benchmark kuramoto_step_1000_nodes = 1.11 ms para N=1000.
-// Sin inline(always) el compilador puede crear frame overhead en
-// el inner loop de sparse_geometric_product (≥ 10⁸ llamadas/step).
-#[inline(always)]
-fn apply_sign(x: f64, sign: i8) -> f64 {
-    debug_assert!(sign == 1 || sign == -1);
-    let mask = u64::from(sign < 0) << 63;
-    f64::from_bits(x.to_bits() ^ mask)
-}
 
 /// Experimental dense kernel over full 16-blade vectors.
 ///
@@ -43,20 +31,20 @@ fn apply_sign(x: f64, sign: i8) -> f64 {
 pub fn dense_geometric_product_g13(a: &DenseBuf, b: &DenseBuf) -> DenseBuf {
     let mut out = [0.0; TOTAL_BLADES];
 
-    let mut k = 0usize;
-    while k < TOTAL_BLADES {
-        let j0 = k;
-        let mut acc = apply_sign(a[0] * b[j0], CAYLEY_SIGN[0][j0]);
+    // HOT PATH: O(16²), dense baseline kernel for G(1,3).
+    // Use `i`-outer / `j`-inner traversal so both `CAYLEY_SIGN[i][j]` and `b[j]`
+    // are consumed sequentially; only the `out[i ^ j]` scatter remains.
+    let mut i = 0usize;
+    while i < TOTAL_BLADES {
+        let a_i = a[i];
+        let sign_row = &CAYLEY_SIGN_F64[i];
 
-        let mut i = 1usize;
-        while i < TOTAL_BLADES {
-            let j = i ^ k;
-            acc += apply_sign(a[i] * b[j], CAYLEY_SIGN[i][j]);
-            i += 1;
+        let mut j = 0usize;
+        while j < TOTAL_BLADES {
+            out[i ^ j] += a_i * b[j] * sign_row[j];
+            j += 1;
         }
-
-        out[k] = acc;
-        k += 1;
+        i += 1;
     }
 
     out
