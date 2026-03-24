@@ -490,6 +490,14 @@ struct NodeAdj {
 }
 
 impl NodeAdj {
+    #[cfg(debug_assertions)]
+    #[inline]
+    fn assert_layer0_sorted(&self) {
+        for w in self.layer0.windows(2) {
+            debug_assert!(w[0] < w[1], "layer0 must be sorted ascending");
+        }
+    }
+
     #[inline]
     fn neighbors(&self, layer: usize) -> &[u32] {
         if layer == 0 {
@@ -522,20 +530,32 @@ impl NodeAdj {
     #[inline]
     fn add_neighbor(&mut self, layer: usize, neighbor: u32, max_neighbors: usize) -> bool {
         if layer == 0 {
-            if self.layer0.len() >= max_neighbors || self.layer0.contains(&neighbor) {
-                return false;
+            match self.layer0.binary_search(&neighbor) {
+                Ok(_) => return false,
+                Err(pos) => {
+                    if self.layer0.len() >= max_neighbors {
+                        return false;
+                    }
+                    self.layer0.insert(pos, neighbor);
+                    #[cfg(debug_assertions)]
+                    self.assert_layer0_sorted();
+                    return true;
+                }
             }
-            self.layer0.push(neighbor);
-            return true;
         }
         let Some(neighbors) = self.neighbors_mut(layer) else {
             return false;
         };
-        if neighbors.len() >= max_neighbors || neighbors.contains(&neighbor) {
-            return false;
+        match neighbors.binary_search(&neighbor) {
+            Ok(_) => false,
+            Err(pos) => {
+                if neighbors.len() >= max_neighbors {
+                    return false;
+                }
+                neighbors.insert(pos, neighbor);
+                true
+            }
         }
-        neighbors.push(neighbor);
-        true
     }
 
     #[inline]
@@ -543,6 +563,8 @@ impl NodeAdj {
         if layer == 0 {
             if let Some(pos) = self.layer0.iter().position(|&idx| idx == neighbor) {
                 self.layer0.remove(pos);
+                #[cfg(debug_assertions)]
+                self.assert_layer0_sorted();
                 return true;
             }
             return false;
@@ -1876,6 +1898,34 @@ mod tests {
         graph.remove_node(make_id(2)).expect("remove");
         let results = graph.search_nearest(&make_vec(0.3), 3);
         assert!(!results.contains(&make_id(2)));
+    }
+
+    #[test]
+    fn layer0_neighbors_sorted_after_insert() {
+        let mut graph = HnswGraph::new(32);
+        for i in 0..100_u64 {
+            graph
+                .insert(make_id(i), &make_vec((i as f64).mul_add(0.02, 0.15)))
+                .expect("insert should succeed");
+        }
+        for (idx, adj) in graph.layer_neighbors.iter().enumerate() {
+            for window in adj.layer0.windows(2) {
+                assert!(
+                    window[0] < window[1],
+                    "node {idx} has unsorted layer0 neighbors: {:?}",
+                    adj.layer0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn layer0_no_duplicates_after_double_add() {
+        let mut adj = NodeAdj::default();
+        assert!(adj.add_neighbor(0, 7, M0));
+        assert!(!adj.add_neighbor(0, 7, M0));
+        assert_eq!(adj.layer0.len(), 1);
+        assert_eq!(adj.layer0[0], 7);
     }
 
     #[test]

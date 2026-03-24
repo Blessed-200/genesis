@@ -757,3 +757,32 @@ Remaining risk:
 - `cargo bench -p genesis-topology --bench topology -- hnsw_search_k10_in_1000 --output-format bencher 2>&1 | grep "bench:"`
 - `grep "Mutex" core/genesis-topology/src/hnsw.rs | grep -v "//\\|test\\|clone"`
 - `grep "visited_epoch" core/genesis-topology/src/hnsw.rs`
+
+## Targeted Plan — NodeAdj sorted adjacency for O(log M0) duplicate checks (2026-03-24)
+
+### Objective
+- Remove linear duplicate checks in `NodeAdj::add_neighbor()` by enforcing sorted neighbor lists and switching to `binary_search` insertion for layer 0 and upper layers.
+
+### Root cause
+- Current layer-0 and upper-layer insertion path performs `contains()` + `push()`, which is O(M) duplicate detection with unsorted adjacency. Insertion is on the HNSW hot path and compounds per-node insertion cost.
+
+### File-level actions
+1. `core/genesis-topology/src/hnsw.rs`
+   - In `NodeAdj::add_neighbor`, replace `contains` checks with `binary_search` for both layer-0 and upper layers.
+   - Replace unsorted `push` with ordered `insert(pos, neighbor)` so adjacency remains sorted ascending.
+   - Add debug-only invariant helper `assert_layer0_sorted()` and invoke it after layer-0 add/remove operations.
+2. `core/genesis-topology/src/hnsw.rs` tests
+   - Add `layer0_neighbors_sorted_after_insert` to validate sorted ascending layer-0 adjacency across inserted graph nodes.
+   - Add `layer0_no_duplicates_after_double_add` to verify duplicate insertion is rejected and length remains 1.
+
+### Invariants and risk controls
+- `layer0` and upper-layer neighbor vectors remain strictly increasing (`w[0] < w[1]`) after successful insertion/removal.
+- Degree bounds (`M0`/`M`) remain enforced before insert.
+- `remove_neighbor` keeps sorted order because removal preserves relative ordering.
+- No extra heap allocation beyond bounded `SmallVec` behavior and existing upper-layer growth.
+
+### Validation steps
+- `cargo test -p genesis-topology --release 2>&1 | grep -E "FAILED|ok"`
+- `cargo clippy -p genesis-topology -- -D warnings 2>&1 | grep "^error"`
+- `cargo bench -p genesis-topology --bench topology -- --output-format bencher hnsw_insert hnsw_search 2>&1 | grep "bench:"`
+- Repository required gates: `cargo check --workspace`, `cargo test --workspace`, `cargo check --workspace 2>&1 | grep "^warning:"`.
