@@ -1163,35 +1163,36 @@ impl HnswGraph {
         if layer > self.nodes[idx].max_layer {
             return;
         }
-        let current = self.node_neighbors(idx, layer);
-        let degree = current.len();
+        let degree = self.node_neighbors(idx, layer).len();
         if degree <= m_max {
             return;
         }
 
-        // HOT PATH: O(d) score materialization + bounded O(d log d) ordering.
+        // HOT PATH: O(d) score materialization + average O(d) partition.
         // Degree is bounded by HNSW neighbour caps (layer 0 <= M0; upper layers <= M).
         debug_assert!(degree <= M0);
         let query_f32 = (layer == 0).then(|| Self::dense_to_query_f32(&self.nodes[idx].vec));
-        let mut scored: SmallVec<[(u32, f64); M0]> = SmallVec::with_capacity(degree);
-        for &nb_idx_u32 in current {
+        let mut scored: SmallVec<[u64; M0]> = SmallVec::with_capacity(degree);
+        for &nb_idx_u32 in self.node_neighbors(idx, layer) {
             let nb_idx = nb_idx_u32 as usize;
             let dist = if let Some(query_f32) = &query_f32 {
                 self.distance_to_layer0_node_sq(query_f32, nb_idx)
             } else {
                 self.distance_to_node_sq(&self.nodes[idx].vec, nb_idx, layer)
             };
-            scored.push((nb_idx_u32, dist));
+            // f64 -> f32 is sufficient for pruning order; NaN/inf lanes map to +inf bucket.
+            let dist_bits = (dist as f32).to_bits();
+            scored.push(((dist_bits as u64) << 32) | u64::from(nb_idx_u32));
         }
 
-        scored.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        // Partition only: keep m_max smallest packed keys in prefix.
+        scored.select_nth_unstable(m_max - 1);
 
-        let mut drop: SmallVec<[u32; M0]> = SmallVec::with_capacity(degree.saturating_sub(m_max));
-        for (rank, (nb_idx_u32, _)) in scored.into_iter().enumerate() {
-            if rank >= m_max {
-                drop.push(nb_idx_u32);
-            }
-        }
+        // Extract overflow IDs before mutating adjacency (requires &mut self).
+        let drop: SmallVec<[u32; M0]> = scored[m_max..]
+            .iter()
+            .map(|&packed| (packed & 0xFFFF_FFFF) as u32)
+            .collect();
 
         for nb_idx_u32 in drop {
             self.remove_edge_bidirectional(idx, layer, nb_idx_u32 as usize);
@@ -1857,7 +1858,7 @@ mod tests {
         m_max: usize,
     ) -> (Vec<u32>, Vec<u32>) {
         let query_f32 = (layer == 0).then(|| HnswGraph::dense_to_query_f32(&g.nodes[idx].vec));
-        let mut scored: Vec<(u32, f64)> = g
+        let mut scored: Vec<u64> = g
             .node_neighbors(idx, layer)
             .iter()
             .copied()
@@ -1867,13 +1868,26 @@ mod tests {
                 } else {
                     g.distance_to_node_sq(&g.nodes[idx].vec, nb as usize, layer)
                 };
-                (nb, dist)
+                let dist_bits = (dist as f32).to_bits();
+                ((dist_bits as u64) << 32) | u64::from(nb)
             })
             .collect();
-        scored.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        if scored.len() > m_max {
+            scored.select_nth_unstable(m_max - 1);
+        }
 
-        let keep = scored.iter().take(m_max).map(|(nb, _)| *nb).collect();
-        let drop = scored.iter().skip(m_max).map(|(nb, _)| *nb).collect();
+        let mut keep: Vec<u32> = scored
+            .iter()
+            .take(m_max)
+            .map(|&packed| (packed & 0xFFFF_FFFF) as u32)
+            .collect();
+        keep.sort_unstable();
+
+        let drop = scored
+            .iter()
+            .skip(m_max)
+            .map(|&packed| (packed & 0xFFFF_FFFF) as u32)
+            .collect();
         (keep, drop)
     }
 
@@ -2569,6 +2583,32 @@ mod tests {
                 "reverse edge {dropped_idx}->{idx} should be absent"
             );
         }
+    }
+
+    #[test]
+    fn prune_layer_u64_pack_order_matches_f64_order() {
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut packed: Vec<u64> = Vec::with_capacity(32);
+        let mut by_key: Vec<(f32, u32)> = Vec::with_capacity(32);
+
+        for id in 0_u32..32_u32 {
+            let raw = next_u64(&mut seed) >> 11;
+            let dist = (raw as f64) * (1.0 / ((1_u64 << 53) as f64));
+            let dist_f32 = dist as f32;
+            let dist_bits = dist_f32.to_bits();
+            packed.push(((dist_bits as u64) << 32) | u64::from(id));
+            by_key.push((dist_f32, id));
+        }
+
+        packed.sort_unstable();
+        by_key.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+        let packed_ids: Vec<u32> = packed
+            .into_iter()
+            .map(|v| (v & 0xFFFF_FFFF) as u32)
+            .collect();
+        let keyed_ids: Vec<u32> = by_key.into_iter().map(|(_, id)| id).collect();
+        assert_eq!(packed_ids, keyed_ids);
     }
 
     #[test]

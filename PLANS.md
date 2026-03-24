@@ -1,5 +1,29 @@
 # GÉNESIS HPC Root-Cause Remediation Plan (Phase 1)
 
+## 0.3 prune_layer packed-order partition optimization (2026-03-24)
+
+### Root cause
+- `core/genesis-topology/src/hnsw.rs::prune_layer` still materializes `(neighbor_id, f64_dist)` tuples and globally sorts all candidates even though pruning only needs the `m_max` smallest neighbors.
+- Current path also creates a second `SmallVec` for dropped IDs, increasing stack traffic and copy pressure in a hot path called during insert connectivity maintenance.
+
+### File-level actions
+1. `core/genesis-topology/src/hnsw.rs`
+   - Replace score storage from `SmallVec<[(u32, f64); M0]>` to `SmallVec<[u64; M0]>`, packing `(dist_f32_bits << 32) | neighbor_id`.
+   - Use `select_nth_unstable(m_max - 1)` to partition in average `O(d)` instead of full `O(d log d)` sort.
+   - Preserve deterministic tie-break by embedding neighbor id in low 32 bits of packed key.
+   - Keep mutation-safe drop handling by materializing only overflow IDs into compact `SmallVec<[u32; M0]>` before calling `remove_edge_bidirectional`.
+2. `core/genesis-topology/src/hnsw.rs` tests
+   - Keep existing prune regression tests.
+   - Add packed-order invariant test that verifies `u64` packed ordering matches `(dist as f32)` ordering for non-negative distances.
+
+### Validation
+- `cargo test -p genesis-topology --release 2>&1 | grep -E "FAILED|ok"`
+- `cargo clippy -p genesis-topology -- -D warnings 2>&1 | grep "^error"`
+- `cargo bench -p genesis-topology --bench topology hnsw_insert_1000 -- --output-format bencher 2>&1 | grep "bench:"`
+
+### Complexity target
+- `O(d)` distance materialization + average `O(d)` partition with no full sort, and reduced per-candidate footprint (8 bytes packed key vs 16 bytes tuple).
+
 ## 0.2 HNSW prune_layer one-shot pruning pass (2026-03-24)
 
 ### Root cause
