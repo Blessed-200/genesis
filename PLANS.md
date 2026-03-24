@@ -679,3 +679,81 @@ Remaining risk:
 - `cargo test --workspace --release 2>&1 | grep -E "FAILED|^test result"`
 - `cargo clippy --workspace -- -D warnings 2>&1 | grep "^error"`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## Targeted Plan — HNSW epoch-visited + local NodeAdj adjacency (2026-03-23)
+
+### Objective
+- Remove per-search visited clearing overhead in `search_layer()` by replacing `FixedBitSet + visited_touched` with epoch marking.
+- Remove O(N) global CSR offset correction during insertion/removal by replacing `CsrNeighborList` with per-node local adjacency storage.
+
+### Invariants and contracts that must not break
+- Scope stays limited to `core/genesis-topology/src/hnsw.rs`.
+- Public API/signatures remain unchanged for `HnswGraph`, `search_nearest`, `remove_node`, `neighbors`, and `layer0_soa`.
+- Internal hot loops operate on internal dense indices only; `NodeId` translation occurs at API/maintenance boundaries, not inside adjacency mutation loops.
+- Layer-0 slab and `node_to_slab` stay authoritative and consistent.
+- Bidirectional edge maintenance, `M0`/`M` limits, and deterministic search ordering remain intact.
+- No heap allocation is introduced inside `search_layer()`.
+
+### Root cause
+- `search_layer()` currently pays repeated memory-administration cost from `FixedBitSet` writes and linear touched-node clearing.
+- CSR adjacency mutation performs `splice()`/`insert()` plus suffix offset correction, turning edge insertion/removal into O(total_edges) memory movement.
+
+### File-level actions
+1. `core/genesis-topology/src/hnsw.rs`
+   - Add graph-owned epoch state for visited tracking.
+   - Bump epoch per search, reset the epoch buffer only on wraparound, and remove `FixedBitSet`/`visited_touched` from the hot path entirely while preserving the `&self` public search API via internal synchronization.
+2. `core/genesis-topology/src/hnsw.rs`
+   - Replace `CsrNeighborList` with `NodeAdjacency` backed by `Vec<NodeAdj>`.
+   - Store layer-0 neighbors inline in `SmallVec<[u32; 32]>` and upper layers in optional boxed slices of `SmallVec<[u32; 16]>`.
+   - Rework edge add/remove/prune/iteration helpers around dense internal indices, translating to `NodeId` only when producing public outputs.
+3. `core/genesis-topology/src/hnsw.rs`
+   - Update tests from CSR-layout assertions to NodeAdj invariants, epoch-wrap coverage, and no-regression search/order checks.
+
+### Validation steps
+- `cargo test -p genesis-topology --release 2>&1 | grep -E "FAILED|ok"`
+- `cargo test --workspace --release 2>&1 | grep -E "FAILED|^test result"`
+- `cargo clippy --workspace -- -D warnings 2>&1 | grep "^error"`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-topology --bench topology -- hnsw_insert --output-format bencher 2>&1 | grep "bench:"`
+- `cargo bench -p genesis-topology --bench topology -- hnsw_search_k10_in_1000 --output-format bencher 2>&1 | grep "bench:"`
+- `grep -n "FixedBitSet\|visited_touched" core/genesis-topology/src/hnsw.rs`
+- `grep -n "CsrNeighborList\|splice\|set_neighbors" core/genesis-topology/src/hnsw.rs`
+
+## Targeted Plan — HNSW Mutex removal + remove_node edge-count fix (2026-03-23)
+
+### Objective
+- Remove the search-path `Mutex<Vec<u32>>` regression by moving the visited epoch buffer to thread-local storage while keeping a graph-owned atomic epoch generator.
+- Fix `remove_node()` so layer-0 edge accounting stays exact after clearing outgoing adjacency.
+- Restore deterministic adjacency ordering by using stable removal inside bounded `SmallVec` lists.
+
+### Invariants and contracts that must not break
+- Scope stays limited to `core/genesis-topology/src/hnsw.rs`.
+- Public API/signatures remain unchanged.
+- No heap allocation is introduced inside the `search_layer()` hot loop.
+- Layer-0 and upper-layer degree bounds (`M0`, `M`) remain enforced.
+- Search ordering and test reproducibility remain deterministic.
+
+### Root cause
+- Holding `Mutex<Vec<u32>>` across the whole search serialized insert-time beam expansion and added lock/unlock overhead per layer search.
+- `remove_node()` cleared the removed node's outgoing layer-0 adjacency without decrementing the directed layer-0 edge counter for those outgoing arcs.
+- `swap_remove()` destabilized adjacency order despite bounded-size lists.
+
+### File-level actions
+1. `core/genesis-topology/src/hnsw.rs`
+   - Replace struct-owned `Mutex<Vec<u32>>` with `thread_local!` visited storage and rename the atomic counter to `epoch_gen`.
+   - Resize/fill the thread-local epoch buffer at search start only; keep mark/check operations as single indexed loads/stores inside the hot loop.
+2. `core/genesis-topology/src/hnsw.rs`
+   - Subtract the removed node's outgoing layer-0 degree after `clear_layer(0)` in `remove_node()`.
+   - Replace `swap_remove()` with stable `remove()` in `NodeAdj::remove_neighbor()`.
+3. `core/genesis-topology/src/hnsw.rs`
+   - Add regression tests for exact edge-count accounting after `remove_node()` and deterministic layer-0 adjacency ordering.
+
+### Validation steps
+- `cargo test -p genesis-topology --release 2>&1 | grep -E "FAILED|ok"`
+- `cargo test --workspace --release 2>&1 | grep -E "FAILED|^test result"`
+- `cargo clippy --workspace -- -D warnings 2>&1 | grep "^error"`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-topology --bench topology -- hnsw_insert --output-format bencher 2>&1 | grep "bench:"`
+- `cargo bench -p genesis-topology --bench topology -- hnsw_search_k10_in_1000 --output-format bencher 2>&1 | grep "bench:"`
+- `grep "Mutex" core/genesis-topology/src/hnsw.rs | grep -v "//\\|test\\|clone"`
+- `grep "visited_epoch" core/genesis-topology/src/hnsw.rs`

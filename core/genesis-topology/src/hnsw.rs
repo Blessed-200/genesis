@@ -13,10 +13,9 @@
 /// PROHIBITED: Delaunay triangulation. PROHIBITED: `HashMap` in hot path.
 /// Adjacency lists stored as sorted Vec<(`NodeId`, f64)> with binary search.
 use std::cmp::Ordering;
-use std::sync::atomic::{AtomicPtr, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
-use fixedbitset::FixedBitSet;
 use genesis_math::{
     fast_metric_distance_sq, fast_metric_distance_sq_from_dense, SparseCliffordVector,
 };
@@ -29,6 +28,8 @@ pub(crate) const SLAB_DIM: usize = TOTAL_BLADES;
 pub(crate) const BLOCK_STRIDE: usize = SLAB_DIM * SLAB_LANES;
 const MAX_FIXED_HEAP_CAPACITY: usize = 512;
 const MAX_LAYER0_NEIGHBORS: usize = M0;
+const INITIAL_NODE_CAPACITY: usize = 1024;
+const INITIAL_SLAB_BLOCK_CAPACITY: usize = INITIAL_NODE_CAPACITY.div_ceil(SLAB_LANES);
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
 const METRIC_WEIGHTS_F32: [f32; TOTAL_BLADES] = [
     2.0, 1.5, 1.5, 1.0, 1.5, 1.0, 1.0, 0.5, 1.5, 1.0, 1.0, 0.5, 1.0, 0.5, 0.5, 0.3,
@@ -77,8 +78,6 @@ struct HnswLayer0Slab {
 
 #[derive(Clone)]
 struct SearchScratch {
-    visited: FixedBitSet,
-    visited_touched: Vec<usize>,
     out: Vec<(usize, f64)>,
     block_ids: [usize; MAX_LAYER0_NEIGHBORS],
     block_masks: [u8; MAX_LAYER0_NEIGHBORS],
@@ -87,8 +86,6 @@ struct SearchScratch {
 impl Default for SearchScratch {
     fn default() -> Self {
         Self {
-            visited: FixedBitSet::default(),
-            visited_touched: Vec::new(),
             out: Vec::new(),
             block_ids: [0; MAX_LAYER0_NEIGHBORS],
             block_masks: [0; MAX_LAYER0_NEIGHBORS],
@@ -98,6 +95,7 @@ impl Default for SearchScratch {
 
 thread_local! {
     static SEARCH_SCRATCH: RefCell<SearchScratch> = RefCell::new(SearchScratch::default());
+    static VISITED_EPOCH: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone)]
@@ -479,75 +477,96 @@ pub(crate) const M: usize = 16;
 /// `pub(crate)` for manifold.rs stack-allocated neighbour buffers (BN-02).
 pub(crate) const M0: usize = M * 2;
 
-/// Compressed Sparse Row neighbor list for one HNSW layer.
+/// Per-node adjacency storage for one HNSW layer set.
 ///
-/// `data[offsets[i]..offsets[i+1]]` contains the neighbors of node i.
-/// Insertion appends to `data`; the offset range for each node is
-/// tracked via `offsets`. Capacity is pre-allocated at construction.
+/// Layer 0 stays inline to keep the hot path contiguous and avoid heap traffic.
+/// Upper layers are allocated only for nodes that actually reach them.
 ///
 /// AX-ID: AXIOMA-007, AXIOMA-013
-#[derive(Clone)]
-struct CsrNeighborList {
-    data: Vec<NodeId>,
-    offsets: Vec<usize>,
-    max_neighbors: usize,
+#[derive(Clone, Default)]
+struct NodeAdj {
+    layer0: SmallVec<[u32; M0]>,
+    upper: Option<Box<[SmallVec<[u32; M]>]>>,
 }
 
-impl CsrNeighborList {
-    fn new(capacity_nodes: usize, max_neighbors: usize) -> Self {
-        let mut offsets = Vec::with_capacity(capacity_nodes.saturating_add(1));
-        offsets.push(0);
-        Self {
-            data: Vec::with_capacity(capacity_nodes.saturating_mul(max_neighbors)),
-            offsets,
-            max_neighbors,
+impl NodeAdj {
+    #[inline]
+    fn neighbors(&self, layer: usize) -> &[u32] {
+        if layer == 0 {
+            &self.layer0
+        } else {
+            self.upper
+                .as_deref()
+                .and_then(|layers| layers.get(layer - 1))
+                .map_or(&[], SmallVec::as_slice)
         }
     }
 
-    fn neighbors(&self, node_dense_idx: usize) -> &[NodeId] {
-        let start = self.offsets[node_dense_idx];
-        let end = self.offsets[node_dense_idx + 1];
-        &self.data[start..end]
+    #[inline]
+    fn neighbors_mut(&mut self, layer: usize) -> Option<&mut SmallVec<[u32; M]>> {
+        if layer == 0 {
+            return None;
+        }
+        let needed = layer;
+        let layers = self.upper.get_or_insert_with(|| {
+            vec![SmallVec::<[u32; M]>::new(); needed].into_boxed_slice()
+        });
+        if layers.len() < needed {
+            let mut grown = layers.to_vec();
+            grown.resize_with(needed, SmallVec::new);
+            *layers = grown.into_boxed_slice();
+        }
+        layers.get_mut(layer - 1)
     }
 
-    #[allow(dead_code)]
-    fn neighbors_mut(&mut self, node_dense_idx: usize) -> &mut [NodeId] {
-        let start = self.offsets[node_dense_idx];
-        let end = self.offsets[node_dense_idx + 1];
-        &mut self.data[start..end]
-    }
-
-    fn add_node(&mut self) {
-        let end = *self.offsets.last().unwrap_or(&0);
-        self.offsets.push(end);
-    }
-
-    fn set_neighbors(&mut self, node_dense_idx: usize, neighbors: &[NodeId]) {
-        let capped = &neighbors[..neighbors.len().min(self.max_neighbors)];
-        let start = self.offsets[node_dense_idx];
-        let end = self.offsets[node_dense_idx + 1];
-        let old_len = end - start;
-        self.data.splice(start..end, capped.iter().copied());
-        let new_len = capped.len();
-        if new_len != old_len {
-            let delta = new_len as isize - old_len as isize;
-            for off in &mut self.offsets[(node_dense_idx + 1)..] {
-                *off = (*off as isize + delta) as usize;
+    #[inline]
+    fn add_neighbor(&mut self, layer: usize, neighbor: u32, max_neighbors: usize) -> bool {
+        if layer == 0 {
+            if self.layer0.len() >= max_neighbors || self.layer0.contains(&neighbor) {
+                return false;
             }
+            self.layer0.push(neighbor);
+            return true;
         }
-    }
-
-    fn push_neighbor(&mut self, node_dense_idx: usize, neighbor: NodeId) -> bool {
-        let start = self.offsets[node_dense_idx];
-        let end = self.offsets[node_dense_idx + 1];
-        if end - start >= self.max_neighbors {
+        let Some(neighbors) = self.neighbors_mut(layer) else {
+            return false;
+        };
+        if neighbors.len() >= max_neighbors || neighbors.contains(&neighbor) {
             return false;
         }
-        self.data.insert(end, neighbor);
-        for off in &mut self.offsets[(node_dense_idx + 1)..] {
-            *off += 1;
-        }
+        neighbors.push(neighbor);
         true
+    }
+
+    #[inline]
+    fn remove_neighbor(&mut self, layer: usize, neighbor: u32) -> bool {
+        if layer == 0 {
+            if let Some(pos) = self.layer0.iter().position(|&idx| idx == neighbor) {
+                self.layer0.remove(pos);
+                return true;
+            }
+            return false;
+        }
+        if let Some(upper) = self.upper.as_mut() {
+            if let Some(neighbors) = upper.get_mut(layer - 1) {
+                if let Some(pos) = neighbors.iter().position(|&idx| idx == neighbor) {
+                    neighbors.remove(pos);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[inline]
+    fn clear_layer(&mut self, layer: usize) {
+        if layer == 0 {
+            self.layer0.clear();
+        } else if let Some(upper) = self.upper.as_mut() {
+            if let Some(neighbors) = upper.get_mut(layer - 1) {
+                neighbors.clear();
+            }
+        }
     }
 }
 
@@ -689,7 +708,6 @@ use layer0_codec::{
 /// using the exclusive bivector metric from genesis-math.
 ///
 /// AX-ID: AXIOMA-013
-#[derive(Clone)]
 pub struct HnswGraph {
     /// All nodes stored in a flat Vec. Index = internal idx.
     nodes: Vec<HnswNode>,
@@ -707,14 +725,36 @@ pub struct HnswGraph {
     direct_index: Vec<u32>, // u32::MAX = no presente
     /// Estado del índice secundario `id_index`.
     state: GraphState,
-    /// Per-layer neighbor lists in CSR layout.
-    layer_neighbors: Vec<CsrNeighborList>,
+    /// Per-node local adjacency lists indexed by dense internal node index.
+    layer_neighbors: Vec<NodeAdj>,
+    /// Current search generation for epoch-marked visited state.
+    epoch_gen: AtomicU32,
     /// Directed edge count at layer 0 (stored as directed for O(1) updates).
     edge_count_layer0_undirected: usize,
     /// Persistent block-major SoA storage for layer-0 vectors.
     layer0_soa: HnswLayer0Slab,
     #[cfg(test)]
     fail_preinsert_index_conversion: bool,
+}
+
+impl Clone for HnswGraph {
+    fn clone(&self) -> Self {
+        Self {
+            nodes: self.nodes.clone(),
+            id_index: self.id_index.clone(),
+            entry: self.entry,
+            entry_layer: self.entry_layer,
+            ef_construction: self.ef_construction,
+            direct_index: self.direct_index.clone(),
+            state: self.state,
+            layer_neighbors: self.layer_neighbors.clone(),
+            epoch_gen: AtomicU32::new(self.epoch_gen.load(AtomicOrdering::Relaxed)),
+            edge_count_layer0_undirected: self.edge_count_layer0_undirected,
+            layer0_soa: self.layer0_soa.clone(),
+            #[cfg(test)]
+            fail_preinsert_index_conversion: self.fail_preinsert_index_conversion,
+        }
+    }
 }
 
 /// Cache-optimised SoA view of layer-0 HNSW data.
@@ -763,16 +803,20 @@ impl HnswGraph {
     /// AX-ID: AXIOMA-013
     pub fn new(ef_construction: usize) -> Self {
         Self {
-            nodes: Vec::new(),
-            id_index: Vec::new(),
+            nodes: Vec::with_capacity(INITIAL_NODE_CAPACITY),
+            id_index: Vec::with_capacity(INITIAL_NODE_CAPACITY),
             entry: None,
             entry_layer: 0,
             ef_construction,
-            direct_index: Vec::new(),
+            direct_index: Vec::with_capacity(INITIAL_NODE_CAPACITY),
             state: GraphState::Online,
-            layer_neighbors: Vec::new(),
+            layer_neighbors: Vec::with_capacity(INITIAL_NODE_CAPACITY),
+            epoch_gen: AtomicU32::new(0),
             edge_count_layer0_undirected: 0,
-            layer0_soa: HnswLayer0Slab::default(),
+            layer0_soa: HnswLayer0Slab {
+                blocks: Vec::with_capacity(INITIAL_SLAB_BLOCK_CAPACITY),
+                node_to_slab: Vec::with_capacity(INITIAL_NODE_CAPACITY),
+            },
             #[cfg(test)]
             fail_preinsert_index_conversion: false,
         }
@@ -782,13 +826,28 @@ impl HnswGraph {
         u32::try_from(new_idx).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })
     }
 
-    fn ensure_layer_neighbors_initialized(&mut self) {
-        if !self.layer_neighbors.is_empty() {
-            return;
+    #[inline]
+    fn layer_max_neighbors(layer: usize) -> usize {
+        if layer == 0 { M0 } else { M }
+    }
+
+    #[inline]
+    fn node_neighbors(&self, node_idx: usize, layer: usize) -> &[u32] {
+        debug_assert!(node_idx < self.layer_neighbors.len());
+        self.layer_neighbors[node_idx].neighbors(layer)
+    }
+
+    #[inline]
+    fn next_search_epoch(&self) -> u32 {
+        let next = self
+            .epoch_gen
+            .fetch_add(1, AtomicOrdering::Relaxed)
+            .wrapping_add(1);
+        if next == 0 {
+            self.epoch_gen.store(1, AtomicOrdering::Relaxed);
+            return 1;
         }
-        self.layer_neighbors = (0..MAX_LAYERS)
-            .map(|layer| CsrNeighborList::new(0, if layer == 0 { M0 } else { M }))
-            .collect();
+        next
     }
 
     fn dense_to_query_f32(query: &SparseCliffordVector) -> [f32; SLAB_DIM] {
@@ -909,8 +968,6 @@ impl HnswGraph {
             return Ok(()); // already present
         }
 
-        self.ensure_layer_neighbors_initialized();
-
         let target_layer = Self::random_level(id);
         let new_idx = self.nodes.len();
         let previous_entry = self.entry.map(|entry_idx| (entry_idx, self.entry_layer));
@@ -938,10 +995,8 @@ impl HnswGraph {
         };
 
         self.nodes.push(HnswNode::new(id, *vec, target_layer));
+        self.layer_neighbors.push(NodeAdj::default());
         self.write_node_to_slab(new_idx, vec);
-        for layer in &mut self.layer_neighbors {
-            layer.add_node();
-        }
         self.insert_id_index(id, new_idx);
 
         if let Some((id_raw, next_direct_len, new_idx_u32)) = direct_index_update {
@@ -990,8 +1045,8 @@ impl HnswGraph {
             // Add bidirectional edges
             let new_idx = self.nodes.len() - 1; // last inserted
             for &(nb_idx, dist) in &neighbours {
-                self.add_edge(new_idx, lc, self.nodes[nb_idx].id, dist);
-                self.add_edge(nb_idx, lc, id, dist);
+                self.add_edge(new_idx, lc, nb_idx, dist);
+                self.add_edge(nb_idx, lc, new_idx, dist);
                 // Prune nb if it exceeds m_max
                 self.prune_layer(nb_idx, lc, m_max);
             }
@@ -1016,45 +1071,25 @@ impl HnswGraph {
         Ok(())
     }
 
-    /// Add an edge at a given layer (sorted insert, no duplicates).
-    fn add_edge(&mut self, from_idx: usize, layer: usize, to: NodeId, dist: f64) {
+    /// Add an edge at a given layer (no duplicates).
+    fn add_edge(&mut self, from_idx: usize, layer: usize, to_idx: usize, dist: f64) {
         if layer > self.nodes[from_idx].max_layer {
             return;
         }
         let _ = dist;
-        let layer_list = &mut self.layer_neighbors[layer];
-        let mut neighbors = layer_list.neighbors(from_idx).to_vec();
-        match neighbors.binary_search_by_key(&to.get(), |nid| nid.get()) {
-            Ok(_) => {}
-            Err(pos) => {
-                if neighbors.len() < layer_list.max_neighbors {
-                    if pos == neighbors.len() {
-                        if layer_list.push_neighbor(from_idx, to) && layer == 0 {
-                            self.edge_count_layer0_undirected += 1;
-                        }
-                    } else {
-                        neighbors.insert(pos, to);
-                        layer_list.set_neighbors(from_idx, &neighbors);
-                        if layer == 0 {
-                            self.edge_count_layer0_undirected += 1;
-                        }
-                    }
-                }
-            }
+        let max_neighbors = Self::layer_max_neighbors(layer);
+        if self.layer_neighbors[from_idx].add_neighbor(layer, to_idx as u32, max_neighbors) && layer == 0 {
+            self.edge_count_layer0_undirected += 1;
         }
     }
 
     /// Remove a directed edge at `layer` if present.
     /// Returns `true` iff one edge was removed.
-    fn remove_edge(&mut self, from_idx: usize, layer: usize, to: NodeId) -> bool {
+    fn remove_edge(&mut self, from_idx: usize, layer: usize, to_idx: usize) -> bool {
         if layer > self.nodes[from_idx].max_layer {
             return false;
         }
-        let layer_list = &mut self.layer_neighbors[layer];
-        let mut neighbors = layer_list.neighbors(from_idx).to_vec();
-        if let Ok(pos) = neighbors.binary_search_by_key(&to.get(), |nid| nid.get()) {
-            neighbors.remove(pos);
-            layer_list.set_neighbors(from_idx, &neighbors);
+        if self.layer_neighbors[from_idx].remove_neighbor(layer, to_idx as u32) {
             if layer == 0 {
                 self.edge_count_layer0_undirected =
                     self.edge_count_layer0_undirected.saturating_sub(1);
@@ -1066,15 +1101,13 @@ impl HnswGraph {
 
     /// Remove an edge in both directions, keeping graph symmetry.
     /// Returns the number of directed edges removed.
-    fn remove_edge_bidirectional(&mut self, from_idx: usize, layer: usize, to: NodeId) -> usize {
+    fn remove_edge_bidirectional(&mut self, from_idx: usize, layer: usize, to_idx: usize) -> usize {
         let mut removed = 0;
-        if self.remove_edge(from_idx, layer, to) {
+        if self.remove_edge(from_idx, layer, to_idx) {
             removed += 1;
         }
-        if let Some(to_idx) = self.get_idx(to) {
-            if self.remove_edge(to_idx, layer, self.nodes[from_idx].id) {
-                removed += 1;
-            }
+        if self.remove_edge(to_idx, layer, from_idx) {
+            removed += 1;
         }
         removed
     }
@@ -1085,42 +1118,51 @@ impl HnswGraph {
         if layer > self.nodes[idx].max_layer {
             return;
         }
-        while self.layer_neighbors[layer].neighbors(idx).len() > m_max {
-            let farthest = self.layer_neighbors[layer]
-                .neighbors(idx)
+        let query_f32 = (layer == 0).then(|| Self::dense_to_query_f32(&self.nodes[idx].vec));
+        while self.node_neighbors(idx, layer).len() > m_max {
+            let farthest = self.node_neighbors(idx, layer)
                 .iter()
                 .copied()
                 .max_by(|a, b| {
-                    let da = self.get_idx(*a).map_or(f64::INFINITY, |i| {
-                        self.distance_to_node_sq(&self.nodes[idx].vec, i, layer)
-                    });
-                    let db = self.get_idx(*b).map_or(f64::INFINITY, |i| {
-                        self.distance_to_node_sq(&self.nodes[idx].vec, i, layer)
-                    });
+                    let da = if let Some(query_f32) = &query_f32 {
+                        self.distance_to_layer0_node_sq(query_f32, *a as usize)
+                    } else {
+                        self.distance_to_node_sq(&self.nodes[idx].vec, *a as usize, layer)
+                    };
+                    let db = if let Some(query_f32) = &query_f32 {
+                        self.distance_to_layer0_node_sq(query_f32, *b as usize)
+                    } else {
+                        self.distance_to_node_sq(&self.nodes[idx].vec, *b as usize, layer)
+                    };
                     da.total_cmp(&db)
                 });
 
             let Some(farthest_id) = farthest else {
                 break;
             };
-            self.remove_edge_bidirectional(idx, layer, farthest_id);
+            self.remove_edge_bidirectional(idx, layer, farthest_id as usize);
         }
     }
 
     fn distance_to_node_sq(&self, query: &SparseCliffordVector, idx: usize, layer: usize) -> f64 {
         if layer == 0 {
             let query_f32 = Self::dense_to_query_f32(query);
-            let slab_idx = self.layer0_soa.node_to_slab[idx] as usize;
-            let block = slab_idx / SLAB_LANES;
-            let lane = slab_idx % SLAB_LANES;
-            let slab_ptr = self.layer0_slab_ptr();
-            if slab_ptr.is_null() {
-                return f64::INFINITY;
-            }
-            let distances = slab_distance(slab_ptr, block, &query_f32);
-            return f64::from(distances[lane]);
+            return self.distance_to_layer0_node_sq(&query_f32, idx);
         }
         fast_metric_distance_sq(query, &self.nodes[idx].vec)
+    }
+
+    #[inline]
+    fn distance_to_layer0_node_sq(&self, query_f32: &[f32; SLAB_DIM], idx: usize) -> f64 {
+        let slab_idx = self.layer0_soa.node_to_slab[idx] as usize;
+        let block = slab_idx / SLAB_LANES;
+        let lane = slab_idx % SLAB_LANES;
+        let slab_ptr = self.layer0_slab_ptr();
+        if slab_ptr.is_null() {
+            return f64::INFINITY;
+        }
+        let distances = slab_distance(slab_ptr, block, query_f32);
+        f64::from(distances[lane])
     }
 
     fn distance_to_node(&self, query: &SparseCliffordVector, idx: usize, layer: usize) -> f64 {
@@ -1140,14 +1182,13 @@ impl HnswGraph {
         loop {
             let mut improved = false;
             if layer < self.nodes[current].max_layer + 1 {
-                for &nb_id in self.layer_neighbors[layer].neighbors(current) {
-                    if let Some(nb_idx) = self.get_idx(nb_id) {
-                        let d = self.distance_to_node_sq(query, nb_idx, layer);
-                        if d < current_dist {
-                            current = nb_idx;
-                            current_dist = d;
-                            improved = true;
-                        }
+                for &nb_idx_u32 in self.node_neighbors(current, layer) {
+                    let nb_idx = nb_idx_u32 as usize;
+                    let d = self.distance_to_node_sq(query, nb_idx, layer);
+                    if d < current_dist {
+                        current = nb_idx;
+                        current_dist = d;
+                        improved = true;
                     }
                 }
             }
@@ -1170,112 +1211,114 @@ impl HnswGraph {
         SEARCH_SCRATCH.with(|cell| {
             let mut scratch = cell.borrow_mut();
             scratch.out.clear();
-            scratch.visited_touched.clear();
-            if scratch.visited.len() < self.nodes.len() {
-                scratch.visited.grow(self.nodes.len());
-            }
-            let limit = ef.min(MAX_FIXED_HEAP_CAPACITY);
-            let mut candidates = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
-            let mut results = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
-            let query_f32 = Self::dense_to_query_f32(query);
-            let slab_ptr = self.layer0_slab_ptr();
-            let slab_blocks = self.layer0_soa.blocks.len();
-
-            let d0 = self.distance_to_node_sq(query, entry_idx, layer) as f32;
-            scratch.visited.set(entry_idx, true);
-            scratch.visited_touched.push(entry_idx);
-            candidates.push_or_replace(d0, entry_idx as u32);
-            results.push_or_replace(d0, entry_idx as u32);
-
-            while let Some((c_dist, c_idx_u32)) = candidates.pop_best() {
-                if results.len() >= limit && c_dist > results.worst() {
-                    break;
+            let search_epoch = self.next_search_epoch();
+            VISITED_EPOCH.with(|visited_cell| {
+                let mut visited = visited_cell.borrow_mut();
+                let needed = self.nodes.len();
+                if visited.len() < needed {
+                    let grown_len = needed.next_power_of_two();
+                    visited.resize(grown_len, 0);
+                }
+                if search_epoch == 1 {
+                    visited.fill(0);
                 }
 
-                let c_idx = c_idx_u32 as usize;
-                if layer > self.nodes[c_idx].max_layer {
-                    continue;
-                }
-                let neighbors = self.layer_neighbors[layer].neighbors(c_idx);
-                if layer == 0 && !slab_ptr.is_null() {
-                    // HOT PATH: O(M0), called per beam expansion at layer 0.
-                    let mut block_count = 0_usize;
-                    for &nb_id in neighbors {
-                        let Some(nb_idx) = self.get_idx(nb_id) else { continue };
-                        if scratch.visited[nb_idx] {
-                            continue;
-                        }
-                        scratch.visited.set(nb_idx, true);
-                        scratch.visited_touched.push(nb_idx);
-                        let slab_idx = self.layer0_soa.node_to_slab[nb_idx] as usize;
-                        let block = slab_idx / SLAB_LANES;
-                        let lane = slab_idx % SLAB_LANES;
-                        let mut found = false;
-                        let mut i = 0;
-                        while i < block_count {
-                            if scratch.block_ids[i] == block {
-                                scratch.block_masks[i] |= 1_u8 << lane;
-                                found = true;
-                                break;
-                            }
-                            i += 1;
-                        }
-                        if !found && block_count < MAX_LAYER0_NEIGHBORS {
-                            scratch.block_ids[block_count] = block;
-                            scratch.block_masks[block_count] = 1_u8 << lane;
-                            block_count += 1;
-                        }
+                let limit = ef.min(MAX_FIXED_HEAP_CAPACITY);
+                let mut candidates = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
+                let mut results = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
+                let query_f32 = Self::dense_to_query_f32(query);
+                let slab_ptr = self.layer0_slab_ptr();
+                let slab_blocks = self.layer0_soa.blocks.len();
+
+                let d0 = self.distance_to_node_sq(query, entry_idx, layer) as f32;
+                visited[entry_idx] = search_epoch;
+                candidates.push_or_replace(d0, entry_idx as u32);
+                results.push_or_replace(d0, entry_idx as u32);
+
+                while let Some((c_dist, c_idx_u32)) = candidates.pop_best() {
+                    if results.len() >= limit && c_dist > results.worst() {
+                        break;
                     }
 
-                    let mut i = 0;
-                    while i < block_count {
-                        let block = scratch.block_ids[i];
-                        let mask = scratch.block_masks[i];
-                        debug_assert!(block < slab_blocks, "block in bounds");
-                        debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
-                        let distances = slab_distance(slab_ptr, block, &query_f32);
-                        let mut lane = 0;
-                        while lane < SLAB_LANES {
-                            debug_assert!(lane < SLAB_LANES, "lane in bounds");
-                            if (mask & (1_u8 << lane)) != 0 {
-                                let nb_idx = block * SLAB_LANES + lane;
-                                if nb_idx >= self.nodes.len() {
+                    let c_idx = c_idx_u32 as usize;
+                    if layer > self.nodes[c_idx].max_layer {
+                        continue;
+                    }
+                    if layer == 0 && !slab_ptr.is_null() {
+                        // HOT PATH: O(M0), called per beam expansion at layer 0.
+                        let mut block_count = 0_usize;
+                        for &nb_idx_u32 in self.node_neighbors(c_idx, layer) {
+                            let nb_idx = nb_idx_u32 as usize;
+                            if visited[nb_idx] == search_epoch {
+                                continue;
+                            }
+                            visited[nb_idx] = search_epoch;
+                            let slab_idx = self.layer0_soa.node_to_slab[nb_idx] as usize;
+                            let block = slab_idx / SLAB_LANES;
+                            let lane = slab_idx % SLAB_LANES;
+                            let mut found = false;
+                            let mut i = 0;
+                            while i < block_count {
+                                if scratch.block_ids[i] == block {
+                                    scratch.block_masks[i] |= 1_u8 << lane;
+                                    found = true;
                                     break;
                                 }
-                                let d = distances[lane];
-                                if results.push_or_replace(d, nb_idx as u32) {
-                                    candidates.push_or_replace(d, nb_idx as u32);
-                                }
+                                i += 1;
                             }
-                            lane += 1;
+                            if !found && block_count < MAX_LAYER0_NEIGHBORS {
+                                scratch.block_ids[block_count] = block;
+                                scratch.block_masks[block_count] = 1_u8 << lane;
+                                block_count += 1;
+                            }
                         }
-                        scratch.block_masks[i] = 0;
-                        i += 1;
-                    }
-                } else {
-                    for &nb_id in neighbors {
-                        let Some(nb_idx) = self.get_idx(nb_id) else { continue };
-                        if scratch.visited[nb_idx] {
-                            continue;
+
+                        let mut i = 0;
+                        while i < block_count {
+                            let block = scratch.block_ids[i];
+                            let mask = scratch.block_masks[i];
+                            debug_assert!(block < slab_blocks, "block in bounds");
+                            debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
+                            let distances = slab_distance(slab_ptr, block, &query_f32);
+                            let mut lane = 0;
+                            while lane < SLAB_LANES {
+                                debug_assert!(lane < SLAB_LANES, "lane in bounds");
+                                if (mask & (1_u8 << lane)) != 0 {
+                                    let nb_idx = block * SLAB_LANES + lane;
+                                    if nb_idx >= self.nodes.len() {
+                                        break;
+                                    }
+                                    let d = distances[lane];
+                                    if results.push_or_replace(d, nb_idx as u32) {
+                                        candidates.push_or_replace(d, nb_idx as u32);
+                                    }
+                                }
+                                lane += 1;
+                            }
+                            scratch.block_masks[i] = 0;
+                            i += 1;
                         }
-                        scratch.visited.set(nb_idx, true);
-                        scratch.visited_touched.push(nb_idx);
-                        let d = self.distance_to_node_sq(query, nb_idx, layer) as f32;
-                        if results.push_or_replace(d, nb_idx as u32) {
-                            candidates.push_or_replace(d, nb_idx as u32);
+                    } else {
+                        for &nb_idx_u32 in self.node_neighbors(c_idx, layer) {
+                            let nb_idx = nb_idx_u32 as usize;
+                            if visited[nb_idx] == search_epoch {
+                                continue;
+                            }
+                            visited[nb_idx] = search_epoch;
+                            let d = self.distance_to_node_sq(query, nb_idx, layer) as f32;
+                            if results.push_or_replace(d, nb_idx as u32) {
+                                candidates.push_or_replace(d, nb_idx as u32);
+                            }
                         }
                     }
                 }
-            }
 
-            scratch.out.reserve(results.len());
-            for &(dist_sq, idx) in results.as_slice() {
-                scratch.out.push((idx as usize, f64::from(dist_sq)));
-            }
-            while let Some(idx) = scratch.visited_touched.pop() {
-                scratch.visited.set(idx, false);
-            }
-            std::mem::take(&mut scratch.out)
+                scratch.out.reserve(results.len());
+                for &(dist_sq, idx) in results.as_slice() {
+                    scratch.out.push((idx as usize, f64::from(dist_sq)));
+                }
+                std::mem::take(&mut scratch.out)
+            })
         })
     }
 
@@ -1333,14 +1376,13 @@ impl HnswGraph {
                     return SmallVec::new();
                 };
                 let nv = node.vec;
-                let layer0 = self.layer_neighbors[0].neighbors(idx);
+                let layer0 = self.node_neighbors(idx, 0);
                 let mut local = SmallVec::<[NodeId; M]>::with_capacity(layer0.len().min(M0));
-                for &nb_id in layer0 {
-                    if let Some(ni) = self.get_idx(nb_id) {
-                        let d = self.distance_to_node(&nv, ni, 0);
-                        if d <= radius {
-                            local.push(nb_id);
-                        }
+                for &nb_idx_u32 in layer0 {
+                    let ni = nb_idx_u32 as usize;
+                    let d = self.distance_to_node(&nv, ni, 0);
+                    if d <= radius {
+                        local.push(self.nodes[ni].id);
                     }
                 }
                 local
@@ -1372,10 +1414,8 @@ impl HnswGraph {
 
         let mut pushed = 0;
         for layer_idx in 0..=node.max_layer {
-            for &nb_id in self.layer_neighbors[layer_idx].neighbors(idx) {
-                let Some(nb_idx) = self.get_idx(nb_id) else {
-                    continue;
-                };
+            for &nb_idx_u32 in self.node_neighbors(idx, layer_idx) {
+                let nb_idx = nb_idx_u32 as usize;
                 if nb_idx >= marks.len() || marks[nb_idx] == stamp {
                     continue;
                 }
@@ -1421,14 +1461,13 @@ impl HnswGraph {
         for node in &self.nodes {
             node_ids.push(node.id);
             let start = neighbor_ids.len();
-            let layer0 = self.layer_neighbors[0].neighbors(node_ids.len() - 1);
+            let layer0 = self.node_neighbors(node_ids.len() - 1, 0);
             neighbor_ids.reserve(layer0.len());
             neighbor_distances.reserve(layer0.len());
-            for &nb_id in layer0 {
-                neighbor_ids.push(nb_id);
-                let d = self.get_idx(nb_id).map_or(f64::INFINITY, |nb_idx| {
-                    self.distance_to_node(&node.vec, nb_idx, 0)
-                });
+            for &nb_idx_u32 in layer0 {
+                let nb_idx = nb_idx_u32 as usize;
+                neighbor_ids.push(self.nodes[nb_idx].id);
+                let d = self.distance_to_node(&node.vec, nb_idx, 0);
                 neighbor_distances.push(d);
             }
             neighbor_offsets.push((start, neighbor_ids.len()));
@@ -1468,38 +1507,39 @@ impl HnswGraph {
         let idx = self
             .get_idx(id)
             .ok_or(GenesisError::InvariantViolation { axiom_id: 4 })?;
+        let outgoing_layer0 = self.node_neighbors(idx, 0).len();
 
         // Step 1: Remove all edges originating from this node.
         // Collect neighbour IDs first to avoid borrow conflicts.
-        let all_neighbours: Vec<(NodeId, usize)> = self.nodes[idx]
+        let all_neighbours: Vec<(usize, usize)> = self.nodes[idx]
             .max_layer
             .checked_add(1)
             .map(|layers| {
                 let mut all = Vec::new();
                 for layer in 0..layers {
                     all.extend(
-                        self.layer_neighbors[layer]
-                            .neighbors(idx)
+                        self.node_neighbors(idx, layer)
                             .iter()
                             .copied()
-                            .map(|nb_id| (nb_id, layer)),
+                            .map(|nb_idx| (nb_idx as usize, layer)),
                     );
                 }
                 all
             })
             .unwrap_or_default();
 
-        for (nb_id, layer) in all_neighbours {
+        for (nb_idx, layer) in all_neighbours {
             // Remove the reverse edge: nb → id
-            if let Some(nb_idx) = self.get_idx(nb_id) {
-                self.remove_edge(nb_idx, layer, id);
-            }
+            self.remove_edge(nb_idx, layer, idx);
         }
 
         // Step 2: Clear the node's own adjacency lists.
         for layer in 0..=self.nodes[idx].max_layer {
-            self.layer_neighbors[layer].set_neighbors(idx, &[]);
+            self.layer_neighbors[idx].clear_layer(layer);
         }
+        self.edge_count_layer0_undirected = self
+            .edge_count_layer0_undirected
+            .saturating_sub(outgoing_layer0);
 
         // Step 3: Invalidate direct_index entry.
         let raw = id.get();
@@ -1720,13 +1760,13 @@ impl Iterator for NeighborIter<'_> {
             if self.layer_pos > self.graph.nodes[node_idx].max_layer {
                 return None;
             }
-            let layer = self.graph.layer_neighbors[self.layer_pos].neighbors(node_idx);
+            let layer = self.graph.node_neighbors(node_idx, self.layer_pos);
             if self.edge_pos >= layer.len() {
                 self.layer_pos += 1;
                 self.edge_pos = 0;
                 continue;
             }
-            let nid = layer[self.edge_pos];
+            let nid = self.graph.nodes[layer[self.edge_pos] as usize].id;
             self.edge_pos += 1;
             let raw = nid.get();
             match self.seen.binary_search(&raw) {
@@ -1805,7 +1845,7 @@ mod tests {
             .nodes
             .iter()
             .enumerate()
-            .map(|(i, _node)| graph.layer_neighbors[0].neighbors(i).len())
+            .map(|(i, _node)| graph.node_neighbors(i, 0).len())
             .sum();
 
         assert_eq!(soa.node_ids.len(), graph.node_count());
@@ -2306,9 +2346,7 @@ mod tests {
             for node in &g.nodes {
                 for layer_idx in 0..=node.max_layer {
                     let m_max = if layer_idx == 0 { M0 } else { M };
-                    let degree = g.layer_neighbors[layer_idx]
-                        .neighbors(usize::try_from(node.id.get()).expect("dense id"))
-                        .len();
+                    let degree = g.node_neighbors(usize::try_from(node.id.get()).expect("dense id"), layer_idx).len();
                     assert!(
                         degree <= m_max,
                         "node {:?} layer {layer_idx}: degree {} > m_max {}",
@@ -2627,27 +2665,27 @@ mod tests {
         }
     }
     #[test]
-    fn csr_layout_invariants_hold_after_inserts() {
+    fn nodeadj_layout_invariants_hold_after_inserts() {
         let mut g = HnswGraph::new(32);
         let n = 128_u64;
         for i in 0..n {
             g.insert(make_id(i), &make_vec((i as f64).mul_add(0.01, 0.1)))
                 .expect("insert should succeed");
         }
-        for layer in &g.layer_neighbors {
-            assert_eq!(layer.offsets.len(), usize::try_from(n).expect("n fits") + 1);
-            for w in layer.offsets.windows(2) {
-                assert!(w[0] <= w[1]);
+        assert_eq!(g.layer_neighbors.len(), usize::try_from(n).expect("n fits"));
+        for (idx, adj) in g.layer_neighbors.iter().enumerate() {
+            assert!(adj.layer0.len() <= M0, "node {idx} layer0 overflow");
+            if let Some(upper) = &adj.upper {
+                assert!(upper.len() <= g.nodes[idx].max_layer);
+                for neighbors in upper.iter() {
+                    assert!(neighbors.len() <= M);
+                }
             }
-            assert_eq!(
-                layer.data.len(),
-                *layer.offsets.last().expect("non-empty offsets")
-            );
         }
     }
 
     #[test]
-    fn csr_stress_neighbors_and_search_results_are_valid() {
+    fn nodeadj_stress_neighbors_and_search_results_are_valid() {
         let mut g = HnswGraph::new(64);
         for i in 0..1000_u64 {
             let v = SparseCliffordVector::from_iter((0..8).map(|b| {
@@ -2659,12 +2697,12 @@ mod tests {
         }
 
         for idx in 0..g.node_count() {
-            assert!(g.layer_neighbors[0].neighbors(idx).len() <= M0);
+            assert!(g.node_neighbors(idx, 0).len() <= M0);
             let mut seen = Vec::new();
             for layer in 0..=g.nodes[idx].max_layer {
-                for &nb in g.layer_neighbors[layer].neighbors(idx) {
-                    let raw = nb.get();
-                    assert!(g.get_idx(nb).is_some(), "invalid neighbor id={raw}");
+                for &nb in g.node_neighbors(idx, layer) {
+                    let raw = g.nodes[nb as usize].id.get();
+                    assert!(g.nodes[nb as usize].id != NodeId::INVALID, "invalid neighbor id={raw}");
                     if !seen.contains(&raw) {
                         seen.push(raw);
                     }
@@ -2678,6 +2716,75 @@ mod tests {
             for id in got {
                 assert!(g.get_idx(id).is_some());
             }
+        }
+    }
+
+    #[test]
+    fn search_epoch_wrap_resets_epoch_buffer() {
+        let mut g = HnswGraph::new(16);
+        for i in 0..8_u64 {
+            g.insert(make_id(i), &make_vec((i as f64).mul_add(0.02, 0.1)))
+                .expect("insert");
+        }
+        VISITED_EPOCH.with(|cell| {
+            let mut visited = cell.borrow_mut();
+            visited.resize(g.node_count(), 7);
+        });
+        g.epoch_gen.store(u32::MAX, AtomicOrdering::Relaxed);
+        let _ = g.search_nearest(&make_vec(0.3), 4);
+        VISITED_EPOCH.with(|cell| {
+            let visited = cell.borrow();
+            assert_eq!(g.epoch_gen.load(AtomicOrdering::Relaxed), 1);
+            assert!(visited.iter().all(|&epoch| epoch <= 1));
+        });
+    }
+
+    #[test]
+    fn edge_count_after_remove_node_is_exact() {
+        let mut g = HnswGraph::new(32);
+        for i in 0..10_u64 {
+            g.insert(make_id(i), &make_vec((i as f64).mul_add(0.03, 0.1)))
+                .expect("insert");
+        }
+
+        let before = g.edge_count();
+        let removed_idx = usize::try_from(make_id(5).get()).expect("dense id");
+        let outgoing_layer0 = g.node_neighbors(removed_idx, 0).len();
+
+        g.remove_node(make_id(5)).expect("remove");
+
+        assert_eq!(
+            g.edge_count(),
+            before.saturating_sub(outgoing_layer0),
+            "layer-0 edge count must subtract outgoing edges exactly"
+        );
+
+        let directed_sum: usize = g
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.id != NodeId::INVALID)
+            .map(|(idx, _)| g.node_neighbors(idx, 0).len())
+            .sum();
+        assert_eq!(directed_sum, g.edge_count() * 2);
+    }
+
+    #[test]
+    fn neighbor_order_is_deterministic() {
+        let mut g_a = HnswGraph::new(32);
+        for i in 0..8_u64 {
+            let v = make_vec((i as f64).mul_add(0.04, 0.2));
+            g_a.insert(make_id(i), &v).expect("insert a");
+        }
+
+        let mut g_b = HnswGraph::new(32);
+        for i in 0..8_u64 {
+            let v = make_vec((i as f64).mul_add(0.04, 0.2));
+            g_b.insert(make_id(i), &v).expect("insert b");
+        }
+
+        for idx in 0..8 {
+            assert_eq!(g_a.node_neighbors(idx, 0), g_b.node_neighbors(idx, 0));
         }
     }
 
