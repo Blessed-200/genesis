@@ -1487,10 +1487,6 @@ impl HnswGraph {
                                     if nb_idx >= self.nodes.len() {
                                         break;
                                     }
-                                    if visited[nb_idx] == search_epoch {
-                                        lane += 1;
-                                        continue;
-                                    }
                                     visited[nb_idx] = search_epoch;
                                     let d = distances[lane];
                                     if results.push_or_replace(d, nb_idx as u32) {
