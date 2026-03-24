@@ -1,0 +1,114 @@
+{
+  "batch": "batch_04_doc_language",
+  "count": 18,
+  "findings": [
+    {
+      "file": "core/genesis-dynamics/benches/dynamics.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-dynamics/src/criticality.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-dynamics/src/free_energy.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-dynamics/src/kuramoto.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-dynamics/src/synchrony.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-math/src/basis.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-math/src/product.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-topology/src/geodesic.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-topology/src/incremental_cohomology.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-topology/src/lsh.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-topology/src/manifold.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "shared/genesis-types/src/constants.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "shared/genesis-types/src/error.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "shared/genesis-types/src/fisher_edge.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "shared/genesis-types/src/proof.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    },
+    {
+      "file": "shared/genesis-types/src/signal.rs",
+      "evidence": "File contains mixed English and Spanish comment markers",
+      "category": "DOC_LANGUAGE",
+      "severity": "LOW"
+    }
+  ]
+}

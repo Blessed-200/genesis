@@ -1,0 +1,96 @@
+{
+  "batch": "batch_06_hnsw_complexity",
+  "count": 10,
+  "findings": [
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 168,
+      "symbol": "slab_distance_scalar",
+      "complexity_score": 13,
+      "evidence": "function `slab_distance_scalar` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 1154,
+      "symbol": "insert",
+      "complexity_score": 12,
+      "evidence": "function `insert` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 1317,
+      "symbol": "prune_layer",
+      "complexity_score": 12,
+      "evidence": "function `prune_layer` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 1384,
+      "symbol": "greedy_search_layer",
+      "complexity_score": 12,
+      "evidence": "function `greedy_search_layer` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 1554,
+      "symbol": "neighbors",
+      "complexity_score": 14,
+      "evidence": "function `neighbors` has complexity score 14",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 1568,
+      "symbol": "neighbors_within",
+      "complexity_score": 11,
+      "evidence": "function `neighbors_within` has complexity score 11",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 1785,
+      "symbol": "new",
+      "complexity_score": 13,
+      "evidence": "function `new` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 1792,
+      "symbol": "load_snapshot",
+      "complexity_score": 13,
+      "evidence": "function `load_snapshot` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 1891,
+      "symbol": "radix_sort_node_ids",
+      "complexity_score": 14,
+      "evidence": "function `radix_sort_node_ids` has complexity score 14",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 2799,
+      "symbol": "prune_layer_preserves_sorted_adjacency_after_removal",
+      "complexity_score": 17,
+      "evidence": "function `prune_layer_preserves_sorted_adjacency_after_removal` has complexity score 17",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    }
+  ]
+}

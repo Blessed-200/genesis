@@ -1,0 +1,46 @@
+{
+  "batch": "batch_05_naming_idiomatic",
+  "count": 5,
+  "findings": [
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 1078,
+      "symbol": "get_idx",
+      "evidence": "function `get_idx` uses getter prefix naming",
+      "category": "NAMING",
+      "severity": "LOW"
+    },
+    {
+      "file": "core/genesis-topology/src/hnsw.rs",
+      "line": 1629,
+      "symbol": "get_vector",
+      "evidence": "function `get_vector` uses getter prefix naming",
+      "category": "NAMING",
+      "severity": "LOW"
+    },
+    {
+      "file": "shared/genesis-types/src/fisher_edge.rs",
+      "line": 163,
+      "symbol": "get_existing_edge_returns_value",
+      "evidence": "function `get_existing_edge_returns_value` uses getter prefix naming",
+      "category": "NAMING",
+      "severity": "LOW"
+    },
+    {
+      "file": "shared/genesis-types/src/fisher_edge.rs",
+      "line": 170,
+      "symbol": "get_missing_edge_returns_zero",
+      "evidence": "function `get_missing_edge_returns_zero` uses getter prefix naming",
+      "category": "NAMING",
+      "severity": "LOW"
+    },
+    {
+      "file": "shared/genesis-types/src/signal.rs",
+      "line": 1538,
+      "symbol": "get_returns_coefficient_for_active_blade",
+      "evidence": "function `get_returns_coefficient_for_active_blade` uses getter prefix naming",
+      "category": "NAMING",
+      "severity": "LOW"
+    }
+  ]
+}

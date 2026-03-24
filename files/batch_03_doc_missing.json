@@ -1,0 +1,294 @@
+{
+  "batch": "batch_03_doc_missing",
+  "count": 36,
+  "findings": [
+    {
+      "file": "core/genesis-math/src/basis.rs",
+      "line": 163,
+      "symbol": "blade_square",
+      "evidence": "public function `blade_square` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/basis.rs",
+      "line": 175,
+      "symbol": "blade_square_f64",
+      "evidence": "public function `blade_square_f64` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/experimental/kernel_dense_g13.rs",
+      "line": 31,
+      "symbol": "dense_geometric_product_g13",
+      "evidence": "public function `dense_geometric_product_g13` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 313,
+      "symbol": "grade_project",
+      "evidence": "public function `grade_project` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 320,
+      "symbol": "even_grade",
+      "evidence": "public function `even_grade` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 327,
+      "symbol": "odd_grade",
+      "evidence": "public function `odd_grade` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 334,
+      "symbol": "reverse",
+      "evidence": "public function `reverse` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 343,
+      "symbol": "wedge",
+      "evidence": "public function `wedge` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 352,
+      "symbol": "meet",
+      "evidence": "public function `meet` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 361,
+      "symbol": "join",
+      "evidence": "public function `join` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 370,
+      "symbol": "left_contraction",
+      "evidence": "public function `left_contraction` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 379,
+      "symbol": "right_contraction",
+      "evidence": "public function `right_contraction` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 388,
+      "symbol": "commutator",
+      "evidence": "public function `commutator` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 397,
+      "symbol": "is_unit_rotor",
+      "evidence": "public function `is_unit_rotor` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 406,
+      "symbol": "rotor_sandwich",
+      "evidence": "public function `rotor_sandwich` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 415,
+      "symbol": "rotor_sandwich_checked",
+      "evidence": "public function `rotor_sandwich_checked` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/product.rs",
+      "line": 489,
+      "symbol": "sparse_geometric_product",
+      "evidence": "public function `sparse_geometric_product` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/product.rs",
+      "line": 706,
+      "symbol": "bivector_norm_sq_of_product",
+      "evidence": "public function `bivector_norm_sq_of_product` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/product.rs",
+      "line": 769,
+      "symbol": "bivector_norm_sq_of_product_lhs_dense",
+      "evidence": "public function `bivector_norm_sq_of_product_lhs_dense` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 32,
+      "symbol": "wedge",
+      "evidence": "public function `wedge` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 70,
+      "symbol": "left_contraction",
+      "evidence": "public function `left_contraction` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 116,
+      "symbol": "right_contraction",
+      "evidence": "public function `right_contraction` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 162,
+      "symbol": "meet",
+      "evidence": "public function `meet` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 179,
+      "symbol": "join",
+      "evidence": "public function `join` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 196,
+      "symbol": "commutator",
+      "evidence": "public function `commutator` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-math/src/sign.rs",
+      "line": 245,
+      "symbol": "fast_cayley_product",
+      "evidence": "public function `fast_cayley_product` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-topology/src/geodesic.rs",
+      "line": 20,
+      "symbol": "geometric_distance",
+      "evidence": "public function `geometric_distance` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-topology/src/geodesic.rs",
+      "line": 47,
+      "symbol": "fast_bivector_distance",
+      "evidence": "public function `fast_bivector_distance` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-topology/src/geodesic.rs",
+      "line": 67,
+      "symbol": "fast_bivector_distance_from_dense",
+      "evidence": "public function `fast_bivector_distance_from_dense` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-topology/src/incremental_cohomology.rs",
+      "line": 39,
+      "symbol": "add_node",
+      "evidence": "public function `add_node` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-topology/src/incremental_cohomology.rs",
+      "line": 52,
+      "symbol": "find",
+      "evidence": "public function `find` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-topology/src/incremental_cohomology.rs",
+      "line": 70,
+      "symbol": "union",
+      "evidence": "public function `union` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-topology/src/incremental_cohomology.rs",
+      "line": 142,
+      "symbol": "register_edge",
+      "evidence": "public function `register_edge` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-topology/src/manifold.rs",
+      "line": 115,
+      "symbol": "norm_sq",
+      "evidence": "public function `norm_sq` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "core/genesis-topology/src/manifold.rs",
+      "line": 123,
+      "symbol": "hyperbolic_distance_to_origin",
+      "evidence": "public function `hyperbolic_distance_to_origin` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    },
+    {
+      "file": "shared/genesis-types/src/multivector_types.rs",
+      "line": 67,
+      "symbol": "set_active",
+      "evidence": "public function `set_active` lacks nearby doc comments",
+      "category": "DOC_MISSING",
+      "severity": "MEDIUM"
+    }
+  ]
+}

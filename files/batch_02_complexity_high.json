@@ -1,0 +1,348 @@
+{
+  "batch": "batch_02_complexity_high",
+  "count": 38,
+  "findings": [
+    {
+      "file": "core/genesis-dynamics/src/free_energy.rs",
+      "line": 477,
+      "symbol": "internal_drive",
+      "complexity_score": 12,
+      "evidence": "function `internal_drive` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-dynamics/src/kuramoto.rs",
+      "line": 634,
+      "symbol": "step_inner_deterministic",
+      "complexity_score": 13,
+      "evidence": "function `step_inner_deterministic` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-dynamics/src/kuramoto.rs",
+      "line": 658,
+      "symbol": "step_inner_noisy",
+      "complexity_score": 14,
+      "evidence": "function `step_inner_noisy` has complexity score 14",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-dynamics/src/kuramoto.rs",
+      "line": 866,
+      "symbol": "apply_homeostatic_feedback",
+      "complexity_score": 12,
+      "evidence": "function `apply_homeostatic_feedback` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-dynamics/src/kuramoto.rs",
+      "line": 896,
+      "symbol": "rebuild_if_dirty",
+      "complexity_score": 13,
+      "evidence": "function `rebuild_if_dirty` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-dynamics/src/phase_semantics.rs",
+      "line": 555,
+      "symbol": "phase_region",
+      "complexity_score": 12,
+      "evidence": "function `phase_region` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-dynamics/src/synchrony.rs",
+      "line": 168,
+      "symbol": "reduce_slice",
+      "complexity_score": 14,
+      "evidence": "function `reduce_slice` has complexity score 14",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/basis.rs",
+      "line": 175,
+      "symbol": "blade_square_f64",
+      "complexity_score": 13,
+      "evidence": "function `blade_square_f64` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/dual.rs",
+      "line": 176,
+      "symbol": "geometric_product_dual",
+      "complexity_score": 12,
+      "evidence": "function `geometric_product_dual` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/multivector.rs",
+      "line": 539,
+      "symbol": "try_from_bytes",
+      "complexity_score": 12,
+      "evidence": "function `try_from_bytes` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/product.rs",
+      "line": 706,
+      "symbol": "bivector_norm_sq_of_product",
+      "complexity_score": 12,
+      "evidence": "function `bivector_norm_sq_of_product` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 70,
+      "symbol": "left_contraction",
+      "complexity_score": 12,
+      "evidence": "function `left_contraction` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 116,
+      "symbol": "right_contraction",
+      "complexity_score": 12,
+      "evidence": "function `right_contraction` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 196,
+      "symbol": "commutator",
+      "complexity_score": 12,
+      "evidence": "function `commutator` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 345,
+      "symbol": "log_rotor",
+      "complexity_score": 13,
+      "evidence": "function `log_rotor` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/cohomology.rs",
+      "line": 70,
+      "symbol": "rank_by_gaussian_elimination",
+      "complexity_score": 12,
+      "evidence": "function `rank_by_gaussian_elimination` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/cohomology.rs",
+      "line": 312,
+      "symbol": "prepare_vertex_index",
+      "complexity_score": 13,
+      "evidence": "function `prepare_vertex_index` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/cohomology.rs",
+      "line": 336,
+      "symbol": "build_d1",
+      "complexity_score": 14,
+      "evidence": "function `build_d1` has complexity score 14",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/incremental_cohomology.rs",
+      "line": 173,
+      "symbol": "add_triangle",
+      "complexity_score": 14,
+      "evidence": "function `add_triangle` has complexity score 14",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/incremental_cohomology.rs",
+      "line": 363,
+      "symbol": "sparse_to_dense",
+      "complexity_score": 12,
+      "evidence": "function `sparse_to_dense` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/incremental_cohomology.rs",
+      "line": 541,
+      "symbol": "add_triangle",
+      "complexity_score": 14,
+      "evidence": "function `add_triangle` has complexity score 14",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/manifold.rs",
+      "line": 758,
+      "symbol": "power_refine_shifted_eigenvalue",
+      "complexity_score": 13,
+      "evidence": "function `power_refine_shifted_eigenvalue` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/manifold.rs",
+      "line": 817,
+      "symbol": "copy_basis_vector",
+      "complexity_score": 12,
+      "evidence": "function `copy_basis_vector` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/manifold.rs",
+      "line": 872,
+      "symbol": "tridiagonal_mv",
+      "complexity_score": 13,
+      "evidence": "function `tridiagonal_mv` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/rips.rs",
+      "line": 48,
+      "symbol": "build",
+      "complexity_score": 13,
+      "evidence": "function `build` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/topological_intuition.rs",
+      "line": 134,
+      "symbol": "detect_persistent_cycles",
+      "complexity_score": 14,
+      "evidence": "function `detect_persistent_cycles` has complexity score 14",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/topological_intuition.rs",
+      "line": 185,
+      "symbol": "detect_spectral_partition",
+      "complexity_score": 12,
+      "evidence": "function `detect_spectral_partition` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/topological_intuition.rs",
+      "line": 201,
+      "symbol": "detect_fragile_bridges",
+      "complexity_score": 14,
+      "evidence": "function `detect_fragile_bridges` has complexity score 14",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/topological_intuition.rs",
+      "line": 274,
+      "symbol": "detect_hierarchical_hubs",
+      "complexity_score": 12,
+      "evidence": "function `detect_hierarchical_hubs` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/topological_intuition.rs",
+      "line": 309,
+      "symbol": "cmp_nodes",
+      "complexity_score": 12,
+      "evidence": "function `cmp_nodes` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/topological_intuition.rs",
+      "line": 418,
+      "symbol": "local_triangle_density",
+      "complexity_score": 12,
+      "evidence": "function `local_triangle_density` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "shared/genesis-types/src/error.rs",
+      "line": 469,
+      "symbol": "signature_violation_diagnostic",
+      "complexity_score": 12,
+      "evidence": "function `signature_violation_diagnostic` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "shared/genesis-types/src/fisher_edge.rs",
+      "line": 112,
+      "symbol": "decrement_degree",
+      "complexity_score": 12,
+      "evidence": "function `decrement_degree` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "shared/genesis-types/src/proof.rs",
+      "line": 468,
+      "symbol": "validate_against_history",
+      "complexity_score": 13,
+      "evidence": "function `validate_against_history` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "shared/genesis-types/src/proof.rs",
+      "line": 487,
+      "symbol": "ensure_dag",
+      "complexity_score": 14,
+      "evidence": "function `ensure_dag` has complexity score 14",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "shared/genesis-types/src/signal.rs",
+      "line": 239,
+      "symbol": "try_from",
+      "complexity_score": 12,
+      "evidence": "function `try_from` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "shared/genesis-types/src/signal.rs",
+      "line": 560,
+      "symbol": "is_active",
+      "complexity_score": 12,
+      "evidence": "function `is_active` has complexity score 12",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "shared/genesis-types/src/signal.rs",
+      "line": 943,
+      "symbol": "visit_map",
+      "complexity_score": 13,
+      "evidence": "function `visit_map` has complexity score 13",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    }
+  ]
+}

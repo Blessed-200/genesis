@@ -1,0 +1,132 @@
+{
+  "batch": "batch_01_complexity_critical",
+  "count": 14,
+  "findings": [
+    {
+      "file": "core/genesis-dynamics/src/attractor.rs",
+      "line": 48,
+      "symbol": "eq",
+      "complexity_score": 15,
+      "evidence": "function `eq` has complexity score 15",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-dynamics/src/criticality.rs",
+      "line": 71,
+      "symbol": "ks_p_value",
+      "complexity_score": 15,
+      "evidence": "function `ks_p_value` has complexity score 15",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-dynamics/src/phase_semantics.rs",
+      "line": 410,
+      "symbol": "build_clusters",
+      "complexity_score": 16,
+      "evidence": "function `build_clusters` has complexity score 16",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-dynamics/src/phase_semantics.rs",
+      "line": 653,
+      "symbol": "dominant_and_entropy",
+      "complexity_score": 15,
+      "evidence": "function `dominant_and_entropy` has complexity score 15",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/grade.rs",
+      "line": 114,
+      "symbol": "grade_project",
+      "complexity_score": 23,
+      "evidence": "function `grade_project` has complexity score 23",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/product.rs",
+      "line": 769,
+      "symbol": "bivector_norm_sq_of_product_lhs_dense",
+      "complexity_score": 15,
+      "evidence": "function `bivector_norm_sq_of_product_lhs_dense` has complexity score 15",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 271,
+      "symbol": "rotor_sandwich_checked",
+      "complexity_score": 18,
+      "evidence": "function `rotor_sandwich_checked` has complexity score 18",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-math/src/semantic.rs",
+      "line": 291,
+      "symbol": "exp_bivector",
+      "complexity_score": 15,
+      "evidence": "function `exp_bivector` has complexity score 15",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/incremental_cohomology.rs",
+      "line": 248,
+      "symbol": "xor_columns_opt",
+      "complexity_score": 16,
+      "evidence": "function `xor_columns_opt` has complexity score 16",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/manifold.rs",
+      "line": 822,
+      "symbol": "reorthogonalize",
+      "complexity_score": 15,
+      "evidence": "function `reorthogonalize` has complexity score 15",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "core/genesis-topology/src/manifold.rs",
+      "line": 831,
+      "symbol": "largest_tridiagonal_eigenvalue",
+      "complexity_score": 20,
+      "evidence": "function `largest_tridiagonal_eigenvalue` has complexity score 20",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "shared/genesis-types/src/proof.rs",
+      "line": 505,
+      "symbol": "dfs_cycle",
+      "complexity_score": 16,
+      "evidence": "function `dfs_cycle` has complexity score 16",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "shared/genesis-types/src/signal.rs",
+      "line": 589,
+      "symbol": "active_pairs",
+      "complexity_score": 15,
+      "evidence": "function `active_pairs` has complexity score 15",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    },
+    {
+      "file": "shared/genesis-types/src/signal.rs",
+      "line": 601,
+      "symbol": "eq",
+      "complexity_score": 18,
+      "evidence": "function `eq` has complexity score 18",
+      "category": "COMPLEXITY",
+      "severity": "HIGH"
+    }
+  ]
+}
