@@ -1,5 +1,32 @@
 # GÉNESIS HPC Root-Cause Remediation Plan (Phase 1)
 
+## 0.2 HNSW prune_layer one-shot pruning pass (2026-03-24)
+
+### Root cause
+- `core/genesis-topology/src/hnsw.rs::prune_layer` recomputes neighbour distances inside a `while` + `max_by` loop while mutating the same adjacency list.
+- Distances from source node `idx` to candidate neighbours are invariant once the candidate set is known, so iterative re-evaluation is redundant and increases hot-path cost.
+
+### File-level actions
+1. `core/genesis-topology/src/hnsw.rs`
+   - Replace iterative farthest-removal loop with a one-shot pass:
+     - snapshot current neighbours once,
+     - materialize exactly one distance per neighbour,
+     - deterministically select keep-set (`m_max` nearest by `(distance, neighbor_id)`),
+     - remove discarded edges bidirectionally using neighbour IDs only.
+   - Keep NodeAdj sorted adjacency invariant untouched by using existing remove-by-id path.
+2. `core/genesis-topology/src/hnsw.rs` tests
+   - Add regression coverage for one-shot pruning behavior, sorted adjacency after pruning, and bidirectional symmetry of removals.
+
+### Validation
+- `cargo test -p genesis-topology --release`
+- `cargo clippy -p genesis-topology -- -D warnings`
+- `cargo bench -p genesis-topology --bench topology hnsw_insert_1000 -- --output-format bencher`
+
+### Complexity target
+- Target `O(d)` distance materialization + bounded deterministic selection/sort (`d <= M0`) with no iterative re-evaluation loop over a mutating adjacency list.
+
+---
+
 Source backlog: `./genesis_root_causes_hpc_v1.json` (9 root causes, authoritative)
 Scope: implemented crates only (`genesis-types`, `genesis-math`, `genesis-topology`, `genesis-dynamics`)
 

@@ -30,7 +30,11 @@ const MAX_FIXED_HEAP_CAPACITY: usize = 512;
 const MAX_LAYER0_NEIGHBORS: usize = M0;
 const INITIAL_NODE_CAPACITY: usize = 1024;
 const INITIAL_SLAB_BLOCK_CAPACITY: usize = INITIAL_NODE_CAPACITY.div_ceil(SLAB_LANES);
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    target_feature = "fma"
+))]
 const METRIC_WEIGHTS_F32: [f32; TOTAL_BLADES] = [
     2.0, 1.5, 1.5, 1.0, 1.5, 1.0, 1.0, 0.5, 1.5, 1.0, 1.0, 0.5, 1.0, 0.5, 0.5, 0.3,
 ];
@@ -145,7 +149,8 @@ impl<const CAP: usize> FixedHeap<CAP> {
         if !dist.is_finite() || self.limit == 0 {
             return false;
         }
-        if self.len == self.limit && compare_dist_idx((dist, idx), self.data[self.len - 1]).is_ge() {
+        if self.len == self.limit && compare_dist_idx((dist, idx), self.data[self.len - 1]).is_ge()
+        {
             return false;
         }
         let mut pos = self.len;
@@ -209,7 +214,11 @@ fn slab_distance_scalar(
     out
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    target_feature = "fma"
+))]
 #[inline(always)]
 unsafe fn slab_distance_avx2(
     slab_ptr: *const f32,
@@ -281,13 +290,21 @@ fn slab_distance(
     block: usize,
     query_f32: &[f32; SLAB_DIM],
 ) -> [f32; SLAB_LANES] {
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    ))]
     {
         // SAFETY: target-feature gated at compile time, pointer invariants are
         // enforced by the caller and match the scalar kernel requirements.
         return unsafe { slab_distance_avx2(slab_ptr, block, query_f32) };
     }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    )))]
     {
         slab_distance_scalar(slab_ptr, block, query_f32)
     }
@@ -516,9 +533,9 @@ impl NodeAdj {
             return None;
         }
         let needed = layer;
-        let layers = self.upper.get_or_insert_with(|| {
-            vec![SmallVec::<[u32; M]>::new(); needed].into_boxed_slice()
-        });
+        let layers = self
+            .upper
+            .get_or_insert_with(|| vec![SmallVec::<[u32; M]>::new(); needed].into_boxed_slice());
         if layers.len() < needed {
             let mut grown = layers.to_vec();
             grown.resize_with(needed, SmallVec::new);
@@ -850,7 +867,11 @@ impl HnswGraph {
 
     #[inline]
     fn layer_max_neighbors(layer: usize) -> usize {
-        if layer == 0 { M0 } else { M }
+        if layer == 0 {
+            M0
+        } else {
+            M
+        }
     }
 
     #[inline]
@@ -1100,7 +1121,9 @@ impl HnswGraph {
         }
         let _ = dist;
         let max_neighbors = Self::layer_max_neighbors(layer);
-        if self.layer_neighbors[from_idx].add_neighbor(layer, to_idx as u32, max_neighbors) && layer == 0 {
+        if self.layer_neighbors[from_idx].add_neighbor(layer, to_idx as u32, max_neighbors)
+            && layer == 0
+        {
             self.edge_count_layer0_undirected += 1;
         }
     }
@@ -1140,29 +1163,38 @@ impl HnswGraph {
         if layer > self.nodes[idx].max_layer {
             return;
         }
-        let query_f32 = (layer == 0).then(|| Self::dense_to_query_f32(&self.nodes[idx].vec));
-        while self.node_neighbors(idx, layer).len() > m_max {
-            let farthest = self.node_neighbors(idx, layer)
-                .iter()
-                .copied()
-                .max_by(|a, b| {
-                    let da = if let Some(query_f32) = &query_f32 {
-                        self.distance_to_layer0_node_sq(query_f32, *a as usize)
-                    } else {
-                        self.distance_to_node_sq(&self.nodes[idx].vec, *a as usize, layer)
-                    };
-                    let db = if let Some(query_f32) = &query_f32 {
-                        self.distance_to_layer0_node_sq(query_f32, *b as usize)
-                    } else {
-                        self.distance_to_node_sq(&self.nodes[idx].vec, *b as usize, layer)
-                    };
-                    da.total_cmp(&db)
-                });
+        let current = self.node_neighbors(idx, layer);
+        let degree = current.len();
+        if degree <= m_max {
+            return;
+        }
 
-            let Some(farthest_id) = farthest else {
-                break;
+        // HOT PATH: O(d) score materialization + bounded O(d log d) ordering.
+        // Degree is bounded by HNSW neighbour caps (layer 0 <= M0; upper layers <= M).
+        debug_assert!(degree <= M0);
+        let query_f32 = (layer == 0).then(|| Self::dense_to_query_f32(&self.nodes[idx].vec));
+        let mut scored: SmallVec<[(u32, f64); M0]> = SmallVec::with_capacity(degree);
+        for &nb_idx_u32 in current {
+            let nb_idx = nb_idx_u32 as usize;
+            let dist = if let Some(query_f32) = &query_f32 {
+                self.distance_to_layer0_node_sq(query_f32, nb_idx)
+            } else {
+                self.distance_to_node_sq(&self.nodes[idx].vec, nb_idx, layer)
             };
-            self.remove_edge_bidirectional(idx, layer, farthest_id as usize);
+            scored.push((nb_idx_u32, dist));
+        }
+
+        scored.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+
+        let mut drop: SmallVec<[u32; M0]> = SmallVec::with_capacity(degree.saturating_sub(m_max));
+        for (rank, (nb_idx_u32, _)) in scored.into_iter().enumerate() {
+            if rank >= m_max {
+                drop.push(nb_idx_u32);
+            }
+        }
+
+        for nb_idx_u32 in drop {
+            self.remove_edge_bidirectional(idx, layer, nb_idx_u32 as usize);
         }
     }
 
@@ -1818,6 +1850,33 @@ mod tests {
         NodeId::try_new(v).expect("NodeId válido por construcción")
     }
 
+    fn expected_keep_and_drop(
+        g: &HnswGraph,
+        idx: usize,
+        layer: usize,
+        m_max: usize,
+    ) -> (Vec<u32>, Vec<u32>) {
+        let query_f32 = (layer == 0).then(|| HnswGraph::dense_to_query_f32(&g.nodes[idx].vec));
+        let mut scored: Vec<(u32, f64)> = g
+            .node_neighbors(idx, layer)
+            .iter()
+            .copied()
+            .map(|nb| {
+                let dist = if let Some(query_f32) = &query_f32 {
+                    g.distance_to_layer0_node_sq(query_f32, nb as usize)
+                } else {
+                    g.distance_to_node_sq(&g.nodes[idx].vec, nb as usize, layer)
+                };
+                (nb, dist)
+            })
+            .collect();
+        scored.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+
+        let keep = scored.iter().take(m_max).map(|(nb, _)| *nb).collect();
+        let drop = scored.iter().skip(m_max).map(|(nb, _)| *nb).collect();
+        (keep, drop)
+    }
+
     fn next_u64(seed: &mut u64) -> u64 {
         *seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
         *seed
@@ -1882,7 +1941,9 @@ mod tests {
     fn slab_insertion_sequential_ordering() {
         let mut graph = HnswGraph::new(16);
         for i in 0..100_u64 {
-            graph.insert(make_id(i), &make_vec(i as f64 * 0.01 + 0.2)).expect("insert");
+            graph
+                .insert(make_id(i), &make_vec(i as f64 * 0.01 + 0.2))
+                .expect("insert");
         }
         for (idx, slab_idx) in graph.layer0_soa.node_to_slab.iter().enumerate() {
             assert_eq!(*slab_idx as usize, idx);
@@ -1893,7 +1954,9 @@ mod tests {
     fn slab_nan_lane_excluded_from_results() {
         let mut graph = HnswGraph::new(16);
         for i in 0..4_u64 {
-            graph.insert(make_id(i), &make_vec(i as f64 * 0.1 + 0.1)).expect("insert");
+            graph
+                .insert(make_id(i), &make_vec(i as f64 * 0.1 + 0.1))
+                .expect("insert");
         }
         graph.remove_node(make_id(2)).expect("remove");
         let results = graph.search_nearest(&make_vec(0.3), 3);
@@ -2396,7 +2459,12 @@ mod tests {
             for node in &g.nodes {
                 for layer_idx in 0..=node.max_layer {
                     let m_max = if layer_idx == 0 { M0 } else { M };
-                    let degree = g.node_neighbors(usize::try_from(node.id.get()).expect("dense id"), layer_idx).len();
+                    let degree = g
+                        .node_neighbors(
+                            usize::try_from(node.id.get()).expect("dense id"),
+                            layer_idx,
+                        )
+                        .len();
                     assert!(
                         degree <= m_max,
                         "node {:?} layer {layer_idx}: degree {} > m_max {}",
@@ -2406,6 +2474,100 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn prune_layer_materializes_distances_once() {
+        let mut g = HnswGraph::new(64);
+        for i in 0..12_u64 {
+            g.insert(make_id(i), &make_vec((i as f64).mul_add(0.07, 0.11)))
+                .expect("insert");
+        }
+
+        let idx = 0usize;
+        let m_max = 3usize;
+        let degree_before = g.node_neighbors(idx, 0).len();
+        assert!(
+            degree_before > m_max,
+            "fixture must start above prune bound"
+        );
+
+        let (expected_keep, expected_drop) = expected_keep_and_drop(&g, idx, 0, m_max);
+        g.prune_layer(idx, 0, m_max);
+
+        let after = g.node_neighbors(idx, 0);
+        assert_eq!(after.len(), m_max);
+        assert_eq!(after, expected_keep.as_slice());
+
+        for dropped in expected_drop {
+            assert!(
+                !after.contains(&dropped),
+                "dropped neighbour {dropped} must not remain after prune"
+            );
+        }
+    }
+
+    #[test]
+    fn prune_layer_preserves_sorted_adjacency_after_removal() {
+        let mut g = HnswGraph::new(64);
+        for i in 0..24_u64 {
+            g.insert(make_id(i), &make_vec((i as f64).mul_add(0.03, 0.2)))
+                .expect("insert");
+        }
+
+        let idx = 0usize;
+        let m_max = 2usize;
+        assert!(g.node_neighbors(idx, 0).len() > m_max);
+        g.prune_layer(idx, 0, m_max);
+
+        for (node_idx, adj) in g.layer_neighbors.iter().enumerate() {
+            for window in adj.layer0.windows(2) {
+                assert!(
+                    window[0] < window[1],
+                    "node {node_idx} layer0 adjacency must remain sorted: {:?}",
+                    adj.layer0
+                );
+            }
+            if let Some(upper) = &adj.upper {
+                for (layer_offset, neighbors) in upper.iter().enumerate() {
+                    for window in neighbors.windows(2) {
+                        assert!(
+                            window[0] < window[1],
+                            "node {node_idx} layer {} adjacency must remain sorted: {:?}",
+                            layer_offset + 1,
+                            neighbors
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prune_layer_bidirectional_symmetry_after_prune() {
+        let mut g = HnswGraph::new(64);
+        for i in 0..14_u64 {
+            g.insert(make_id(i), &make_vec((i as f64).mul_add(0.09, 0.05)))
+                .expect("insert");
+        }
+
+        let idx = 0usize;
+        let m_max = 3usize;
+        let (_expected_keep, expected_drop) = expected_keep_and_drop(&g, idx, 0, m_max);
+        g.prune_layer(idx, 0, m_max);
+
+        let after = g.node_neighbors(idx, 0);
+        for dropped in expected_drop {
+            let dropped_idx = dropped as usize;
+            assert!(
+                !after.contains(&dropped),
+                "removed edge {idx}->{dropped_idx} should be absent"
+            );
+            assert!(
+                !g.node_neighbors(dropped_idx, 0).contains(&(idx as u32)),
+                "reverse edge {dropped_idx}->{idx} should be absent"
+            );
         }
     }
 
@@ -2752,7 +2914,10 @@ mod tests {
             for layer in 0..=g.nodes[idx].max_layer {
                 for &nb in g.node_neighbors(idx, layer) {
                     let raw = g.nodes[nb as usize].id.get();
-                    assert!(g.nodes[nb as usize].id != NodeId::INVALID, "invalid neighbor id={raw}");
+                    assert!(
+                        g.nodes[nb as usize].id != NodeId::INVALID,
+                        "invalid neighbor id={raw}"
+                    );
                     if !seen.contains(&raw) {
                         seen.push(raw);
                     }
