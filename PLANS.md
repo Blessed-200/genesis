@@ -1,5 +1,31 @@
 # GÉNESIS HPC Root-Cause Remediation Plan (Phase 1)
 
+## 0.4 NodeAdj layer-0 pre-grouped block projection (2026-03-24)
+
+### Root cause
+- `core/genesis-topology/src/hnsw.rs::search_layer` at layer 0 still executes a per-neighbor regrouping scheduler (`node_to_slab` lookup, block/lane arithmetic, scratch block merge) inside beam expansion.
+- With `M0=32`, this administrative regrouping dominates branch/memory work even after epoch-visited dedup.
+
+### File-level actions
+1. `core/genesis-topology/src/hnsw.rs`
+   - Extend `NodeAdj` layer-0 storage to keep both: canonical sorted adjacency and a synchronized pre-grouped slab-block projection.
+   - Canonical layer-0 entries are packed as `(neighbor_internal_idx << 32) | slab_idx` to preserve sorted-by-neighbor order while carrying slab addressing metadata.
+   - Add compact `Layer0BlockGroup` (`#[repr(C)]`) and maintain sorted block groups incrementally on insert/remove, avoiding runtime reconstruction.
+   - Replace layer-0 regrouping in `search_layer` with direct iteration of precomputed block groups and lane masks; keep visited-epoch semantics unchanged.
+   - Keep upper-layer adjacency and public API behavior unchanged.
+2. `core/genesis-topology/src/hnsw.rs` tests
+   - Add invariant tests ensuring group projection exactly matches canonical adjacency after inserts and survives node removal.
+   - Re-assert canonical sorted order and nearest-neighbor search equivalence regression.
+
+### Validation
+- `cargo test -p genesis-topology --release 2>&1 | grep -E "FAILED|ok"`
+- `cargo clippy -p genesis-topology -- -D warnings 2>&1 | grep "^error"`
+- `cargo bench -p genesis-topology --bench topology hnsw_search_k10_in_1000 -- --output-format bencher 2>&1 | grep "bench:"`
+- `cargo bench -p genesis-topology --bench topology hnsw_insert_1000 -- --output-format bencher 2>&1 | grep "bench:"`
+
+### Complexity/cache target
+- Remove per-expansion dynamic regrouping from layer-0 search hot path: consume pre-grouped block masks directly with one slab-distance evaluation per touched block.
+
 ## 0.3 prune_layer packed-order partition optimization (2026-03-24)
 
 ### Root cause
