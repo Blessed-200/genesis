@@ -278,13 +278,14 @@ For hot paths:
 Agents must annotate hot paths in comments:
 ```rust
 // HOT PATH: O(N), called per iteration of VFE minimization
+```
 ---
 
 ## 3. 🧬 IDIOMATICITY ≠ PERFORMANCE (clave)
 
 Ahora mismo no lo separas. Añade:
 
-```md
+
 ---
 
 ## Idiomatic Rust vs Performance
