@@ -153,7 +153,17 @@ impl CliffordBasis {
         self.grade.get(i).copied().unwrap_or(0)
     }
 
-    /// e_I² as exact `i8` ∈ {+1, −1}. No float arithmetic.
+    /// Returns the exact metric square \(e_I^2\in\{-1,+1\}\) for blade `I`.
+    ///
+    /// Mathematical definition:
+    /// `$ e_I^2 = (-1)^{k(k-1)/2}\prod_{\mu \in I} g_{\mu\mu},\quad k = |I| $`
+    ///
+    /// Invariants:
+    /// - Output is exact `i8` (`-1` or `+1`), never `0`.
+    /// - No floating-point operations are performed.
+    ///
+    /// AX-ID: AXIOMA-001
+    /// See also: [`Self::blade_square_f64`]
     #[allow(clippy::inline_always)]
     // Inlining forzado: función en hot-path del producto geométrico.
     // Benchmark kuramoto_step_1000_nodes = 1.11 ms para N=1000.
@@ -165,7 +175,17 @@ impl CliffordBasis {
         self.signature.get(i).copied().unwrap_or(0)
     }
 
-    /// e_I² as `f64`. Cast from `i8` is lossless and exact.
+    /// Returns the metric square \(e_I^2\) as `f64` for numeric kernels.
+    ///
+    /// Mathematical definition:
+    /// `$ e_I^2(\mathrm{f64}) = \mathrm{float}(e_I^2),\quad e_I^2\in\{-1,+1\} $`
+    ///
+    /// Invariants:
+    /// - Conversion from `i8` to `f64` is lossless for `±1`.
+    /// - Value remains exactly representable in IEEE-754 binary64.
+    ///
+    /// AX-ID: AXIOMA-001
+    /// See also: [`Self::blade_square`]
     #[allow(clippy::inline_always)]
     // Inlining forzado: función en hot-path del producto geométrico.
     // Benchmark kuramoto_step_1000_nodes = 1.11 ms para N=1000.

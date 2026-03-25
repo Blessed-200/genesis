@@ -477,12 +477,19 @@ unsafe fn geometric_product_aarch64_neon_dense(
     }
 }
 
-/// Computes A * B in G(1,3) via double-rail stack accumulation.
+/// Computes the geometric product \(A B\) in \(G(1,3)\) with sparse stack-only accumulation.
 ///
-/// Returns `None` when gated by the Cauchy-Schwarz energy threshold, when either
-/// input is the zero multivector, or when the algebraic product vanishes.
+/// Mathematical definition:
+/// `$ AB = \sum_{I,J} a_I b_J \,\sigma(I,J)\, e_{I \oplus J} $`
+/// where `\(\sigma(I,J)\in\{-1,+1\}\)` is the Cayley sign.
+///
+/// Invariants:
+/// - Zero heap allocation; output buffer is fixed `[f64; 16]`.
+/// - Closure in \(G(1,3)\): every contribution maps to blade `I \oplus J`.
+/// - Returns `None` iff CS gate vetoes (`16·max|a_I|·max|b_J| < \hbar_c`), either input is algebraic zero, or result canonicalizes to zero.
 ///
 /// AX-ID: AXIOMA-001, AXIOMA-011
+/// See also: [`crate::sign::fast_cayley_product`]
 #[allow(clippy::many_single_char_names)]
 // Notación canónica GA: i = blade_a, j = blade_b, k = blade_resultado.
 // Renombrar diverge de la literatura estándar (Hestenes 2003, §2.1).
@@ -691,16 +698,19 @@ const BIVECTOR_LANE_MAP: [i8; 16] = [-1, -1, -1, 0, -1, 1, 2, -1, -1, 3, 4, -1, 
 /// Packed Lorentz weights aligned with lane order [3, 5, 6, 9, 10, 12].
 const BIVECTOR_LANE_WEIGHTS: [f64; 6] = [-1.0, -1.0, 1.0, -1.0, 1.0, 1.0];
 
-/// Computes the Lorentz-invariant bivector norm squared of the geometric product `A*B`.
+/// Computes the Lorentz-signed bivector norm squared of the geometric product \(AB\).
 ///
-/// Extracts only grade-2 (bivector) components of `A*B` and weights by Minkowski
-/// signature. Returns [`BivectorProduct::SubPlanck`] when the CS gate vetoes the
-/// product. Used as the primary distance metric for HNSW semantic search.
+/// Mathematical definition:
+/// `$ \| \langle AB \rangle_2 \|_L^2 = \sum_{\mu<\nu} g_{\mu\nu}\,\langle AB \rangle_{\mu\nu}^{\,2} $`
+/// with lane weights `[-1,-1,+1,-1,+1,+1]` for blades `[01,02,12,03,13,23]`.
 ///
-/// **Notation:** `i` = source blade index, `j` = rhs blade index (canonical GA).
-/// Renaming conflicts with Hestenes 2003 §2.1 convention.
+/// Invariants:
+/// - Uses only grade-2 lanes; no full multivector reconstruction.
+/// - `BivectorProduct::SubPlanck` iff the same CS gate of [`sparse_geometric_product`] vetoes evaluation.
+/// - `BivectorProduct::Computed(0.0)` is algebraic zero (distinct from sub-Planck veto).
 ///
 /// AX-ID: AXIOMA-013, AXIOMA-001
+/// See also: [`bivector_norm_sq_of_product_lhs_dense`], [`sparse_geometric_product`]
 #[allow(clippy::many_single_char_names)]
 // i = blade_a, j = blade_b, k = blade_resultado — canonical GA notation.
 pub fn bivector_norm_sq_of_product(
@@ -757,13 +767,19 @@ pub fn bivector_norm_sq_of_product(
     BivectorProduct::Computed(if has_signal { norm_sq } else { 0.0 })
 }
 
-/// Bivector norm squared of `A*B` where `A` is provided as a dense `[f64; 16]` buffer.
+/// Computes \(\| \langle AB \rangle_2 \|_L^2\) with a dense left operand and sparse right operand.
 ///
-/// Equivalent to [`bivector_norm_sq_of_product`] but avoids the sparse-to-dense
-/// conversion overhead when the left operand is already dense (e.g. from AVX-512 output).
-/// Used internally by HNSW distance computation after the NEON/AVX path.
+/// Mathematical definition:
+/// `$ A \in \mathbb{R}^{16},\; \| \langle AB \rangle_2 \|_L^2 = \sum_{\mu<\nu} g_{\mu\nu}\,\langle AB \rangle_{\mu\nu}^{\,2} $`
+/// using the same packed bivector lanes as [`bivector_norm_sq_of_product`].
+///
+/// Invariants:
+/// - Dense input is finite-validated before accumulation.
+/// - Applies the same CS gate criterion and `SubPlanck` semantics as the sparse/sparse variant.
+/// - Preserves distinction between algebraic zero (`Computed(0.0)`) and veto (`SubPlanck`).
 ///
 /// AX-ID: AXIOMA-013
+/// See also: [`bivector_norm_sq_of_product`]
 #[inline]
 #[allow(clippy::many_single_char_names)]
 pub fn bivector_norm_sq_of_product_lhs_dense(
