@@ -59,12 +59,13 @@ pub fn wedge(lhs: &SparseCliffordVector, rhs: &SparseCliffordVector) -> SparseCl
     SparseCliffordVector::from_dense_buf(&out)
 }
 
-/// Left contraction `A ⌟ B`.
+/// Computes left contraction `A ⌟ B` via geometric-product grade selection.
 ///
-/// For basis blades of grades `r` and `s`, keeps only grade `s-r` terms when
-/// `r <= s`; otherwise contributes zero. Implemented over sparse active masks.
+/// Mathematical definition:
+/// `$ A \!\rfloor B = \sum_{r,s}\left\langle \langle A\rangle_r \langle B\rangle_s \right\rangle_{s-r},\; r \le s $`
 ///
-/// AX-ID: AXIOMA-001, H_estructura (LEY_FUNDACIONAL §3.1)
+/// AX-ID: AXIOMA-001
+/// See also: [`right_contraction`], [`sparse_geometric_product`]
 #[must_use]
 #[inline]
 pub fn left_contraction(
@@ -105,12 +106,13 @@ pub fn left_contraction(
     SparseCliffordVector::from_dense_buf(&out)
 }
 
-/// Right contraction `A ⌞ B`.
+/// Computes right contraction `A ⌞ B` via geometric-product grade selection.
 ///
-/// For basis blades of grades `r` and `s`, keeps only grade `r-s` terms when
-/// `r >= s`; otherwise contributes zero.
+/// Mathematical definition:
+/// `$ A \!\lfloor B = \sum_{r,s}\left\langle \langle A\rangle_r \langle B\rangle_s \right\rangle_{r-s},\; r \ge s $`
 ///
-/// AX-ID: AXIOMA-001, H_estructura (LEY_FUNDACIONAL §3.1)
+/// AX-ID: AXIOMA-001
+/// See also: [`left_contraction`], [`sparse_geometric_product`]
 #[must_use]
 #[inline]
 pub fn right_contraction(
@@ -151,12 +153,13 @@ pub fn right_contraction(
     SparseCliffordVector::from_dense_buf(&out)
 }
 
-/// Regressive meet `A ∩ B` derived from Hodge duality (De Morgan identity).
+/// Computes regressive meet `A ∩ B` through Hodge-dual wedge composition.
 ///
-/// Implemented as `A ∩ B = ⋆⁻¹(⋆A ∧ ⋆B)` using [`hodge_dual`], [`hodge_undual`]
-/// and [`wedge`] only, preserving sparse/stack execution.
+/// Mathematical definition:
+/// `$ A \cap B = \star^{-1}\!\left(\star A \wedge \star B\right) $`
 ///
-/// AX-ID: AXIOMA-001, AXIOMA-006, H_estructura (LEY_FUNDACIONAL §3.1)
+/// AX-ID: AXIOMA-006
+/// See also: [`join`], [`wedge`], [`hodge_dual`]
 #[must_use]
 #[inline]
 pub fn meet(lhs: &SparseCliffordVector, rhs: &SparseCliffordVector) -> SparseCliffordVector {
@@ -168,12 +171,13 @@ pub fn meet(lhs: &SparseCliffordVector, rhs: &SparseCliffordVector) -> SparseCli
     hodge_undual(&dual_meet)
 }
 
-/// Join (union/span) `A ∪ B` derived through duality involution.
+/// Computes join `A ∪ B` as the dual counterpart of regressive intersection.
 ///
-/// Implemented as `A ∪ B = ⋆⁻¹((⋆A) ∩ (⋆B))`, reusing [`meet`] to enforce
-/// De Morgan dual symmetry in G(1,3).
+/// Mathematical definition:
+/// `$ A \cup B = \star\!\left(\star^{-1}A \wedge \star^{-1}B\right) $`
 ///
-/// AX-ID: AXIOMA-001, AXIOMA-006, H_estructura (LEY_FUNDACIONAL §3.1)
+/// AX-ID: AXIOMA-006
+/// See also: [`meet`], [`wedge`], [`hodge_undual`]
 #[must_use]
 #[inline]
 pub fn join(lhs: &SparseCliffordVector, rhs: &SparseCliffordVector) -> SparseCliffordVector {
@@ -185,12 +189,13 @@ pub fn join(lhs: &SparseCliffordVector, rhs: &SparseCliffordVector) -> SparseCli
     hodge_dual(&primal_wedge)
 }
 
-/// Commutator operator `[A,B] = 0.5 * (AB − BA)`.
+/// Computes the geometric-algebra commutator as a Lie bracket in G(1,3).
 ///
-/// Uses sparse geometric products and stack-local accumulation to produce a
-/// Lie-algebra generator in G(1,3) without heap allocations.
+/// Mathematical definition:
+/// `$ [A,B] = \frac{1}{2}(AB - BA) $`
 ///
-/// AX-ID: AXIOMA-001, AXIOMA-006, H_estructura (LEY_FUNDACIONAL §3.1)
+/// AX-ID: AXIOMA-006
+/// See also: [`sparse_geometric_product`]
 #[must_use]
 #[inline]
 pub fn commutator(a: &SparseCliffordVector, b: &SparseCliffordVector) -> SparseCliffordVector {

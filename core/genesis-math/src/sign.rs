@@ -226,16 +226,14 @@ pub const CAYLEY_SIGN: [[i8; BLADE_COUNT]; BLADE_COUNT] = {
 
 // ── Hot-path entry point ──────────────────────────────────────────────────────
 
-/// Returns `(result_blade_index, sign_i8)` for the geometric product of
-/// two basis blades in G(1,3).
+/// Returns the basis-blade geometric product kernel `(I ⊕ J, σ(I,J))` in O(1).
 ///
-/// - `result_blade_index` = `indices_a ^ indices_b` (Grassmann XOR).
-/// - `sign_i8` = `CAYLEY_SIGN[indices_a][indices_b]` ∈ {+1i8, −1i8}.
-///
-/// O(1): two array lookups, one XOR. `#[inline(always)]` ensures inlining
-/// into the product inner loop.
+/// Mathematical definition:
+/// `$ e_I e_J = \sigma(I,J)\,e_{I \oplus J},\quad \sigma(I,J)\in\{-1,+1\} $`
+/// with `\(\sigma(I,J)=\texttt{CAYLEY\_SIGN}[I][J]\)`.
 ///
 /// AX-ID: AXIOMA-001
+/// See also: [`CAYLEY_SIGN`]
 #[allow(clippy::inline_always)]
 // Inlining forzado: función en hot-path del producto geométrico.
 // Benchmark kuramoto_step_1000_nodes = 1.11 ms para N=1000.
