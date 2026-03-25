@@ -307,28 +307,52 @@ impl SparseCliffordVector {
 
     // ── Grade utilities ───────────────────────────────────────────────────────
 
-    /// Extracts blades of the specified Grassmann grade.
+    /// Projects this multivector onto a single Grassmann grade.
+    ///
+    /// Mathematical definition:
+    /// `$ \langle A \rangle_r = \sum_{|I|=r} a_I e_I $`
+    ///
+    /// AX-ID: AXIOMA-001
+    /// See also: [`Self::even_grade`], [`Self::odd_grade`]
     #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
     #[inline]
     pub fn grade_project(&self, grade: usize) -> Self {
         grade_project(self, grade)
     }
 
-    /// Even-grade sub-multivector (grades 0, 2, 4).
+    /// Extracts the even subalgebra component (grades 0, 2, and 4).
+    ///
+    /// Mathematical definition:
+    /// `$ A_{\mathrm{even}} = \sum_{r \in \{0,2,4\}} \langle A \rangle_r $`
+    ///
+    /// AX-ID: AXIOMA-001
+    /// See also: [`Self::grade_project`], [`Self::odd_grade`]
     #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
     #[inline]
     pub fn even_grade(&self) -> Self {
         even_grade(self)
     }
 
-    /// Odd-grade sub-multivector (grades 1, 3).
+    /// Extracts the odd component (grades 1 and 3).
+    ///
+    /// Mathematical definition:
+    /// `$ A_{\mathrm{odd}} = \sum_{r \in \{1,3\}} \langle A \rangle_r $`
+    ///
+    /// AX-ID: AXIOMA-001
+    /// See also: [`Self::grade_project`], [`Self::even_grade`]
     #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
     #[inline]
     pub fn odd_grade(&self) -> Self {
         odd_grade(self)
     }
 
-    /// Clifford reverse Ã of this multivector.
+    /// Computes the Clifford reverse \( \tilde{A} \) by grade-dependent sign inversion.
+    ///
+    /// Mathematical definition:
+    /// `$ \widetilde{\langle A \rangle_r} = (-1)^{r(r-1)/2}\langle A \rangle_r $`
+    ///
+    /// AX-ID: AXIOMA-001
+    /// See also: [`crate::semantic::rotor_sandwich`]
     #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
     #[inline]
     pub fn reverse(&self) -> Self {
