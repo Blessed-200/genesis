@@ -10,7 +10,7 @@ use core::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 use genesis_types::NodeId;
 use smallvec::SmallVec;
 
-use crate::kuramoto::QuantumKuramotoNetwork;
+use crate::kuramoto::{wrap_phase, QuantumKuramotoNetwork};
 
 const CERTAINTY_AMPLITUDE_MIN: f64 = 0.8;
 const CERTAINTY_DELTA_G_MAX: f64 = 0.15;
@@ -182,6 +182,12 @@ pub struct PhaseSemanticsEngine {
     entries: Vec<NodeSemanticEntry>,
     tension_edges: Vec<SemanticTensionEdge>,
     clusters: SmallVec<[SemanticCluster; 8]>,
+    phase_buf: Vec<f64>,
+    node_ids_buf: Vec<NodeId>,
+    neighbor_offsets: Vec<(usize, usize)>,
+    neighbor_flat: Vec<usize>,
+    degree_buf: Vec<usize>,
+    write_buf: Vec<usize>,
     field_state: CognitiveFieldState,
     network_state: NetworkSemanticState,
     metastate: MetaState,
@@ -203,6 +209,12 @@ impl PhaseSemanticsEngine {
             entries: Vec::new(),
             tension_edges: Vec::new(),
             clusters: SmallVec::new(),
+            phase_buf: Vec::new(),
+            node_ids_buf: Vec::new(),
+            neighbor_offsets: Vec::new(),
+            neighbor_flat: Vec::new(),
+            degree_buf: Vec::new(),
+            write_buf: Vec::new(),
             field_state: CognitiveFieldState {
                 dominant_marker: SemanticMarker::Exploration,
                 coherence: 0.0,
@@ -233,17 +245,32 @@ impl PhaseSemanticsEngine {
         self.entries.clear();
         self.tension_edges.clear();
         self.clusters.clear();
+        self.phase_buf.clear();
+        self.node_ids_buf.clear();
+        self.neighbor_offsets.clear();
+        self.neighbor_flat.clear();
+        self.degree_buf.clear();
+        self.write_buf.clear();
 
         self.entries.reserve(network.oscillators.len());
         self.tension_edges.reserve(network.coupling.len());
+        self.phase_buf.reserve(network.oscillators.len());
+        self.node_ids_buf.reserve(network.oscillators.len());
+        self.neighbor_offsets.reserve(network.oscillators.len());
+        self.neighbor_flat
+            .reserve(network.coupling.len().saturating_mul(2));
+        self.degree_buf.reserve(network.oscillators.len());
+        self.write_buf.reserve(network.oscillators.len());
 
         let mut sum_cos = 0.0;
         let mut sum_sin = 0.0;
 
         for osc in &network.oscillators {
-            let phase = wrap_phase(osc.primary_phase());
+            let phase = wrap_phase(osc.primary_phase()).rem_euclid(TAU);
             sum_cos += phase.cos();
             sum_sin += phase.sin();
+            self.phase_buf.push(phase);
+            self.node_ids_buf.push(osc.node_id);
 
             let amplitude = osc.amplitude_norm();
             let gradient = lookup_delta_g(delta_g, osc.node_id);
@@ -267,12 +294,29 @@ impl PhaseSemanticsEngine {
         }
 
         self.entries.sort_by_key(|entry| entry.state.node);
-        let neighbor_index = build_neighbor_index(&self.entries, &network.coupling);
-        let phases: Vec<f64> = self.entries.iter().map(|entry| entry.state.phase).collect();
+        self.node_ids_buf.clear();
+        self.phase_buf.clear();
+        for entry in &self.entries {
+            self.node_ids_buf.push(entry.state.node);
+            self.phase_buf.push(entry.state.phase);
+        }
+        build_neighbor_index(
+            &self.node_ids_buf,
+            &network.coupling,
+            &mut self.neighbor_offsets,
+            &mut self.neighbor_flat,
+            &mut self.degree_buf,
+            &mut self.write_buf,
+        );
         for (idx, entry) in self.entries.iter_mut().enumerate() {
             let phase = entry.state.phase;
-            let (coherence, divergence, mean_phase) =
-                local_phase_stats_indexed(idx, phase, &phases, &neighbor_index);
+            let (coherence, divergence, mean_phase) = local_phase_stats_indexed(
+                idx,
+                phase,
+                &self.phase_buf,
+                &self.neighbor_offsets,
+                &self.neighbor_flat,
+            );
             let variance = wrapped_distance_sq(phase, mean_phase);
             let stability = (1.0 - variance / STABILITY_VARIANCE_SCALE).clamp(0.0, 1.0);
             let marker = marker_from_signals(
@@ -552,16 +596,6 @@ const fn marker_rank(marker: SemanticMarker) -> u8 {
 }
 
 #[inline]
-fn wrap_phase(phase: f64) -> f64 {
-    let wrapped = phase.rem_euclid(TAU);
-    if wrapped == TAU {
-        0.0
-    } else {
-        wrapped
-    }
-}
-
-#[inline]
 fn wrapped_distance(a: f64, b: f64) -> f64 {
     let d = (a - b).abs();
     d.min(TAU - d)
@@ -582,7 +616,10 @@ fn lookup_delta_g(delta_g: &[(NodeId, f64)], node: NodeId) -> f64 {
 }
 
 #[inline]
-fn node_semantic_state_from_entries(entries: &[NodeSemanticEntry], node: NodeId) -> NodeSemanticState {
+fn node_semantic_state_from_entries(
+    entries: &[NodeSemanticEntry],
+    node: NodeId,
+) -> NodeSemanticState {
     entries
         .binary_search_by_key(&node, |entry| entry.state.node)
         .ok()
@@ -600,13 +637,14 @@ fn node_semantic_state_from_entries(entries: &[NodeSemanticEntry], node: NodeId)
 
 #[inline]
 fn phase_region(phase: f64) -> PhaseRegion {
-    if phase < FRAC_PI_4 {
+    let wrapped = phase.rem_euclid(TAU);
+    if wrapped < FRAC_PI_4 {
         PhaseRegion::Certainty
-    } else if phase < FRAC_PI_2 {
+    } else if wrapped < FRAC_PI_2 {
         PhaseRegion::Integration
-    } else if phase < PI {
+    } else if wrapped < PI {
         PhaseRegion::Exploration
-    } else if phase < 1.5 * PI {
+    } else if wrapped < 1.5 * PI {
         PhaseRegion::Tension
     } else {
         PhaseRegion::Release
@@ -646,28 +684,76 @@ fn marker_from_signals(
 }
 
 fn build_neighbor_index(
-    entries: &[NodeSemanticEntry],
+    node_ids: &[NodeId],
     edges: &[(NodeId, NodeId, f64, f64)],
-) -> Vec<Vec<usize>> {
-    let node_ids: Vec<NodeId> = entries.iter().map(|entry| entry.state.node).collect();
-    let mut node_to_neighbors = vec![Vec::new(); entries.len()];
-    for &(src, dst, _, _) in edges {
+    offsets: &mut Vec<(usize, usize)>,
+    flat: &mut Vec<usize>,
+    degree_buf: &mut Vec<usize>,
+    write_buf: &mut Vec<usize>,
+) {
+    offsets.clear();
+    offsets.resize(node_ids.len(), (0, 0));
+    flat.clear();
+    degree_buf.clear();
+    degree_buf.resize(node_ids.len(), 0usize);
+    for &(src, dst, gamma, _) in edges {
+        if gamma == 0.0 {
+            continue;
+        }
         let Ok(src_idx) = node_ids.binary_search(&src) else {
             continue;
         };
         let Ok(dst_idx) = node_ids.binary_search(&dst) else {
             continue;
         };
-        node_to_neighbors[src_idx].push(dst_idx);
+        if src_idx == dst_idx {
+            continue;
+        }
+        degree_buf[src_idx] += 1;
+        degree_buf[dst_idx] += 1;
     }
-    node_to_neighbors
+
+    let mut cursor = 0usize;
+    for (idx, &deg) in degree_buf.iter().enumerate() {
+        offsets[idx] = (cursor, cursor + deg);
+        cursor += deg;
+    }
+    flat.resize(cursor, 0usize);
+    write_buf.clear();
+    write_buf.resize(node_ids.len(), 0usize);
+    for (idx, &(start, _)) in offsets.iter().enumerate() {
+        write_buf[idx] = start;
+    }
+
+    for &(src, dst, gamma, _) in edges {
+        if gamma == 0.0 {
+            continue;
+        }
+        let Ok(src_idx) = node_ids.binary_search(&src) else {
+            continue;
+        };
+        let Ok(dst_idx) = node_ids.binary_search(&dst) else {
+            continue;
+        };
+        if src_idx == dst_idx {
+            continue;
+        }
+        let src_write = write_buf[src_idx];
+        flat[src_write] = dst_idx;
+        write_buf[src_idx] = src_write + 1;
+
+        let dst_write = write_buf[dst_idx];
+        flat[dst_write] = src_idx;
+        write_buf[dst_idx] = dst_write + 1;
+    }
 }
 
 fn local_phase_stats_indexed(
     node_idx: usize,
     phase: f64,
     phases: &[f64],
-    node_to_neighbors: &[Vec<usize>],
+    neighbor_offsets: &[(usize, usize)],
+    neighbors_flat: &[usize],
 ) -> (f64, f64, f64) {
     let mut coherence_acc = 0.0;
     let mut divergence_acc = 0.0;
@@ -675,7 +761,8 @@ fn local_phase_stats_indexed(
     let mut sum_sin = 0.0;
     let mut count = 0usize;
 
-    for &neighbor_idx in &node_to_neighbors[node_idx] {
+    let (start, end) = neighbor_offsets[node_idx];
+    for &neighbor_idx in &neighbors_flat[start..end] {
         let neighbor_phase = phases[neighbor_idx];
         let divergence = wrapped_distance(phase, neighbor_phase);
         coherence_acc += 1.0 - (divergence / PI).clamp(0.0, 1.0);
@@ -692,7 +779,7 @@ fn local_phase_stats_indexed(
         (
             coherence_acc / count_f,
             divergence_acc / count_f,
-            wrap_phase(sum_sin.atan2(sum_cos)),
+            wrap_phase(sum_sin.atan2(sum_cos)).rem_euclid(TAU),
         )
     }
 }

@@ -51,8 +51,6 @@ fn gaussian_noise(rng: &mut u64) -> f64 {
 
 // ── wrap_phase_diff ───────────────────────────────────────────────────────────
 
-const INV_TAU: f64 = 1.0 / core::f64::consts::TAU;
-
 /// Diferencia of phase in S¹.
 ///
 /// Expected range for main difference: (−π, π].
@@ -69,14 +67,21 @@ const INV_TAU: f64 = 1.0 / core::f64::consts::TAU;
 // Hot path of diferencias angulares used in metrics and coupling of phase.
 #[allow(clippy::inline_always)]
 #[inline(always)]
-fn wrap_phase_diff(d: f64) -> f64 {
-    let turns = d.mul_add(INV_TAU, 0.5).floor();
-    let wrapped = core::f64::consts::TAU.mul_add(-turns, d);
-    if wrapped == core::f64::consts::PI {
+pub(crate) fn wrap_phase(x: f64) -> f64 {
+    const INV_TAU: f64 = 1.0 / core::f64::consts::TAU;
+    let turns = x.mul_add(INV_TAU, 0.5).floor();
+    let wrapped = core::f64::consts::TAU.mul_add(-turns, x);
+    if wrapped.to_bits() == core::f64::consts::PI.to_bits() {
         -core::f64::consts::PI
     } else {
         wrapped
     }
+}
+
+#[allow(clippy::inline_always)]
+#[inline(always)]
+fn wrap_phase_diff(d: f64) -> f64 {
+    wrap_phase(d)
 }
 
 // ── QuantumKuramotoNetwork ────────────────────────────────────────────────────
@@ -822,9 +827,7 @@ impl QuantumKuramotoNetwork {
 
     fn update_gauge_fields(&mut self) {
         self.gauge_scratch.resize(self.coupling.len(), f64::NAN);
-        for gauge in &mut self.gauge_scratch {
-            *gauge = f64::NAN;
-        }
+        self.gauge_scratch.fill(f64::NAN);
         for edge_idx in 0..self.coupling.len() {
             if self.gauge_scratch[edge_idx].is_finite() {
                 continue;
@@ -857,7 +860,7 @@ impl QuantumKuramotoNetwork {
 
         for (edge_idx, &gauge) in self.gauge_scratch.iter().enumerate() {
             if gauge.is_finite() {
-                self.coupling[edge_idx].3 = wrap_phase_diff(gauge);
+                self.coupling[edge_idx].3 = gauge;
             }
         }
         self.refresh_coupling_idx_fields();

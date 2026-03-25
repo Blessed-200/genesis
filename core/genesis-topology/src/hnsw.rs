@@ -165,6 +165,16 @@ fn compare_dist_idx(lhs: (f32, u32), rhs: (f32, u32)) -> Ordering {
     lhs.0.total_cmp(&rhs.0).then_with(|| lhs.1.cmp(&rhs.1))
 }
 
+#[inline]
+fn ordered_f64_bits(value: f64) -> u64 {
+    let bits = value.to_bits();
+    if (bits & (1_u64 << 63)) != 0 {
+        !bits
+    } else {
+        bits | (1_u64 << 63)
+    }
+}
+
 fn slab_distance_scalar(
     slab_ptr: *const f32,
     block: usize,
@@ -1329,7 +1339,7 @@ impl HnswGraph {
         // Degree is bounded by HNSW neighbour caps (layer 0 <= M0; upper layers <= M).
         debug_assert!(degree <= M0);
         let query_f32 = (layer == 0).then(|| Self::dense_to_query_f32(&self.nodes[idx].vec));
-        let mut scored: SmallVec<[u64; M0]> = SmallVec::with_capacity(degree);
+        let mut scored: SmallVec<[u128; M0]> = SmallVec::with_capacity(degree);
         for nb_idx_u32 in self.node_neighbors_iter(idx, layer) {
             let nb_idx = nb_idx_u32 as usize;
             let dist = if let Some(query_f32) = &query_f32 {
@@ -1337,18 +1347,17 @@ impl HnswGraph {
             } else {
                 self.distance_to_node_sq(&self.nodes[idx].vec, nb_idx, layer)
             };
-            // f64 -> f32 is sufficient for pruning order; NaN/inf lanes map to +inf bucket.
-            let dist_bits = (dist as f32).to_bits();
-            scored.push(((dist_bits as u64) << 32) | u64::from(nb_idx_u32));
+            let key = (u128::from(ordered_f64_bits(dist)) << 64) | u128::from(nb_idx_u32);
+            scored.push(key);
         }
 
-        // Partition only: keep m_max smallest packed keys in prefix.
-        scored.select_nth_unstable(m_max - 1);
+        // Deterministic full ordering over (distance_bits, node_idx).
+        scored.sort_unstable();
 
         // Extract overflow IDs before mutating adjacency (requires &mut self).
         let drop: SmallVec<[u32; M0]> = scored[m_max..]
             .iter()
-            .map(|&packed| (packed & 0xFFFF_FFFF) as u32)
+            .map(|&packed| (packed & 0xFFFF_FFFF_FFFF_FFFF) as u32)
             .collect();
 
         for nb_idx_u32 in drop {
@@ -1570,23 +1579,22 @@ impl HnswGraph {
     pub fn neighbors_within(&self, id: NodeId, radius: f64) -> impl Iterator<Item = NodeId> + '_ {
         // FIX-E.1: Single get_idx call — the former code called idx(id) twice
         // (once for `node_vec`, once for `idx`), wasting a lookup per call.
-        let candidates: SmallVec<[NodeId; M]> =
-            self.idx(id).map_or_else(SmallVec::new, |idx| {
-                let Some(node) = self.nodes.get(idx) else {
-                    return SmallVec::new();
-                };
-                let nv = node.vec;
-                let layer0_len = self.node_neighbors_len(idx, 0);
-                let mut local = SmallVec::<[NodeId; M]>::with_capacity(layer0_len.min(M0));
-                for nb_idx_u32 in self.node_neighbors_iter(idx, 0) {
-                    let ni = nb_idx_u32 as usize;
-                    let d = self.distance_to_node(&nv, ni, 0);
-                    if d <= radius {
-                        local.push(self.nodes[ni].id);
-                    }
+        let candidates: SmallVec<[NodeId; M]> = self.idx(id).map_or_else(SmallVec::new, |idx| {
+            let Some(node) = self.nodes.get(idx) else {
+                return SmallVec::new();
+            };
+            let nv = node.vec;
+            let layer0_len = self.node_neighbors_len(idx, 0);
+            let mut local = SmallVec::<[NodeId; M]>::with_capacity(layer0_len.min(M0));
+            for nb_idx_u32 in self.node_neighbors_iter(idx, 0) {
+                let ni = nb_idx_u32 as usize;
+                let d = self.distance_to_node(&nv, ni, 0);
+                if d <= radius {
+                    local.push(self.nodes[ni].id);
                 }
-                local
-            });
+            }
+            local
+        });
         candidates.into_iter()
     }
 

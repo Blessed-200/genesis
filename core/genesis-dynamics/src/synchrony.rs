@@ -159,11 +159,11 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
 
     const N_GRADES: usize = 5;
     const EPS: f64 = 1e-30;
-    /// Minimum oscillator count for rayon parallelism to be beneficial.
-    /// Below this threshold, serial reduction is faster due to rayon overhead.
-    const RAYON_THRESHOLD: usize = 4096;
+    /// Fixed chunk size for deterministic partitioning across thread counts.
+    /// 128 oscillators × 5 grades keeps chunk-local working set in L1 cache.
+    const DETERMINISTIC_CHUNK: usize = 128;
 
-    /// Inner reduction over a slice — used by both serial and parallel paths.
+    /// Inner reduction over a slice with deterministic local iteration order.
     #[inline]
     fn reduce_slice(oscs: &[crate::oscillator::QuantumOscillator]) -> [(f64, f64, f64); 5] {
         let mut acc = [(0.0f64, 0.0f64, 0.0f64); 5];
@@ -190,44 +190,36 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
         acc
     }
 
-    let grade_totals: [(f64, f64, f64); N_GRADES] = if oscs.len() < RAYON_THRESHOLD {
-        // Serial path: O(N×G) — optimal for small N (avoids rayon overhead).
-        reduce_slice(oscs)
-    } else {
-        // Parallel path: rayon fold-reduce — optimal for large N.
-        oscs.par_iter()
-            .fold(
-                || [(0.0f64, 0.0f64, 0.0f64); N_GRADES],
-                |mut acc, osc| {
-                    for (g, grade_acc) in acc.iter_mut().enumerate().take(N_GRADES) {
-                        let a = osc.amplitudes[g];
-                        #[cfg(feature = "poly_trig")]
-                        {
-                            grade_acc.0 = a.mul_add(poly_cos(osc.phases[g]), grade_acc.0);
-                            grade_acc.1 = a.mul_add(poly_sin(osc.phases[g]), grade_acc.1);
-                        }
-                        #[cfg(not(feature = "poly_trig"))]
-                        {
-                            grade_acc.0 = a.mul_add(osc.phases[g].cos(), grade_acc.0);
-                            grade_acc.1 = a.mul_add(osc.phases[g].sin(), grade_acc.1);
-                        }
-                        grade_acc.2 += a;
-                    }
-                    acc
-                },
-            )
-            .reduce(
-                || [(0.0f64, 0.0f64, 0.0f64); N_GRADES],
-                |mut a, b| {
-                    for (grade_a, grade_b) in a.iter_mut().zip(b.iter()).take(N_GRADES) {
-                        grade_a.0 += grade_b.0;
-                        grade_a.1 += grade_b.1;
-                        grade_a.2 += grade_b.2;
-                    }
-                    a
-                },
-            )
-    };
+    let chunk_count = oscs.len().div_ceil(DETERMINISTIC_CHUNK);
+    let mut partials = vec![[(0.0f64, 0.0f64, 0.0f64); N_GRADES]; chunk_count];
+    partials
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(chunk_idx, chunk_out)| {
+            let start = chunk_idx * DETERMINISTIC_CHUNK;
+            let end = (start + DETERMINISTIC_CHUNK).min(oscs.len());
+            *chunk_out = reduce_slice(&oscs[start..end]);
+        });
+
+    let mut grade_totals = [(0.0f64, 0.0f64, 0.0f64); N_GRADES];
+    let mut stride = 1usize;
+    while stride < chunk_count {
+        let step = stride * 2;
+        let mut base = 0usize;
+        while base + stride < chunk_count {
+            let (head, tail) = partials.split_at_mut(base + stride);
+            for (left, right) in head[base].iter_mut().zip(tail[0].iter()) {
+                left.0 += right.0;
+                left.1 += right.1;
+                left.2 += right.2;
+            }
+            base += step;
+        }
+        stride = step;
+    }
+    if chunk_count > 0 {
+        grade_totals = partials[0];
+    }
 
     let r_total: f64 = grade_totals
         .iter()

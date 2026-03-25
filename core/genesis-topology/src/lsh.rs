@@ -1,6 +1,3 @@
-use std::cmp::{Ordering, Reverse};
-use std::collections::BinaryHeap;
-
 use genesis_math::SparseCliffordVector;
 /// AX-ID: AXIOMA-013
 /// Locality Sensitive Hashing for G(1,3) vectors.
@@ -227,65 +224,31 @@ impl CliffordHashTable {
         &'a self,
         query: &SparseCliffordVector,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        #[derive(Copy, Clone, Eq, PartialEq)]
-        struct MergeItem {
-            id_key: u64,
-            table_idx: usize,
-            elem_idx: usize,
-            id: NodeId,
-        }
-
-        impl Ord for MergeItem {
-            fn cmp(&self, other: &Self) -> Ordering {
-                self.id_key
-                    .cmp(&other.id_key)
-                    .then_with(|| self.table_idx.cmp(&other.table_idx))
-                    .then_with(|| self.elem_idx.cmp(&other.elem_idx))
-            }
-        }
-
-        impl PartialOrd for MergeItem {
-            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-                Some(self.cmp(other))
-            }
-        }
-
         let packed = pack_bivector_coeffs(query);
         let bucket_slices: [&[NodeId]; N_TABLES] =
             core::array::from_fn(|t| self.tables[t].get(self.hash_packed_bivector(&packed, t)));
-
-        let mut heap: BinaryHeap<Reverse<MergeItem>> = BinaryHeap::new();
-        for (table_idx, bucket) in bucket_slices.iter().enumerate() {
-            if let Some(&id) = bucket.first() {
-                heap.push(Reverse(MergeItem {
-                    id_key: id.get(),
-                    table_idx,
-                    elem_idx: 0,
-                    id,
-                }));
-            }
-        }
-
-        let mut result: Vec<NodeId> = Vec::new();
+        let mut cursors = [0usize; N_TABLES];
         let mut last_emitted: Option<NodeId> = None;
-        while let Some(Reverse(item)) = heap.pop() {
-            if last_emitted != Some(item.id) {
-                result.push(item.id);
-                last_emitted = Some(item.id);
+        core::iter::from_fn(move || loop {
+            let mut best: Option<(u64, usize, NodeId)> = None;
+            for table_idx in 0..N_TABLES {
+                let cursor = cursors[table_idx];
+                let Some(&id) = bucket_slices[table_idx].get(cursor) else {
+                    continue;
+                };
+                let candidate = (id.get(), table_idx, id);
+                if best.as_ref().is_none_or(|current| candidate < *current) {
+                    best = Some(candidate);
+                }
             }
-
-            let next_idx = item.elem_idx + 1;
-            if let Some(&next_id) = bucket_slices[item.table_idx].get(next_idx) {
-                heap.push(Reverse(MergeItem {
-                    id_key: next_id.get(),
-                    table_idx: item.table_idx,
-                    elem_idx: next_idx,
-                    id: next_id,
-                }));
+            let (_, table_idx, id) = best?;
+            cursors[table_idx] += 1;
+            if last_emitted == Some(id) {
+                continue;
             }
-        }
-
-        result.into_iter()
+            last_emitted = Some(id);
+            return Some(id);
+        })
     }
 }
 
@@ -463,7 +426,7 @@ mod tests {
                 .iter()
                 .map(|(id, v)| (*id, geometric_distance(&query, v)))
                 .collect::<Vec<_>>();
-            exact.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal));
+            exact.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
             let top5 = exact.iter().take(5).map(|(id, _)| *id).collect::<Vec<_>>();
 
             let candidates_biv = table.candidates(&query).collect::<Vec<_>>();

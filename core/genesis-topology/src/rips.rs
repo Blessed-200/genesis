@@ -58,15 +58,12 @@ impl RipsComplex {
             };
         }
 
-        let max_id = node_ids
+        let mut id_to_idx: Vec<(u64, usize)> = node_ids
             .iter()
-            .map(|id| id.get() as usize)
-            .max()
-            .unwrap_or(0);
-        let mut id_to_idx = vec![usize::MAX; max_id + 1];
-        for (idx, id) in node_ids.iter().copied().enumerate() {
-            id_to_idx[id.get() as usize] = idx;
-        }
+            .enumerate()
+            .map(|(idx, id)| (id.get(), idx))
+            .collect();
+        id_to_idx.sort_unstable_by_key(|&(id, _)| id);
 
         // Compact adjacency by internal node index.
         let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); node_count];
@@ -75,14 +72,10 @@ impl RipsComplex {
         for (u_idx, &u) in node_ids.iter().enumerate() {
             if let Some(u_vec) = graph.vector(u) {
                 for v in graph.neighbors(u).filter(|&v| u.get() < v.get()) {
-                    let v_raw = v.get() as usize;
-                    if v_raw >= id_to_idx.len() {
+                    let Ok(pos) = id_to_idx.binary_search_by_key(&v.get(), |&(id, _)| id) else {
                         continue;
-                    }
-                    let v_idx = id_to_idx[v_raw];
-                    if v_idx == usize::MAX {
-                        continue;
-                    }
+                    };
+                    let v_idx = id_to_idx[pos].1;
                     if let Some(v_vec) = graph.vector(v) {
                         let d = geometric_distance(u_vec, v_vec);
                         if d <= epsilon {

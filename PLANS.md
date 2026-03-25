@@ -878,3 +878,69 @@ Remaining risk:
 - `cargo check --workspace 2>&1 | grep "^warning:"`
 - `cargo test --workspace --release 2>&1 | grep -E "FAILED|^test result"`
 - `cargo clippy --workspace -- -D warnings 2>&1 | grep "^error"`
+
+## 0.6 Level-0 invariant enforcement pass (2026-03-25)
+
+### Root cause map
+- `core/genesis-dynamics/src/synchrony.rs::synchrony_order_fast` uses dual serial/parallel floating reduction paths with different accumulation order.
+- `core/genesis-topology/src/hnsw.rs::prune_layer` uses lossy `f64 -> f32` ranking and `select_nth_unstable`, allowing tie instability.
+- Phase wrapping logic is duplicated across `kuramoto.rs` and `phase_semantics.rs` with different boundary conventions.
+- `core/genesis-topology/src/lsh.rs`, `core/genesis-dynamics/src/phase_semantics.rs`, and `core/genesis-dynamics/src/criticality.rs` still allocate/recompute in iterative paths.
+- `core/genesis-topology/src/rips.rs::build` allocates by `max_id + 1`, scaling with id range instead of node count.
+
+### File-level actions
+1. `core/genesis-dynamics/src/synchrony.rs`
+   - Replace split serial/parallel reduction with a single deterministic chunked reduction algorithm.
+   - Use fixed chunk partitioning plus deterministic sequential combine order.
+2. `core/genesis-topology/src/hnsw.rs`
+   - Introduce monotonic full-precision `ordered_f64_bits` keying for prune ranking.
+   - Remove `f32` ranking and `select_nth_unstable` from prune path; use deterministic full ordering.
+3. `core/genesis-dynamics/src/kuramoto.rs` + `core/genesis-dynamics/src/phase_semantics.rs`
+   - Introduce one canonical phase wrap function with explicit `(-π, π]` range and no `== PI` checks.
+   - Route both modules through canonical implementation.
+4. `core/genesis-topology/src/lsh.rs`
+   - Remove per-call `BinaryHeap` and `Vec` materialization from candidate merge.
+   - Implement iterator-based fixed-table k-way merge without heap allocations.
+5. `core/genesis-dynamics/src/phase_semantics.rs`
+   - Reuse preallocated phase and neighbor buffers across updates.
+6. `core/genesis-dynamics/src/criticality.rs`
+   - Fuse redundant passes in `tau_exponent_report`; compute Clauset terms from one sample collection.
+7. `core/genesis-topology/src/rips.rs`
+   - Replace `max_id + 1` dense map with compact sorted `(id, idx)` mapping.
+
+### Validation
+- Skills pre-checks:
+  - `cargo test --release -p genesis-topology -- invariant --nocapture`
+  - `cargo test --release -p genesis-dynamics -- invariant --nocapture`
+- Workspace gates:
+  - `cargo test --workspace --release`
+  - `cargo clippy --workspace -- -D warnings`
+- Determinism checks:
+  - Add/adjust tests to assert stable ordering/bit-pattern equivalence in synchrony and HNSW prune outcomes.
+- Performance checks (skill-driven):
+  - `cargo bench -p genesis-topology --bench topology -- hnsw_search_k10_in_1000 --output-format bencher`
+  - `cargo bench -p genesis-dynamics --bench dynamics -- kuramoto --output-format bencher`
+
+## 0.7 Corrective pass — recover Kuramoto guardrail after Level-0 determinism (2026-03-25)
+
+### Root cause
+- Deterministic enforcement increased scalar overhead in hot paths:
+  - `synchrony_order_fast` used deterministic but scalar-heavy final combination.
+  - `wrap_phase` introduced extra branch/tolerance checks in Kuramoto tight loops.
+  - Phase-semantics neighbor buffer shape used nested vectors with indirect reads.
+
+### File-level actions
+1. `core/genesis-dynamics/src/synchrony.rs`
+   - Keep deterministic fixed partitioning, but perform fixed-tree deterministic reduction over chunk partials.
+   - Use SIMD-friendly chunk width and remove large sequential fold patterns.
+2. `core/genesis-dynamics/src/kuramoto.rs`
+   - Implement branchless arithmetic wrap: `x - TAU * floor((x + PI) / TAU)`.
+   - Keep `#[inline(always)]` for hot path.
+3. `core/genesis-dynamics/src/phase_semantics.rs`
+   - Replace nested neighbor vectors with contiguous CSR-like buffers (`offsets + flat`).
+   - Keep linear writes and linear traversal to improve cache behavior.
+
+### Validation
+- `cargo test --workspace --release`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo bench -p genesis-dynamics --bench dynamics -- kuramoto --output-format bencher`
