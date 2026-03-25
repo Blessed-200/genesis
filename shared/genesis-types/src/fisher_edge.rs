@@ -160,14 +160,14 @@ mod tests {
     }
 
     #[test]
-    fn get_existing_edge_returns_value() {
+    fn existing_edge_returns_value() {
         let m = FisherEdgeMetric::new(vec![((node(0), node(1)), 0.5)]);
         assert!((m.get(node(0), node(1)) - 0.5).abs() < 1e-15);
         assert!((m.get(node(1), node(0)) - 0.5).abs() < 1e-15);
     }
 
     #[test]
-    fn get_missing_edge_returns_zero() {
+    fn missing_edge_returns_zero() {
         let m = FisherEdgeMetric::new(vec![]);
         assert_eq!(m.get(node(0), node(1)), 0.0);
     }

@@ -376,7 +376,7 @@ fn intersection_count(left: &[NodeId], right: &[NodeId]) -> usize {
 }
 
 fn nearest_neighbors_by_metric(graph: &HnswGraph, center: NodeId) -> Vec<NodeId> {
-    let Some(center_vec) = graph.get_vector(center) else {
+    let Some(center_vec) = graph.vector(center) else {
         return Vec::new();
     };
 
@@ -384,7 +384,7 @@ fn nearest_neighbors_by_metric(graph: &HnswGraph, center: NodeId) -> Vec<NodeId>
         .neighbors(center)
         .filter_map(|neighbor| {
             graph
-                .get_vector(neighbor)
+                .vector(neighbor)
                 .map(|neighbor_vec| (neighbor, geometric_distance(center_vec, neighbor_vec)))
         })
         .collect::<Vec<_>>();
@@ -399,10 +399,10 @@ fn nearest_neighbors_by_metric(graph: &HnswGraph, center: NodeId) -> Vec<NodeId>
 
 fn local_hyperbolic_delta(graph: &HnswGraph, nodes: [NodeId; 4]) -> Option<f64> {
     let [a_id, b_id, c_id, d_id] = nodes;
-    let a = graph.get_vector(a_id)?;
-    let b = graph.get_vector(b_id)?;
-    let c = graph.get_vector(c_id)?;
-    let d = graph.get_vector(d_id)?;
+    let a = graph.vector(a_id)?;
+    let b = graph.vector(b_id)?;
+    let c = graph.vector(c_id)?;
+    let d = graph.vector(d_id)?;
     // loop-invariant, hoisted
     // CRYSTAL: O61, O62, O63, O64, FO44 — inevitable
 

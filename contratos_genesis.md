@@ -469,7 +469,7 @@ pub struct HnswGraph { ... }  // not Clone
 | `search_nearest(query, k)` | `(&mut self, &SparseCliffordVector, usize) → Vec<NodeId>` | `&mut self` for generation-counter visited tracking. Returns ≤ k nearest by `geometric_distance`. |
 | `neighbors(id)` | `(NodeId) → impl Iterator<Item=NodeId>` | Layer-0 neighbours. |
 | `neighbors_within(id, radius)` | `(NodeId, f64) → impl Iterator<Item=NodeId>` | Layer-0 neighbours with `geometric_distance ≤ radius`. Single `get_idx` call. |
-| `get_vector(id)` | `(NodeId) → Option<&SparseCliffordVector>` | `None` if absent. |
+| `vector(id)` | `(NodeId) → Option<&SparseCliffordVector>` | `None` if absent. |
 | `nodes()` | `() → impl Iterator<Item=NodeId>` | |
 | `node_count() → usize` | | |
 | `edge_count() → usize` | | Layer-0 only. |
