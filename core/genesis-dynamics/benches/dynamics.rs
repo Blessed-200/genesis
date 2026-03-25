@@ -21,7 +21,7 @@ fn build_network_sparse(n: usize, k: usize, temperature: f64) -> QuantumKuramoto
         ))
         .expect("NodeId válido por construcción");
     }
-    // Acoplamiento anillo: cada nodo conectado a k vecinos
+    // Ring coupling: each node connected to k neighbors
     for i in 0..n {
         for d in 1..=(k / 2) {
             let j = (i + d) % n;
@@ -52,11 +52,11 @@ fn build_vfe(n: usize) -> VFEMinimizer {
     vfe
 }
 
-// ── Guardrails de baseline ─────────────────────────────────────────────────────
+// ── Guardrails of baseline ─────────────────────────────────────────────────────
 
 const BASELINE_KURAMOTO_STEP_1000_NS: f64 = 1_400_000.0;
-/// Guardrail para la implementación escalar actual (10 000 ops trigonométricas).
-/// En hardware moderno, ~200 000 ns. Se establece un margen de 250 000 ns.
+/// Guardrail for the current scalar implementation (10 000 trigonometric ops).
+/// En hardware moderno, ~200 000 ns. A margin of 250 000 ns.
 const BASELINE_SYNCHRONY_ORDER_1000_NS: f64 = 250_000.0;
 /// Guardrail for `synchrony_order_fast` at N=1000 (serial path, N < `RAYON_THRESHOLD=4096`).
 ///
@@ -143,7 +143,7 @@ fn guardrail_baselines() {
 fn bench_kuramoto_step_1000_nodes(c: &mut Criterion) {
     guardrail_baselines();
     let mut net = build_network_sparse(1000, 8, 0.01);
-    // Pre-warm: un step para forzar rebuild del índice interno
+    // Pre-warm: one step to force internal index rebuild
     net.step(0.01);
     c.bench_function("kuramoto_step_1000_nodes", |b| {
         b.iter(|| {

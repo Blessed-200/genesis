@@ -1,5 +1,5 @@
 #![allow(clippy::items_after_test_module)]
-//! # Physical Constants of the GÉNESIS Cognitive Core
+//! # Physical Constants of the GENESIS Cognitive Core
 //!
 //! Every constant defined here is a **physical law** of the system.
 //! No implementation may substitute, approximate, or override these values
@@ -187,7 +187,7 @@ pub const SINKHORN_CONVERGENCE_EPSILON: f64 = 1e-9;
 pub const SINKHORN_REGULARISATION: f64 = 5e-2;
 
 // ============================================================================
-// JOHNSON-LINDENSTRAUSS BASIS EXPANSION
+// JOHNSON-LINDENSTRAUSS BASIS Expansion
 // ============================================================================
 
 /// Residual magnitude threshold for Johnson-Lindenstrauss basis expansion.
@@ -255,7 +255,7 @@ mod tests {
     /// AX-ID: AXIOMA-001, AXIOMA-002
     #[test]
     fn minkowski_signature_space_negative() {
-        // CORRECCIÓN-3: unrolled to avoid needless_range_loop over fixed array.
+        // CORRECTION-3: unrolled to avoid needless_range_loop over fixed array.
         assert!(MINKOWSKI_SIGNATURE[1] < 0.0);
         assert!(MINKOWSKI_SIGNATURE[2] < 0.0);
         assert!(MINKOWSKI_SIGNATURE[3] < 0.0);
@@ -286,7 +286,7 @@ mod tests {
         assert_ne!(SPATIAL_BASIS_MASK & 0b1000, 0, "Bit 3 (e₃) must be spatial");
     }
 
-    /// CORRECCIÓN-3: use `.iter().enumerate()` to avoid needless_range_loop.
+    /// CORRECTION-3: use `.iter().enumerate()` to avoid needless_range_loop.
     #[test]
     fn spatial_mask_consistent_with_minkowski_signature() {
         for (i, &sig) in MINKOWSKI_SIGNATURE.iter().enumerate() {
@@ -386,18 +386,18 @@ mod tests {
 // PROOF SYSTEM PARAMETERS (GENESIS_PROOF_SPEC v1.1.0)
 // ============================================================================
 
-/// Conectividad algebraica mínima λ₂ del grafo HNSW.
-/// Si λ₂ < `LAMBDA2_MIN`, el sistema rechaza la configuración.
+/// Minimum algebraic connectivity λ₂ of the HNSW graph.
+/// If λ₂ < `LAMBDA2_MIN`, the system rejects the configuration.
 ///
 /// AX-ID: `LEY_FUNDACIONAL` §5.3
 pub const LAMBDA2_MIN: f64 = 0.1;
 
-/// Penalización de `H_restricción` cuando una mutación carece de Proof válido.
+/// `H_restricción` penalty when a mutation lacks a valid Proof.
 ///
 /// AX-ID: `LEY_FUNDACIONAL` §3.5
 pub const PROOF_PENALTY: f64 = 1000.0;
 
-/// Tiempo máximo (nanosegundos) que un Proof permanece válido (anti-replay).
+/// Maximum time (nanoseconds) for which a Proof remains valid (anti-replay).
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.2
 pub const PROOF_MAX_AGE_NS: u64 = 5_000_000_000;
@@ -406,44 +406,44 @@ pub const PROOF_MAX_AGE_NS: u64 = 5_000_000_000;
 // VARIATIONAL EXTENSIONS v1.1.0 (LEY_FUNDACIONAL §9)
 // ============================================================================
 
-/// Penalización por densidad excesiva de aristas en `H_restricción`.
+/// Penalty for excessive edge density in `H_restricción`.
 /// `κ_s` = 50.0 — penaliza |E| > N·log(N).
 ///
 /// AX-ID: `LEY_FUNDACIONAL` §3.5
 pub const DENSITY_PENALTY: f64 = 50.0;
 
-/// Factor de acoplamiento para `H_dualidad`.
+/// Coupling factor for `H_dualidad`.
 /// δ = 0.01 — penaliza divergencia g_{ij} vs G^Fisher_{ij}.
 ///
 /// AX-ID: `LEY_FUNDACIONAL` §3.6
 pub const DELTA_DUALITY: f64 = 0.01;
 
-/// Penalización por redundancia representacional en `H_compresión`.
+/// Penalty for representational redundancy in `H_compresión`.
 /// `κ_r` = 0.05
 ///
 /// AX-ID: `LEY_FUNDACIONAL` §3.7
 pub const KAPPA_REDUNDANCY: f64 = 0.05;
 
-/// Radio de búsqueda para detección de redundancia en `H_compresión`.
+///Radius of search for detection of redundancy in `H_compression`.
 /// `ε_r` = 0.1
 ///
 /// AX-ID: `LEY_FUNDACIONAL` §3.7
 pub const REDUNDANCY_RADIUS: f64 = 0.1;
 
-/// Umbral de diferenciación de fases para `H_compresión`.
-/// `θ_r` = 0.3 — si ||φᵢ - φⱼ|| < `θ_r`, los nodos son redundantes.
+/// Phase differentiation threshold for `H_compresión`.
+/// `θ_r` = 0.3 — if ||φᵢ - φⱼ|| < `θ_r`, nodes are redundant.
 ///
 /// AX-ID: `LEY_FUNDACIONAL` §3.7
 pub const PHASE_DISTINCTION_THRESHOLD: f64 = 0.3;
 
-/// Costo fijo de existencia de una nueva dimensión.
+/// Fixed existence cost of a new dimension.
 /// `λ_fixed` = 0.05
 ///
 /// AX-ID: `LEY_FUNDACIONAL` §3.8, §5.7
 pub const LAMBDA_DIM_FIXED: f64 = 0.05;
 
-/// Costo logarítmico por escala de una nueva dimensión.
-/// `λ_log` = 0.01 — el costo crece con ln(N).
+/// Logarithmic scale cost of a new dimension.
+/// `λ_log` = 0.01 — the cost grows with ln(N).
 ///
 /// AX-ID: `LEY_FUNDACIONAL` §3.8, §5.7
 pub const LAMBDA_DIM_LOG: f64 = 0.01;

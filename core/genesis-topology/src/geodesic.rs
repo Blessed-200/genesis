@@ -1,18 +1,18 @@
-//! Distancias geométricas en G(1,3).
+//! Geometric distances in G(1,3).
 //!
-//! La función principal es `geometric_distance`, que satisface los cuatro
-//! axiomas métricos. `fast_bivector_distance` queda obsoleta.
+//! The main function is `geometric_distance`, which satisfies all four
+//! axioms metric. `fast_bivector_distance` is deprecated.
 //!
 //! AX-ID: AXIOMA-013, AXIOMA-014, LEY_FUNDACIONAL §3.6
 use genesis_math::{
     bivector_norm_sq_of_product, fast_metric_distance, BivectorProduct, SparseCliffordVector,
 };
 
-/// Distancia geométrica global en G(1,3).
+/// Global geometric distance in G(1,3).
 ///
-/// Es la métrica principal del sistema: satisface simetría, positividad,
-/// identidad y desigualdad triangular. Se utiliza en HNSW, cálculo de λ₂
-/// y todas las operaciones topológicas.
+/// It is the system's main metric: satisfies symmetry, positivity,
+/// identidad and triangle inequality. It utiliza in HNSW, λ₂ computation
+/// and all topological operations.
 ///
 /// AX-ID: AXIOMA-013, AXIOMA-014, LEY_FUNDACIONAL §3.6
 #[allow(clippy::inline_always)]
@@ -21,11 +21,11 @@ pub fn geometric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) ->
     fast_metric_distance(a, b)
 }
 
-/// Interacción bivectorial: norma de la parte de grado 2 del producto a*b.
+/// Bivector interaction: norm of the grade-2 component of the product a*b.
 ///
-/// NO es una distancia métrica (no cumple la desigualdad triangular).
-/// Mide la "separación angular" en el subespacio de bivectores, útil para
-/// detectar alineamiento geométrico entre conceptos en genesis-evolution.
+/// NOT a metric distance (it does not satisfy the triangle inequality).
+/// Measures "angular separation" in the subspace of bivectors, useful for
+/// detect alignment geometric between concepts in genesis-evolution.
 ///
 /// AX-ID: AXIOMA-001 (estructura G(1,3))
 pub fn bivector_interaction(a: &SparseCliffordVector, b: &SparseCliffordVector) -> f64 {
@@ -35,10 +35,10 @@ pub fn bivector_interaction(a: &SparseCliffordVector, b: &SparseCliffordVector) 
     }
 }
 
-/// Alias de compatibilidad — DEPRECADO: usar `geometric_distance()`.
+/// Alias of compatibility — DEPRECADO: use `geometric_distance()`.
 ///
-/// `geometric_distance` es una métrica verdadera que satisface la
-/// desigualdad triangular. Esta función delega en ella.
+/// `geometric_distance` is a true metric that satisfies the
+/// triangle inequality. Is function delegates in ella.
 ///
 /// AX-ID: AXIOMA-013, AXIOMA-014
 #[deprecated(note = "usar geometric_distance(), que es una métrica verdadera")]
@@ -189,11 +189,11 @@ mod tests {
         assert!(!d.is_nan());
     }
 
-    /// Verifica que fast_bivector_distance_from_dense produce la misma distancia
-    /// que geometric_distance cuando el denso es extraído del sparse.
+    /// Verifies that fast_bivector_distance_from_dense produces the same distance
+    /// as geometric_distance when the dense vector is extracted from the sparse one.
     ///
-    /// Esto garantiza que el path f16 (hnsw-f16) produce los mismos vecinos
-    /// que el path f32 estándar — consistencia métrica entre ambos paths.
+    ///This guarantees that path f16 (hnsw-f16) produces the same neighbors
+    /// as the standard f32 path — metric consistency between both paths.
     ///
     /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
     #[test]
@@ -201,7 +201,7 @@ mod tests {
         let a = make_vec(&[(0b0001, 1.0), (0b0010, 0.5), (0b0011, 0.3)]);
         let b = make_vec(&[(0b0001, 0.2), (0b0100, 0.8), (0b1111, 0.1)]);
 
-        // Extraer a como denso (simula descompresión f16 → f64)
+        // Extract a as dense (simulates decompression f16 → f64)
         let a_dense: [f64; 16] = a.coeffs;
 
         let d_sparse = geometric_distance(&a, &b);

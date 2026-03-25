@@ -107,7 +107,7 @@ impl CliffordBasis {
 
         let mut blade = 0usize;
         while blade < TOTAL_BLADES {
-            // blade < TOTAL_BLADES = 16, count_ones() ≤ 4, siempre cabe en u8.
+            // blade < TOTAL_BLADES = 16, count_ones() ≤ 4, siempre cabe in u8.
             #[allow(clippy::cast_possible_truncation)]
             let g = blade.count_ones() as u8; // ≤ 4, siempre dentro de u8
             grade[blade] = g;
@@ -118,17 +118,17 @@ impl CliffordBasis {
             // CRYSTAL: FO29 — inevitable
             let parity = (g & 1) as i32;
             if parity != 0 {
-                // TOTAL_BLADES = 16 — siempre cabe en i32 y usize.
-                // Usamos i32 para la aritmética del árbol de Fenwick (i & -i)
-                // que requiere complemento a dos con signo.
+                // TOTAL_BLADES = 16 — siempre cabe in i32 and usize.
+                // We use i32 for Fenwick-tree arithmetic (i & -i)
+                // which requires signed two's-complement.
                 #[allow(
                     clippy::cast_possible_truncation,
                     clippy::cast_sign_loss,
                     clippy::cast_possible_wrap
                 )]
-                // Fenwick tree arithmetic: índices 1..=TOTAL_BLADES (máx 16),
-                // siempre positivos. La aritmética i & (-i) requiere i32 signed.
-                // Invariante: i > 0 antes de cada cast a usize.
+                // Fenwick tree arithmetic: indices 1..=TOTAL_BLADES (max 16),
+                // always positive. The arithmetic i & (-i) requires signed i32.
+                // Invariant: i > 0 before each cast a usize.
                 {
                     let mut i: i32 = blade as i32 + 1; // blade ≤ 15, i ≤ 16, ok
                     while i <= TOTAL_BLADES as i32 {
@@ -165,10 +165,10 @@ impl CliffordBasis {
     /// AX-ID: AXIOMA-001
     /// See also: [`Self::blade_square_f64`]
     #[allow(clippy::inline_always)]
-    // Inlining forzado: función en hot-path del producto geométrico.
-    // Benchmark kuramoto_step_1000_nodes = 1.11 ms para N=1000.
-    // Sin inline(always) el compilador puede crear frame overhead en
-    // el inner loop de sparse_geometric_product (≥ 10⁸ llamadas/step).
+    // Forced inlining: hot-path function of the geometric product.
+    // Benchmark kuramoto_step_1000_nodes = 1.11 ms for N=1000.
+    // Without inline(always) the compiler can introduces frame overhead en
+    // the inner loop of sparse_geometric_product (≥ 10⁸ calls/step).
     #[inline(always)]
     pub fn blade_square(&self, i: usize) -> i8 {
         debug_assert!(i <= MAX_BLADE_MASK);
@@ -187,10 +187,10 @@ impl CliffordBasis {
     /// AX-ID: AXIOMA-001
     /// See also: [`Self::blade_square`]
     #[allow(clippy::inline_always)]
-    // Inlining forzado: función en hot-path del producto geométrico.
-    // Benchmark kuramoto_step_1000_nodes = 1.11 ms para N=1000.
-    // Sin inline(always) el compilador puede crear frame overhead en
-    // el inner loop de sparse_geometric_product (≥ 10⁸ llamadas/step).
+    // Forced inlining: hot-path function of the geometric product.
+    // Benchmark kuramoto_step_1000_nodes = 1.11 ms for N=1000.
+    // Without inline(always) the compiler can introduces frame overhead en
+    // the inner loop of sparse_geometric_product (≥ 10⁸ calls/step).
     #[inline(always)]
     pub fn blade_square_f64(&self, i: usize) -> f64 {
         f64::from(self.blade_square(i))
@@ -234,8 +234,8 @@ impl CliffordBasis {
     /// Reconstruct from raw bytes without panicking.
     ///
     /// # Errors
-    /// Retorna `bytemuck::PodCastError` si `bytes` no tiene la longitud
-    /// o alineación correcta para `CliffordBasis`.
+    /// Returns `bytemuck::PodCastError` if `bytes` does not have the length
+    /// or alignment correcta for `CliffordBasis`.
     #[inline]
     pub fn try_from_bytes(bytes: &[u8]) -> Result<&Self, bytemuck::PodCastError> {
         bytemuck::try_from_bytes(bytes)

@@ -20,7 +20,7 @@ use crate::kuramoto::QuantumKuramotoNetwork;
 /// so that `x - k·C1 - k·C2 - k·C3` retains full precision even for large x.
 /// This is the same technique used in glibc, SLEEF and Intel SVML.
 /// Accurate for |x| < 2^52 (phases beyond this magnitude are physically
-/// meaningless in GÉNESIS and are clamped to the reduced domain).
+/// meaningless in GENESIS and are clamped to the reduced domain).
 ///
 /// Error: < 1e-9 for |x| ≤ 1e12 (verified by test).
 ///
@@ -35,9 +35,9 @@ pub(crate) fn poly_sin(x: f64) -> f64 {
     // Two-range strategy — same approach as SLEEF / glibc:
     //
     // Fast path  (|x| < 2^20 ≈ 1M): Cody-Waite two-part π/2 reduction.
-    //   Accurate to < 1e-11 error because the reduced y is at most ~1e6 * eps(π/2) ≈ 2e-10.
+    //   Accurate to < 1e-11 error because the reduced and is at most ~1e6 * eps(π/2) ≈ 2e-10.
     //
-    // Fallback   (|x| ≥ 2^20): delegate to f64::sin() (libm Payne-Hanek, <1 ULP error).
+    // Fallback  (|x| ≥ 2^20): delegate to f64::sin() (libm Payne-Hanek, <1 ULP error).
     //   Kuramoto phases beyond 2^20 are physically exceptional; libm cost is acceptable.
     //
     // AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
@@ -90,7 +90,7 @@ pub(crate) fn poly_cos(x: f64) -> f64 {
     }
 }
 
-/// Minimax polynomial kernel for sin(y) where y ∈ [-π/4, π/4].
+/// Minimax polynomial kernel for sin(y) where and ∈ [-π/4, π/4].
 /// Degree-9 Horner form. Error < 5e-13.
 #[inline]
 fn sin_kernel(y: f64, y2: f64) -> f64 {
@@ -110,7 +110,7 @@ fn sin_kernel(y: f64, y2: f64) -> f64 {
     y * poly
 }
 
-/// Minimax polynomial kernel for cos(y) where y ∈ [-π/4, π/4].
+/// Minimax polynomial kernel for cos(y) where and ∈ [-π/4, π/4].
 /// Degree-10 Horner form. Error < 5e-13.
 #[inline]
 const fn cos_kernel(_y: f64, y2: f64) -> f64 {
@@ -277,26 +277,26 @@ pub fn synchrony_order_hubs(network: &QuantumKuramotoNetwork, hub_indices: &[usi
     }
 }
 
-/// Parámetro de orden de Kuramoto multigrade:
+/// Parameter of order of Kuramoto multigrade:
 ///   r_sync = (1/G) × Σ_{g=0}^{G-1} |Σᵢ e^{i·φᵢg}| / N
 ///
-/// DERIVACIÓN: H_dinámica (LEY_FUNDACIONAL §3.2) suma sobre los G=5 grades.
-/// Su observable natural es la media de parámetros de orden por grade.
-/// Medir solo grade 0 introduce sesgo sistemático cuando el ruido térmico
-/// desincroniza grades independientemente (lo cual ocurre por construcción
-/// en step(): gaussian_noise() se llama G veces por nodo por dt).
+/// Derivation: H_dynamic (FUNDACIONAL_LEY §3.2) sums over the G=5 degrees.
+/// Su observable natural is the mean of parameters of order per grade.
+/// Measuring only grade 0 introduces bias systematic when the noise thermal
+/// desynchronizes grades independently (lo cual occurs per construction
+/// in step(): gaussian_noise() it calls G times per node per dt).
 ///
-/// Delega a `synchrony_order_fast` para aprovechar las aproximaciones polinómicas.
+/// Delegates a `synchrony_order_fast` for leverage the approximations polynomial.
 ///
 /// r ∈ [0.0, 1.0]. AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §4)
 pub fn synchrony_order(network: &QuantumKuramotoNetwork) -> f64 {
     synchrony_order_fast(network)
 }
 
-/// Detecta cluster sincronizado usando fase media circular promediada sobre grades.
+/// Detects cluster sincronizado using phase mean circular promediada over grades.
 ///
-/// La fase media multigrade captura la dirección dominante del estado colectivo
-/// cuando los grades tienen fases distintas por efecto del ruido térmico.
+/// La phase mean multigrade captures the direction dominant of the state collective
+/// when the grades have different phases due to the noise thermal effect.
 ///
 /// AX-ID: AXIOMA-006
 pub fn synchronized_cluster(network: &QuantumKuramotoNetwork, threshold: f64) -> Vec<NodeId> {
@@ -310,7 +310,7 @@ pub fn synchronized_cluster(network: &QuantumKuramotoNetwork, threshold: f64) ->
     #[allow(clippy::cast_precision_loss)]
     let g_f = N_GRADES as f64;
 
-    // Fase media circular promediada sobre todos los grades
+    // Phase mean circular promediada over all the grades
     let mut mean_cos = 0.0f64;
     let mut mean_sin = 0.0f64;
     for g in 0..N_GRADES {
@@ -365,7 +365,7 @@ mod tests {
     }
 
     fn uniform_phase_net(n: usize) -> QuantumKuramotoNetwork {
-        // Fases uniformemente distribuidas en [0, 2π) → r ≈ 0
+        // Phases uniformemente distribuidas in [0, 2π) → r ≈ 0
         let mut net = QuantumKuramotoNetwork::new(0.0);
         for i in 0..n {
             let phase = 2.0 * core::f64::consts::PI * i as f64 / n as f64;
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn synchrony_order_zero_for_uncoupled() {
-        // Fases uniformes → cancelación vectorial → r ≈ 0
+        // Phases uniform → cancellation vectorial → r ≈ 0
         let net = uniform_phase_net(100);
         let r = synchrony_order(&net);
         assert!(
@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn synchronized_cluster_excludes_outliers() {
         let mut net = QuantumKuramotoNetwork::new(0.0);
-        // 9 nodos sincronizados en fase 0, 1 outlier en fase π
+        // 9 nodes sincronizados in phase 0, 1 outlier in phase π
         for i in 0..9u64 {
             net.add_oscillator(QuantumOscillator::with_phases(
                 NodeId::try_new(i).expect("NodeId válido por construcción"),
@@ -501,22 +501,22 @@ mod tests {
 
     // ── Amplitude-weighted r_sync tests ───────────────────────────────────────
 
-    /// Con amplitudes = [1.0;5] (valor por defecto), r_sync debe ser idéntico
-    /// al Kuramoto clásico sin amplitudes.
+    /// Con amplitudes = [1.0;5] (value per default), r_sync must be identical
+    /// to the Kuramoto classical without amplitudes.
     #[test]
     fn amplitude_one_gives_same_rsync_as_classic_kuramoto() {
-        // Red sincronizada — r debe ser 1.0 con o sin amplitudes
+        // Network sincronizada — r must be 1.0 with or without amplitudes
         let net = fully_synced_net(30, 0.7);
         let r = synchrony_order(&net);
-        // Todos los osciladores tienen amplitudes = [1.0;5] por defecto
+        // All oscillators have amplitudes = [1.0;5] by default
         assert!(
             (r - 1.0).abs() < 1e-12,
             "amplitude=1.0 debe preservar comportamiento clásico, r={r}"
         );
     }
 
-    /// Cuando todos los nodos tienen amplitud 0 (todos saturados), r_sync → 0.
-    /// El sistema no tiene señal de certeza activa.
+    /// When all nodes have amplitude 0 (all saturated), r_sync → 0.
+    /// The system does not have a signal of certainty active.
     #[test]
     fn amplitude_zero_gives_rsync_zero() {
         let mut net = QuantumKuramotoNetwork::new(0.0);
@@ -527,22 +527,22 @@ mod tests {
             net.add_oscillator(osc).expect("NodeId válido");
         }
         let r = synchrony_order(&net);
-        // Con todas amplitudes = 0: sum_cos = 0, sum_sin = 0, sum_amp = 0
+        // With all amplitudes = 0: sum_cos = 0, sum_sin = 0, sum_amp = 0
         // r = hypot(0,0)/(0+EPS) = 0/EPS = 0
         assert!(r < 1e-20, "todos amplitude=0 → r_sync debe ser ~0, got {r}");
     }
 
-    /// r_sync ponderado < r_sync clásico cuando nodos desincronizados tienen amplitud alta
-    /// y nodos sincronizados tienen amplitud baja. Verifica que las amplitudes pesan.
+    /// r_sync ponderado < r_sync classical when nodes desincronizados tienen amplitude high
+    /// and synchronized nodes have low amplitude. Verifies that the amplitudes matter.
     #[test]
     fn amplitude_weighting_reduces_rsync_when_unsync_nodes_have_high_amplitude() {
         use core::f64::consts::PI;
 
-        // 5 nodos sincronizados en fase 0, amplitud baja (saturados/aprendidos)
-        // 5 nodos desincronizados (fases dispersas), amplitud alta (activos)
+        // 5 nodes sincronizados in phase 0, amplitude baja (saturados/aprendidos)
+        // 5 nodes desincronizados (phases dispersas), amplitude high (activos)
         let mut net = QuantumKuramotoNetwork::new(0.0);
 
-        // Sincronizados con amplitud 0.1
+        // Sincronizados with amplitude 0.1
         for i in 0..5u64 {
             let mut osc = QuantumOscillator::with_phases(
                 NodeId::try_new(i).expect("NodeId válido"),
@@ -553,7 +553,7 @@ mod tests {
             net.add_oscillator(osc).expect("NodeId válido");
         }
 
-        // Desincronizados con amplitud 0.9
+        // Desincronizados with amplitude 0.9
         for i in 5..10u64 {
             let phase = 2.0 * PI * (i - 5) as f64 / 5.0;
             let mut osc = QuantumOscillator::with_phases(
@@ -567,30 +567,30 @@ mod tests {
 
         let r_weighted = synchrony_order(&net);
 
-        // El r_sync ponderado debe ser bajo porque los nodos activos (alta amplitud)
-        // están dispersos. Si fuera clásico (amplitudes=1), el sync parcial de
-        // los 5 nodos sincronizados elevaría r. Con ponderación, los dispersos dominan.
+        // The weighted r_sync must be low because the nodes active (high amplitude)
+        // are dispersed. If it were classical (amplitudes=1), the partial sync of
+        // the 5 synchronized nodes would raise r. With weighting, the dispersed dominate.
         assert!(
             r_weighted < 0.4,
             "r_sync ponderado debe ser bajo cuando nodos activos (amp alta) están dispersos, got {r_weighted:.4}"
         );
     }
 
-    /// update_amplitude_from_fisher integrado: r_sync decrece cuando todos los nodos
-    /// actualizan su amplitud a 0 (todos saturados).
+    /// update_amplitude_from_fisher integrado: r_sync decrece when all the nodes
+    /// updatesn su amplitude a 0 (all saturados).
     #[test]
     fn rsync_decreases_after_amplitude_saturation() {
-        // Red sincronizada inicialmente
+        // Network sincronizada inicialmente
         let net = fully_synced_net(20, 0.5);
 
         let r_initial = synchrony_order(&net);
         assert!((r_initial - 1.0).abs() < 1e-12, "r inicial debe ser 1.0");
 
-        // Saturar todos los nodos — amplitud → 0
-        // En producción esto lo hace el pipeline VFE + update_amplitude_from_fisher
-        // Aquí lo hacemos directamente para el test de integración
-        // No hay acceso mutable a oscillators desde el exterior en la API pública.
-        // Verificamos via nuevo net con amplitudes 0:
+        // Saturate all nodes — amplitude → 0
+        // En production this lo does the pipeline VFE + update_amplitude_from_fisher
+        // Here lo do directly for the test of integration
+        // There is no mutable access to oscillators from outside in the public API.
+        // Verificamos via new net with amplitudes 0:
         let mut net2 = QuantumKuramotoNetwork::new(0.0);
         for i in 0..20u64 {
             let mut osc = QuantumOscillator::with_phases(
@@ -628,7 +628,7 @@ mod adaptive_tests {
         SparseCliffordVector::from_iter(pairs.iter().copied()).unwrap()
     }
 
-    /// dot_bivectors retorna 0 para vectores sin componente de grado 2.
+    /// dot_bivectors returns 0 for vectors without grade-2 component.
     #[test]
     fn dot_bivectors_zero_for_grade1_only_vectors() {
         let a = make_vec(&[(0b0001, 1.0), (0b0010, 0.5)]); // solo grado 1
@@ -640,10 +640,10 @@ mod adaptive_tests {
         );
     }
 
-    /// dot_bivectors retorna positivo para bivectores paralelos.
+    /// dot_bivectors returns positivo for bivectores parallel.
     #[test]
     fn dot_bivectors_positive_for_aligned_bivectors() {
-        // blade 3 = e₀₁ = grado 2
+        // blade 3 = e₀₁ = grade 2
         let a = make_vec(&[(3, 1.0)]);
         let b = make_vec(&[(3, 1.0)]);
         let d = a.dot_bivectors(&b);
@@ -653,7 +653,7 @@ mod adaptive_tests {
         );
     }
 
-    /// dot_bivectors retorna negativo para bivectores antiparalelos.
+    /// dot_bivectors returns negativo for bivectores antiparallel.
     #[test]
     fn dot_bivectors_negative_for_anti_aligned_bivectors() {
         let a = make_vec(&[(3, 1.0)]); // e₀₁ positivo
@@ -665,7 +665,7 @@ mod adaptive_tests {
         );
     }
 
-    /// saturation_factor = 0 cuando amplitud = 1 (prior, incierto).
+    /// saturation_factor = 0 when amplitude = 1 (prior, incierto).
     #[test]
     fn saturation_factor_zero_at_full_amplitude() {
         let osc = QuantumOscillator::new(id(0), [0.0; 5]);
@@ -676,7 +676,7 @@ mod adaptive_tests {
         );
     }
 
-    /// saturation_factor = 1 cuando amplitud = 0 (saturado, aprendido).
+    /// saturation_factor = 1 when amplitude = 0 (saturado, aprendido).
     #[test]
     fn saturation_factor_one_at_zero_amplitude() {
         let mut osc = QuantumOscillator::new(id(0), [0.0; 5]);
@@ -688,14 +688,14 @@ mod adaptive_tests {
         );
     }
 
-    /// adaptive_step con vecs vacíos es no-op (longitud incorrecta).
+    /// adaptive_step with vecs emptys is no-op (longitud incorrecta).
     #[test]
     fn adaptive_step_noop_if_vecs_len_mismatch() {
         let mut net = QuantumKuramotoNetwork::new(0.0);
         net.add_oscillator(QuantumOscillator::new(id(0), [1.0; 5]))
             .unwrap();
         let phases_before = net.phases()[0].phases;
-        // vecs vacíos → mismatch → no-op
+        // vecs emptys → mismatch → no-op
         net.adaptive_step(&[], 0.01);
         assert_eq!(
             net.phases()[0].phases,
@@ -704,13 +704,13 @@ mod adaptive_tests {
         );
     }
 
-    /// adaptive_step con amplitud=1 y bivectores nulos reproduce Kuramoto clásico.
+    /// adaptive_step with amplitude=1 and bivectores nulos reproduce Kuramoto classical.
     /// (α=1, β=0.5, dot_biv=0 → orient_factor=1; sat=0 → habituate=1 → Γ=Γ₀)
     #[test]
     fn adaptive_step_unit_amplitude_zero_bivector_matches_classic() {
         use core::f64::consts::PI;
 
-        // Dos nodos sin componente bivectorial → dot_bivectors = 0
+        // Dos nodes without component bivectorial → dot_bivectors = 0
         // → orient_factor = α = 1.0
         // Amplitudes = 1.0 (prior) → sat = 0 → habituate = 1
         // adaptive_Γ = Γ₀ · (1·1/1) · 1.0 · 1.0 = Γ₀
@@ -719,7 +719,7 @@ mod adaptive_tests {
         let phase1 = PI / 4.0;
         let gamma = 0.5;
 
-        // Red clásica
+        // Network classical
         let mut classic = QuantumKuramotoNetwork::new(0.0);
         classic
             .add_oscillator(QuantumOscillator::with_phases(id(0), [phase0; 5], [0.0; 5]))
@@ -730,7 +730,7 @@ mod adaptive_tests {
         classic.set_coupling(id(0), id(1), gamma);
         classic.step(0.01);
 
-        // Red adaptativa (sin bivectores → equivalente a clásica)
+        // Adaptive network (without bivectors → equivalent to classical)
         let mut adaptive = QuantumKuramotoNetwork::new(0.0);
         adaptive
             .add_oscillator(QuantumOscillator::with_phases(id(0), [phase0; 5], [0.0; 5]))
@@ -740,11 +740,11 @@ mod adaptive_tests {
             .unwrap();
         adaptive.set_coupling(id(0), id(1), gamma);
 
-        // Vectores sin componente de grado 2 (solo grado 1)
+        // Vectors without grade-2 component (only grade 1)
         let vecs = [make_vec(&[(0b0001, 1.0)]), make_vec(&[(0b0001, 1.0)])];
         adaptive.adaptive_step(&vecs, 0.01);
 
-        // Las fases deben coincidir porque las condiciones son idénticas
+        // The phases must match because the conditions are identical
         for g in 0..5 {
             let c = classic.phases()[0].phases[g];
             let a = adaptive.phases()[0].phases[g];
@@ -755,21 +755,21 @@ mod adaptive_tests {
         }
     }
 
-    /// adaptive_step con bivectores antiparalelos reduce acoplamiento vs paralelos.
+    /// adaptive_step with bivectores antiparallel reduce coupling vs parallel.
     #[test]
     fn adaptive_step_frustration_reduces_coupling_for_anti_aligned() {
         use core::f64::consts::PI;
 
-        // Dos pares de nodos. Par A: bivectores paralelos. Par B: antiparalelos.
-        // Empezamos con la misma diferencia de fase. Después de un step,
-        // el par con frustración debe acercarse menos (menor coupling efectivo).
+        // Dos pares of nodes. Pair A: bivectores parallel. Pair B: antiparallel.
+        // We start with the same diferencia of phase. After of un step,
+        // the pair with frustration must approach less (lower coupling effective).
 
         let dt = 0.1;
         let gamma = 1.0;
         let phase_a = 0.0_f64;
         let phase_b = PI / 3.0;
 
-        // Par A: bivectores paralelos → dot_biv > 0 → Γ_eff > Γ₀
+        // Pair A: bivectores parallel → dot_biv > 0 → Γ_eff > Γ₀
         let mut net_a = QuantumKuramotoNetwork::new(0.0);
         net_a
             .add_oscillator(QuantumOscillator::with_phases(
@@ -789,7 +789,7 @@ mod adaptive_tests {
         let vecs_a = [make_vec(&[(3, 1.0)]), make_vec(&[(3, 1.0)])]; // mismo e₀₁
         net_a.adaptive_step(&vecs_a, dt);
 
-        // Par B: bivectores antiparalelos → dot_biv < 0 → Γ_eff < Γ₀
+        // Pair B: bivectores antiparallel → dot_biv < 0 → Γ_eff < Γ₀
         let mut net_b = QuantumKuramotoNetwork::new(0.0);
         net_b
             .add_oscillator(QuantumOscillator::with_phases(
@@ -809,7 +809,7 @@ mod adaptive_tests {
         let vecs_b = [make_vec(&[(3, 1.0)]), make_vec(&[(3, -1.0)])]; // e₀₁ vs −e₀₁
         net_b.adaptive_step(&vecs_b, dt);
 
-        // Par A debe haberse acercado más (mayor coupling efectivo)
+        // Pair A must haberse acercado more (mayor coupling effective)
         let diff_a = (net_a.phases()[0].phases[0] - net_a.phases()[1].phases[0]).abs();
         let diff_b = (net_b.phases()[0].phases[0] - net_b.phases()[1].phases[0]).abs();
 

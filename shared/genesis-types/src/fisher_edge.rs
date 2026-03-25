@@ -1,7 +1,7 @@
-//! Métrica de Fisher entre pares de nodos: G^Fisher_{ij}.
+//! Fisher metric between node pairs: G^Fisher_{ij}.
 //!
-//! Expuesta en genesis-types para que genesis-evolution (CRATE-004) pueda
-//! verificar DualityConsistency sin importar genesis-dynamics (CRATE-003).
+//! Exposed in genesis-types so that genesis-evolution (CRATE-004) pueda
+//! verifiesr DualityConsistency without importing genesis-dynamics (CRATE-003).
 //!
 //! AX-ID: LEY_FUNDACIONAL §3.6, §5.6 (DualityConsistency)
 //
@@ -9,11 +9,11 @@
 
 use crate::NodeId;
 
-/// Métrica de Fisher escalarizada por arista (i,j): G^Fisher_{ij}.
+/// Scalarized Fisher metric per edge (i,j): G^Fisher_{ij}.
 ///
-/// Almacena pares canónicos (i ≤ j) ordenados por (i,j) para búsqueda O(log E).
-/// `is_current(n)` responde si el nodo n tiene su Fisher actualizado tras la
-/// última expansión dimensional — requerido por AxiomID::DualityConsistency.
+/// Stores canonical pairs (i ≤ j) sorted by (i,j) for search O(log E).
+/// `is_current(n)` responds if node n has its Fisher updatesdo after the
+/// last expansion dimensional — required by AxiomID::DualityConsistency.
 ///
 /// AX-ID: AXIOMA-008, LEY_FUNDACIONAL §3.6
 #[derive(Clone, Debug, Default)]
@@ -23,9 +23,9 @@ pub struct FisherEdgeMetric {
 }
 
 impl FisherEdgeMetric {
-    /// Construye una nueva `FisherEdgeMetric` desde un vector de aristas.
+    /// Builds a new `FisherEdgeMetric` from an edge vector.
     ///
-    /// Los pares se normalizan a forma canónica (i ≤ j) y se ordenan.
+    /// Pairs are normalized to canonical form (i ≤ j) and then sorted.
     pub fn new(edges: Vec<((NodeId, NodeId), f64)>) -> Self {
         let mut metric = Self {
             edges,
@@ -35,8 +35,8 @@ impl FisherEdgeMetric {
         metric
     }
 
-    /// Obtiene el valor de Fisher para la arista (i, j). O(log E).
-    /// Retorna 0.0 si la arista no existe.
+    /// Gets the Fisher value for edge (i, j). O(log E).
+    /// Returns 0.0 if the edge does not exist.
     pub fn get(&self, i: NodeId, j: NodeId) -> f64 {
         let key = canonical_edge(i, j);
         self.edges
@@ -85,13 +85,13 @@ impl FisherEdgeMetric {
         }
     }
 
-    /// Itera sobre todas las aristas como (i, j, valor).
+    /// Iterates over all edges as (i, j, value).
     pub fn edges(&self) -> impl Iterator<Item = (NodeId, NodeId, f64)> + '_ {
         self.edges.iter().map(|((i, j), w)| (*i, *j, *w))
     }
 
-    /// Retorna true si el nodo `n` tiene su Fisher actualizado.
-    /// Requerido por AxiomID::DualityConsistency.
+    /// Returns true if node `n` has its Fisher value updated.
+    /// Required per AxiomID::DualityConsistency.
     pub fn is_current(&self, n: NodeId) -> bool {
         self.node_degrees
             .binary_search_by_key(&n, |(id, _)| *id)

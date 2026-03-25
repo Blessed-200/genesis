@@ -46,10 +46,10 @@ const PROJ_COEFFS: [[f64; 16]; TOTAL_PROJECTIONS] = {
             seed = seed
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1_442_695_040_888_963_407);
-            // seed >> 11 produce valor de 53 bits. IEEE 754 f64 mantissa = 52 bits implícito +
-            // 1 implícito = 53 bits exactos. (seed >> 11) as f64 es sin pérdida por diseño
-            // (técnica estándar de conversión PRNG→[0,1): Vigna 2015, §2).
-            // 1u64 << 53 = 2^53, exactamente representable como f64.
+            // seed >> 11 produce value of 53 bits. IEEE 754 f64 mantissa = 52 bits implicit +
+            // 1 implicit = 53 bits exacts. (seed >> 11) as f64 is lossless by design
+            // (technique standard of conversion PRNG→[0,1): Vigna 2015, §2).
+            // 1u64 << 53 = 2^53, exactly representable as f64.
             #[allow(clippy::cast_precision_loss)]
             let mag = ((seed >> 11) as f64) * U53_RECIP;
             // loop-invariant, hoisted
@@ -90,9 +90,9 @@ impl LshTable {
     fn insert(&mut self, bucket: u32, id: NodeId) {
         match self.pos(bucket) {
             Ok(i) => {
-                // Bucket ya existe: insertar `id` manteniendo orden por get().
-                // binary_search: O(log bucket_size) en lugar de O(bucket_size).
-                // Invariante del bucket: Vec<NodeId> siempre ordenado por id.get().
+                // Bucket already exists: insert `id` while preserving order by get().
+                // binary_search: O(log bucket_size) instead of O(bucket_size).
+                // Invariant of the bucket: Vec<NodeId> is always sorted by id.get().
                 let bucket_vec = &mut self.buckets[i].1;
                 match bucket_vec.binary_search_by_key(&id.get(), |n| n.get()) {
                     Ok(_) => {} // ya presente — no duplicar
@@ -100,7 +100,7 @@ impl LshTable {
                 }
             }
             Err(i) => {
-                // Bucket nuevo: insertar en posición ordenada del Vec de buckets.
+                // Bucket new: insert in position ordenada of the Vec of buckets.
                 self.buckets.insert(i, (bucket, vec![id]));
             }
         }
@@ -119,7 +119,7 @@ impl LshTable {
 /// Uses `N_TABLES` independent random-projection hash tables.
 /// Each table maps a 16-blade vector to a N_PROJECTIONS-bit signature.
 /// Insert: `O(N_TABLES * log bucket_size)`.
-/// Candidates: `O(sum(bucket_sizes) * log N_TABLES)` with k-way merge + deduplicación.
+/// Candidates: `O(sum(bucket_sizes) * log N_TABLES)` with k-way merge + deduplication.
 ///
 /// # Projection cache (BN-04)
 /// Projection coefficients are generated at compile time (`PROJ_COEFFS`) and
@@ -218,9 +218,9 @@ impl CliffordHashTable {
 
     /// Return candidate `NodeIds` for a query (union of all matching buckets).
     ///
-    /// Complejidad: `O(sum(bucket_sizes) * log N_TABLES)`.
-    /// Los buckets ya están ordenados por `NodeId::get()`, y se fusionan con k-way merge
-    /// (min-heap) para eliminar duplicados sin `contains` lineal.
+    /// Complexity: `O(sum(bucket_sizes) * log N_TABLES)`.
+    /// Buckets are already sorted by `NodeId::get()`, and are merged with a k-way merge
+    /// (min-heap) for eliminar duplicados without `contains` lineal.
     ///
     /// AX-ID: AXIOMA-013
     pub fn candidates<'a>(
@@ -358,7 +358,7 @@ mod tests {
             (0..4).map(|i| (i, (i as f64 + 1.0) * 0.1)),
         )
         .unwrap();
-        // Insertar el mismo vector 10 veces → debe aparecer solo 1 vez en los resultados.
+        // Insert the same vector 10 times → it must appear only 1 time in the results.
         for _ in 0..10 {
             table.insert(id, &v);
         }
