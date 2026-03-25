@@ -73,7 +73,7 @@ impl RipsComplex {
         let mut edges: Vec<Edge> = Vec::new();
 
         for (u_idx, &u) in node_ids.iter().enumerate() {
-            if let Some(u_vec) = graph.get_vector(u) {
+            if let Some(u_vec) = graph.vector(u) {
                 for v in graph.neighbors(u).filter(|&v| u.get() < v.get()) {
                     let v_raw = v.get() as usize;
                     if v_raw >= id_to_idx.len() {
@@ -83,7 +83,7 @@ impl RipsComplex {
                     if v_idx == usize::MAX {
                         continue;
                     }
-                    if let Some(v_vec) = graph.get_vector(v) {
+                    if let Some(v_vec) = graph.vector(v) {
                         let d = geometric_distance(u_vec, v_vec);
                         if d <= epsilon {
                             edges.push(Edge { u, v });

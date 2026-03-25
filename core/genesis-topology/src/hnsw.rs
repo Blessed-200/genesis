@@ -1075,7 +1075,7 @@ impl HnswGraph {
     }
 
     /// Lookup internal index by `NodeId`. O(1) average with direct index, fallback O(log N).
-    fn get_idx(&self, id: NodeId) -> Option<usize> {
+    fn idx(&self, id: NodeId) -> Option<usize> {
         // Contract CRATE-002: NodeIds are consecutive from 0. N < 2^32 in any
         // GENESIS deployment (physical memory limit). u64 → usize is seguro.
         #[allow(clippy::cast_possible_truncation)]
@@ -1158,7 +1158,7 @@ impl HnswGraph {
         if id == NodeId::INVALID {
             return Err(GenesisError::InvariantViolation { axiom_id: 4 });
         }
-        if self.get_idx(id).is_some() {
+        if self.idx(id).is_some() {
             return Ok(()); // already present
         }
 
@@ -1202,7 +1202,7 @@ impl HnswGraph {
             // Vec<AtomicU32> with store(Release). For now: single-threaded, no contention.
             self.direct_index[id_raw] = new_idx_u32;
             debug_assert!(
-                self.get_idx(id) == Some(new_idx),
+                self.idx(id) == Some(new_idx),
                 "direct_index inconsistente con id_index para NodeId={}",
                 id.get()
             );
@@ -1232,9 +1232,11 @@ impl HnswGraph {
             )]
             let degree_cap = ((((self.nodes.len() + 1) as f64).log2().ceil() as usize) * 2).max(1);
             let m_max = layer_m.min(degree_cap);
+            debug_assert!(m_max <= M0);
             let candidates = self.search_layer(vec, current, self.ef_construction, lc);
             // Take top-M by distance
-            let neighbours: Vec<(usize, f64)> = candidates.into_iter().take(m_max).collect();
+            let neighbours: SmallVec<[(usize, f64); M0]> =
+                candidates.into_iter().take(m_max).collect();
 
             // Add bidirectional edges
             let new_idx = self.nodes.len() - 1; // last inserted
@@ -1552,7 +1554,7 @@ impl HnswGraph {
     ///
     /// AX-ID: AXIOMA-013
     pub fn neighbors(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        let node_idx = self.get_idx(id);
+        let node_idx = self.idx(id);
         NeighborIter {
             graph: self,
             node_idx,
@@ -1566,10 +1568,10 @@ impl HnswGraph {
     ///
     /// AX-ID: AXIOMA-013
     pub fn neighbors_within(&self, id: NodeId, radius: f64) -> impl Iterator<Item = NodeId> + '_ {
-        // FIX-E.1: Single get_idx call — the former code called get_idx(id) twice
+        // FIX-E.1: Single get_idx call — the former code called idx(id) twice
         // (once for `node_vec`, once for `idx`), wasting a lookup per call.
         let candidates: SmallVec<[NodeId; M]> =
-            self.get_idx(id).map_or_else(SmallVec::new, |idx| {
+            self.idx(id).map_or_else(SmallVec::new, |idx| {
                 let Some(node) = self.nodes.get(idx) else {
                     return SmallVec::new();
                 };
@@ -1602,7 +1604,7 @@ impl HnswGraph {
         if stamp == 0 {
             return 0;
         }
-        let Some(idx) = self.get_idx(id) else {
+        let Some(idx) = self.idx(id) else {
             return 0;
         };
         let Some(node) = self.nodes.get(idx) else {
@@ -1626,8 +1628,8 @@ impl HnswGraph {
     }
 
     /// Gets the vector associated with a `NodeId`.
-    pub fn get_vector(&self, id: NodeId) -> Option<&SparseCliffordVector> {
-        self.get_idx(id).map(|idx| &self.nodes[idx].vec)
+    pub fn vector(&self, id: NodeId) -> Option<&SparseCliffordVector> {
+        self.idx(id).map(|idx| &self.nodes[idx].vec)
     }
 
     /// Iterate over all `NodeIds` in the graph.
@@ -1703,7 +1705,7 @@ impl HnswGraph {
     /// AX-ID: LEY_FUNDACIONAL §3.7 (WormholeCollapse), CRATE-004 prerequisite (FIX-H)
     pub fn remove_node(&mut self, id: NodeId) -> Result<(), GenesisError> {
         let idx = self
-            .get_idx(id)
+            .idx(id)
             .ok_or(GenesisError::InvariantViolation { axiom_id: 4 })?;
         let outgoing_layer0 = self.node_neighbors_len(idx, 0);
 
@@ -2346,7 +2348,7 @@ mod tests {
             1,
             "duplicate insert must not add a new node"
         );
-        assert_eq!(g.get_vector(id), Some(&first));
+        assert_eq!(g.vector(id), Some(&first));
     }
 
     #[test]
@@ -2375,7 +2377,7 @@ mod tests {
         assert_eq!(g.node_count(), nodes_before);
         assert_eq!(g.id_index.len(), id_index_before);
         assert_eq!(g.direct_index, direct_index_before);
-        assert!(g.get_idx(failing_id).is_none());
+        assert!(g.idx(failing_id).is_none());
     }
 
     #[test]
@@ -2934,11 +2936,11 @@ mod tests {
 
         for id in [1_u64, 2, 5, 7, 9] {
             assert!(g
-                .get_idx(NodeId::try_new(id).expect("NodeId válido por construcción"))
+                .idx(NodeId::try_new(id).expect("NodeId válido por construcción"))
                 .is_some());
         }
         assert!(g
-            .get_idx(NodeId::try_new(3).expect("NodeId válido por construcción"))
+            .idx(NodeId::try_new(3).expect("NodeId válido por construcción"))
             .is_none());
     }
     #[cfg(feature = "hnsw-f16")]
@@ -3248,7 +3250,7 @@ mod tests {
             let query = make_vec((q as f64).mul_add(0.013, 0.25));
             let got = g.search_nearest(&query, 8);
             for id in got {
-                assert!(g.get_idx(id).is_some());
+                assert!(g.idx(id).is_some());
             }
         }
     }
@@ -3386,9 +3388,9 @@ mod tests {
                     .iter()
                     .min_by(|a, b| {
                         let da =
-                            fast_metric_distance(&query, g.get_vector(**a).expect("vector exists"));
+                            fast_metric_distance(&query, g.vector(**a).expect("vector exists"));
                         let db =
-                            fast_metric_distance(&query, g.get_vector(**b).expect("vector exists"));
+                            fast_metric_distance(&query, g.vector(**b).expect("vector exists"));
                         da.total_cmp(&db)
                     })
                     .expect("non-empty result");
