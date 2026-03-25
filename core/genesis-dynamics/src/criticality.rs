@@ -100,6 +100,30 @@ fn ks_p_value(z: f64) -> f64 {
 }
 
 impl CriticalityMonitor {
+    #[inline]
+    fn collect_positive_sizes(&self) -> Vec<u32> {
+        self.active_sizes().filter(|&s| s > 0).collect()
+    }
+
+    #[inline]
+    fn tau_from_sizes(sizes: &[u32]) -> Option<f64> {
+        let n = sizes.len();
+        if n < 10 {
+            return None;
+        }
+        let s_min = f64::from(*sizes.iter().min().unwrap_or(&1));
+        if s_min <= 0.0 {
+            return None;
+        }
+        let s_half = (s_min - 0.5).max(0.5);
+        let sum_ln: f64 = sizes.iter().map(|&s| (f64::from(s) / s_half).ln()).sum();
+        if sum_ln < f64::MIN_POSITIVE {
+            return None;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        Some(1.0 + n as f64 / sum_ln)
+    }
+
     /// Creates the monitor with layercidad minimum of 1 for avoid states invalids.
     pub fn new(capacity: usize) -> Self {
         let capacity = NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::MIN);
@@ -153,22 +177,8 @@ impl CriticalityMonitor {
         if self.count() < 10 {
             return None;
         }
-        let sizes: Vec<u32> = self.active_sizes().filter(|&s| s > 0).collect();
-        let n = sizes.len();
-        if n < 10 {
-            return None;
-        }
-        let s_min = f64::from(*sizes.iter().min().unwrap_or(&1));
-        if s_min <= 0.0 {
-            return None;
-        }
-        let s_half = (s_min - 0.5).max(0.5);
-        let sum_ln: f64 = sizes.iter().map(|&s| (f64::from(s) / s_half).ln()).sum();
-        if sum_ln < f64::MIN_POSITIVE {
-            return None;
-        }
-        #[allow(clippy::cast_precision_loss)]
-        Some(1.0 + n as f64 / sum_ln)
+        let sizes = self.collect_positive_sizes();
+        Self::tau_from_sizes(&sizes)
     }
 
     /// Verifica if the system necesita fit of parameters.
@@ -213,14 +223,14 @@ impl CriticalityMonitor {
     /// AX-ID: AXIOMA-005
     pub fn tau_exponent_report(&self) -> Option<CriticalityReport> {
         // Collect all samples in a Vec (no fixed limit)
-        let mut sizes: Vec<u32> = self.active_sizes().filter(|&s| s > 0).collect();
+        let mut sizes = self.collect_positive_sizes();
         let n = sizes.len();
         if n < 10 {
             return None;
         }
 
-        // Estimate τ (Clauset); tau_exponent already internally handles the condition of sufficient samples
-        let tau = self.tau_exponent()?;
+        // Estimate τ (Clauset) from the same sampled set to avoid redundant passes.
+        let tau = Self::tau_from_sizes(&sizes)?;
         let exponent = tau - 1.0;
         // loop-invariant, hoisted
         // CRYSTAL: O29 — inevitable
