@@ -164,6 +164,13 @@ struct NodeSemanticEntry {
     local_divergence: f64,
 }
 
+#[derive(Debug)]
+struct ClusterAssignment {
+    nodes: SmallVec<[NodeId; 8]>,
+    marker: SemanticMarker,
+    coherence: f64,
+}
+
 /// Engine that interprets oscillator dynamics as semantic field descriptors.
 ///
 /// This structure is deterministic: node entries are stored sorted by `NodeId`
@@ -409,34 +416,18 @@ impl PhaseSemanticsEngine {
 
     fn build_clusters(&mut self, network: &QuantumKuramotoNetwork) {
         for entry in &self.entries {
-            let mut nodes: SmallVec<[NodeId; 8]> = SmallVec::new();
-            nodes.push(entry.state.node);
-            let mut coherence_sum = 1.0;
-            let mut count = 1.0;
-
-            for &(src, dst, _, _) in &network.coupling {
-                if src != entry.state.node {
-                    continue;
-                }
-                let neighbor = self.node_semantic_state(dst);
-                if neighbor.marker != entry.state.marker {
-                    continue;
-                }
-                let divergence = wrapped_distance(entry.state.phase, neighbor.phase);
-                if divergence <= RESONANCE_DIVERGENCE_MAX {
-                    nodes.push(dst);
-                    coherence_sum += 1.0 - (divergence / PI).clamp(0.0, 1.0);
-                    count += 1.0;
-                }
-            }
-
-            if nodes.len() > 1 {
-                nodes.sort_unstable();
-                if !self.clusters.iter().any(|cluster| cluster.nodes == nodes) {
+            if let Some(assignment) =
+                assign_node_to_cluster(entry, &network.coupling, &self.entries)
+            {
+                if !self
+                    .clusters
+                    .iter()
+                    .any(|cluster| cluster.nodes == assignment.nodes)
+                {
                     self.clusters.push(SemanticCluster {
-                        nodes,
-                        marker: entry.state.marker,
-                        coherence: coherence_sum / count,
+                        nodes: assignment.nodes,
+                        marker: assignment.marker,
+                        coherence: assignment.coherence,
                     });
                 }
             }
@@ -498,6 +489,45 @@ impl PhaseSemanticsEngine {
     }
 }
 
+#[inline]
+fn assign_node_to_cluster(
+    entry: &NodeSemanticEntry,
+    coupling: &[(NodeId, NodeId, f64, f64)],
+    entries: &[NodeSemanticEntry],
+) -> Option<ClusterAssignment> {
+    let mut nodes: SmallVec<[NodeId; 8]> = SmallVec::new();
+    nodes.push(entry.state.node);
+    let mut coherence_sum = 1.0;
+    let mut count = 1.0;
+
+    for &(src, dst, _, _) in coupling {
+        if src != entry.state.node {
+            continue;
+        }
+        let neighbor = node_semantic_state_from_entries(entries, dst);
+        if neighbor.marker != entry.state.marker {
+            continue;
+        }
+        let divergence = wrapped_distance(entry.state.phase, neighbor.phase);
+        if divergence <= RESONANCE_DIVERGENCE_MAX {
+            nodes.push(dst);
+            coherence_sum += 1.0 - (divergence / PI).clamp(0.0, 1.0);
+            count += 1.0;
+        }
+    }
+
+    if nodes.len() <= 1 {
+        return None;
+    }
+
+    nodes.sort_unstable();
+    Some(ClusterAssignment {
+        nodes,
+        marker: entry.state.marker,
+        coherence: coherence_sum / count,
+    })
+}
+
 impl Ord for SemanticMarker {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         marker_rank(*self).cmp(&marker_rank(*other))
@@ -549,6 +579,23 @@ fn lookup_delta_g(delta_g: &[(NodeId, f64)], node: NodeId) -> f64 {
         .binary_search_by_key(&node, |&(id, _)| id)
         .ok()
         .map_or(0.0, |idx| delta_g[idx].1)
+}
+
+#[inline]
+fn node_semantic_state_from_entries(entries: &[NodeSemanticEntry], node: NodeId) -> NodeSemanticState {
+    entries
+        .binary_search_by_key(&node, |entry| entry.state.node)
+        .ok()
+        .map_or(
+            NodeSemanticState {
+                node,
+                marker: SemanticMarker::Exploration,
+                phase: 0.0,
+                amplitude: 0.0,
+                stability: 0.0,
+            },
+            |idx| entries[idx].state,
+        )
 }
 
 #[inline]

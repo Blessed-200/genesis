@@ -603,13 +603,17 @@ impl PartialEq for SpikeComponents {
             return false;
         }
         let n = self.count as usize;
-        for i in 0..n {
-            if self.indices[i] != other.indices[i] {
-                return false;
-            }
-            if self.values[i].to_bits() != other.values[i].to_bits() {
-                return false;
-            }
+        if self.indices[..n] != other.indices[..n] {
+            return false;
+        }
+        // SAFETY: `f64` and `u64` have identical size/alignment. The created slices
+        // cover exactly `n` initialized elements from `values[..n]`.
+        let self_bits = unsafe { core::slice::from_raw_parts(self.values.as_ptr().cast::<u64>(), n) };
+        // SAFETY: same invariant as `self_bits` above.
+        let other_bits =
+            unsafe { core::slice::from_raw_parts(other.values.as_ptr().cast::<u64>(), n) };
+        if self_bits != other_bits {
+            return false;
         }
         true
     }
