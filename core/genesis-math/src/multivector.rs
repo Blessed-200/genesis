@@ -41,7 +41,7 @@ use crate::grade::{even_grade, grade_project, odd_grade, reverse, CLIFFORD_NORM_
 /// Multivector of G(1,3) — dense stack layout, cacheline-aligned.
 ///
 /// AX-ID: AXIOMA-001 (G(1,3) substrate), AXIOMA-011 (holonomic gating),
-///        AXIOMA-018 (SNN isomorphism / DAX layout)
+///    AXIOMA-018 (SNN isomorphism / DAX layout)
 #[cfg_attr(feature = "cacheline64", repr(C, align(64)))]
 #[cfg_attr(not(feature = "cacheline64"), repr(C, align(32)))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -94,12 +94,12 @@ const _: () = {
 #[inline]
 pub(crate) fn canonicalize_signed_zero(buf: &mut [f64; TOTAL_BLADES]) {
     for coeff in buf.iter_mut() {
-        // IEEE-754: +0.0 y -0.0 son iguales como valores pero distintos en bits.
-        // `is_sign_negative()` lee el bit de signo directamente; el compilador
-        // no puede eliminar este branch porque `is_sign_negative` consulta el
-        // bit real, no el valor semántico.
-        // Necesario para que bytemuck::Pod sea seguro y para que los hashes de
-        // SparseCliffordVector sean estables independientemente del origen del cero.
+        // IEEE-754: +0.0 and -0.0 are the same as values ​​but different in bits.
+        // `is_sign_negative()` reads the sign bit directly; the compiler
+        // cannot eliminate this branch because `is_sign_negative` reads the
+        // actual bit, not semantic value.
+        // Required so that bytemuck::Pod is safe and the hashes of
+        // SparseCliffordVector sean estables independently of the origin of the cero.
         if *coeff == 0.0 && coeff.is_sign_negative() {
             *coeff = 0.0_f64; // explícitamente +0.0 (bit de signo = 0)
         }
@@ -171,9 +171,9 @@ impl SparseCliffordVector {
     /// AX-ID: AXIOMA-001, AXIOMA-011
     ///
     /// # Errors
-    /// Retorna `GenesisError::BladeIndexOutOfRange` si algún índice
-    /// excede `TOTAL_BLADES - 1`. Retorna `GenesisError::SignatureViolation`
-    /// si algún coeficiente es NaN o infinito.
+    /// Returns `GenesisError::BladeIndexOutOfRange` if any index
+    /// exceeds `TOTAL_BLADES - 1`. Returns `GenesisError::SignatureViolation`
+    /// if any coefficient is NaN or infinito.
     #[allow(clippy::should_implement_trait)]
     pub fn from_iter<I>(iter: I) -> Result<Self, GenesisError>
     where
@@ -203,8 +203,8 @@ impl SparseCliffordVector {
     /// Validates finitude unconditionally.
     ///
     /// # Errors
-    /// Retorna `GenesisError::SignatureViolation` si algún coeficiente
-    /// es NaN o infinito.
+    /// Returns `GenesisError::SignatureViolation` if any coefficient
+    /// is NaN or infinito.
     pub fn from_dense(dense: &[f64; TOTAL_BLADES]) -> Result<Self, GenesisError> {
         for (i, &v) in dense.iter().enumerate() {
             if !v.is_finite() {
@@ -359,7 +359,7 @@ impl SparseCliffordVector {
         reverse(self)
     }
 
-    /// Exterior product `A ∧ B` (antisymmetric span composition).
+    /// Outside product `A ∧ B` (antisymmetric span composition).
     ///
     /// AX-ID: AXIOMA-001, AXIOMA-006, H_estructura (LEY_FUNDACIONAL §3.1)
     #[must_use = "retorna un nuevo multivector; la entrada no se modifica"]
@@ -442,20 +442,20 @@ impl SparseCliffordVector {
 
     // ── Metric scalar product ─────────────────────────────────────────────────
 
-    /// Producto escalar MÉTRICO por componentes: Σᵢ aᵢ·bᵢ·ηᵢᵢ.
+    /// Component-wise METRIC scalar product: Σᵢ aᵢ·bᵢ·ηᵢᵢ.
     ///
-    /// ADVERTENCIA: NO es ⟨A·Ã⟩₀ (norma de Lorentz). Para grado k ≥ 2,
-    /// `metric_scalar_product(&v, &v) ≠ clifford_norm_sq` — el signo difiere
-    /// por `REVERSE_SIGN[k]`. Use `clifford_norm_sq` para la norma invariante.
+    /// WARNING: this is NOT ⟨A·Ã⟩₀ (Lorentz norm). For grade k ≥ 2,
+    /// `metric_scalar_product(&v, &v) ≠ clifford_norm_sq` — the sign differs
+    /// due to `REVERSE_SIGN[k]`. Use `clifford_norm_sq` for the invariant norm.
     ///
-    /// - `metric_scalar_product(&v, &v)` = Σᵢ vᵢ² · ηᵢᵢ (suma con signo de métrica)
-    /// - `clifford_norm_sq`              = ⟨v·ṽ⟩₀ (incluye signo de reverso)
+    /// - `metric_scalar_product(&v, &v)` = Σᵢ vᵢ² · ηᵢᵢ (metric-signed sum)
+    /// - `clifford_norm_sq`              = ⟨v·ṽ⟩₀ (incluye signo of reverso)
     ///
-    /// Ejemplo concreto para e₀₁ (grado 2, coef = 1.0):
+    /// Concrete example for e₀₁ (grado 2, coef = 1.0):
     ///   `metric_scalar_product` = +1.0  (`SIGNATURE_TABLE[0b0011]`)
     ///   `clifford_norm_sq`      = −1.0  (`CLIFFORD_NORM_WEIGHTS[0b0011]`)
     ///
-    /// Uso legítimo: contracciones geométricas grado-preservadas, no normas.
+    /// Valid use: contracciones geometrics grade-preservadas, no normas.
     ///
     /// AX-ID: AXIOMA-001
     pub fn metric_scalar_product(&self, rhs: &Self) -> f64 {
@@ -557,8 +557,8 @@ impl SparseCliffordVector {
     /// Returns `Err` on wrong length (must be 160) or alignment (must be ≡ 0 mod 32).
     ///
     /// # Errors
-    /// Retorna `bytemuck::PodCastError` si `bytes` no tiene longitud o alineación
-    /// correcta para `SparseCliffordVector`.
+    /// Returns `bytemuck::PodCastError` if `bytes` no tiene longitud or alignment
+    /// correcta for `SparseCliffordVector`.
     #[inline]
     pub fn try_from_bytes(bytes: &[u8]) -> Result<&Self, bytemuck::PodCastError> {
         bytemuck::try_from_bytes(bytes)
@@ -626,41 +626,41 @@ impl crate::GeometricProduct for SparseCliffordVector {
     }
 }
 
-// ── fast_metric_distance — Métrica semántica diferenciada en G(1,3) ─────────
+// ── fast_metric_distance — Grade-differentiated semantic metric in G(1,3) ─────────
 
-/// Pesos por grado en G(1,3) para `fast_metric_distance`.
+/// Grade weights in G(1,3) for `fast_metric_distance`.
 ///
-/// # Justificación geométrica
+/// # Geometric rationale
 ///
-/// Los cinco grados de G(1,3) tienen semántica cognitiva distinta.
-/// Asignarles el mismo peso produce clusters accidentales: nodos con
-/// orientaciones globales similares (grado 4) se convierten en vecinos
-/// HNSW con la misma probabilidad que nodos con dirección semántica
-/// similar (grado 1), que es la relación cognitivamente relevante.
+/// The five grades of G(1,3) tienen different cognitive semantics.
+/// Assigning the same weight to all of them produces accidental clusters: nodes con
+/// similar global orientations (grado 4) become neighbors
+/// HNSW with the same probability as nodes with direction semantic
+/// similar (grade 1), which is the cognitively relevant relationship.
 ///
-/// | Grado | Blades | Tipo geométrico    | Semántica cognitiva               | Peso |
+/// | Grade | Blades | Geometric type    | Cognitive semantics               | Weight |
 /// |-------|--------|--------------------|-----------------------------------|------|
-/// | 0     | 1      | Escalar            | Magnitud / intensidad global      | 2.0  |
-/// | 1     | 4      | Vectores           | Dirección semántica (primaria)    | 1.5  |
+/// | 0     | 1      | Scalar            | Magnitud / intensidad global      | 2.0  |
+/// | 1     | 4      | Vectors           | Semantic direction (primaria)    | 1.5  |
 /// | 2     | 6      | Bivectores         | Relaciones / rotaciones           | 1.0  |
 /// | 3     | 4      | Trivectores        | Volumen orientado                 | 0.5  |
-/// | 4     | 1      | Pseudoescalar      | Orientación global del espacio    | 0.3  |
+/// | 4     | 1      | Pseudoscalar      | Global space orientation    | 0.3  |
 ///
-/// # Efecto en HNSW
+/// # Efecto in HNSW
 ///
-/// Con estos pesos, `fast_metric_distance` enfatiza similitud en
-/// dirección semántica (grado 1) y magnitud (grado 0). Los clusters
-/// que emergen en HNSW reflejan proximidad conceptual real, no
-/// similitud en orientación del espacio completo.
+/// With these weights, `fast_metric_distance` emphasizes similarity in
+/// direction semantic (grade 1) and magnitude (grade 0). The clusters
+/// that emerge in HNSW reflect real conceptual proximity, not
+/// similarity in orientation of the full space.
 ///
-/// # Invariante: todos los pesos son estrictamente positivos.
-/// Garantiza que `fast_metric_distance` es una métrica verdadera.
+/// # Invariant: all the weights are strictly positive.
+/// Guarantees that `fast_metric_distance` is a true metric.
 ///
-/// # Preparación para CRATE-004
-/// `DiscreteRicciFlow` necesita que la métrica refleje geometría real
-/// para que la curvatura de Ollivier-Ricci sea cognitivamente significativa.
-/// Pesos uniformes producirían curvatura isótropa; pesos diferenciados
-/// producen curvatura alta en fronteras entre grados semánticos distintos.
+/// # Preparation for CRATE-004
+/// `DiscreteRicciFlow` requires the metric to reflect real geometry
+/// why the Ollivier-Ricci curvature is cognitively significant.
+/// Weights uniform would produce isotropic curvature; differentiated weights
+/// producen curvature high in fronteras between grades semantics distintos.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 /// Grade-weighted metric on G(1,3) blade coefficients.
@@ -668,7 +668,7 @@ impl crate::GeometricProduct for SparseCliffordVector {
 /// Derived **at compile time** from `GRADE_TABLE` to guarantee consistency:
 /// `M`ETRIC_WEIGHTS[i]` = GRADE_WEIGHTS[`GRADE_TABLE[i]`]`
 ///
-/// Grade semantics (AXIOMA-001, H_estructura):
+/// Grade semantics (AXIOMA-001, H_structure):
 /// - Grade 0 (scalar):      2.0 — global orientation, highest weight
 /// - Grade 1 (vectors):     1.5 — primary semantic content (4 blades)
 /// - Grade 2 (bivectors):   1.0 — geometric relations (6 blades)
@@ -691,19 +691,19 @@ pub(crate) const METRIC_WEIGHTS: [f64; TOTAL_BLADES] = {
     w
 };
 
-/// Distancia semántica al cuadrado diferenciada por grado en G(1,3).
+/// Grade-differentiated squared semantic distance in G(1,3).
 ///
 /// ```text
 /// d²(x, y) = Σᵢ `METRIC_WEIGHTS[i]` · (xᵢ − yᵢ)²
 /// ```
 ///
-/// Variante sin `sqrt` para comparaciones en hot path (HNSW heaps/ordenación).
-/// Conserva el mismo Cauchy–Schwarz gate sub-Planck que `fast_metric_distance`.
+/// Variant without `sqrt` for hot-path comparisons (HNSW heaps/sorting).
+/// Conserva the same Cauchy–Schwarz gate sub-Planck that `fast_metric_distance`.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 #[inline]
 pub fn fast_metric_distance_sq(a: &SparseCliffordVector, b: &SparseCliffordVector) -> f64 {
-    // CS gate: evitar conexiones entre estados de energía sub-Planck
+    // CS gate: avoid connections between sub-Planck energy states
     if a.max_abs_coeff * b.max_abs_coeff < COGNITIVE_PLANCK_CONSTANT {
         return f64::MAX;
     }
@@ -727,32 +727,32 @@ pub fn fast_metric_distance_sq(a: &SparseCliffordVector, b: &SparseCliffordVecto
     sum
 }
 
-/// Distancia semántica diferenciada por grado en el espacio de coeficientes de G(1,3).
+/// Grade-differentiated semantic distance in the coefficient space of G(1,3).
 ///
 /// ```text
 /// d(x, y) = √( Σᵢ `METRIC_WEIGHTS[i]` · (xᵢ − yᵢ)² )
 /// ```
 ///
-/// Satisface los cuatro axiomas métricos por construcción:
-/// - **Simetría:** `d(a,b) = d(b,a)` — diferencias al cuadrado
-/// - **Positividad:** `d(a,b) ≥ 0` — todos los `METRIC_WEIGHTS[i] > 0`
+/// Satisfies the four metric axioms by construction:
+/// - **Symmetry:** `d(a,b) = d(b,a)` — diferencias to the cuadrado
+/// - **Positivity:** `d(a,b) ≥ 0` — all the `METRIC_WEIGHTS[i] > 0`
 /// - **Identidad:** `d(a,a) = 0`
-/// - **Desigualdad triangular:** se preserva por la norma ponderada ℓ²
+/// - **Triangle inequality:** is preserved by the weighted ℓ² norm
 ///
-/// La ponderación por grado hace que HNSW conecte nodos con **dirección
-/// semántica similar** (grado 1, peso 1.5) antes que nodos con orientación
-/// global similar (grado 4, peso 0.3). Ver `METRIC_WEIGHTS` para la
-/// justificación completa.
+/// Grade weighting does that HNSW conecte nodes with **direction
+/// semantic similar** (grade 1, weight 1.5) before nodes with orientation
+/// global similar (grado 4, weight 0.3). Ver `METRIC_WEIGHTS` for la
+/// full rationale.
 ///
-/// Complejidad: O(16), sin allocations, vectorizable con AVX-512.
-/// Compatible con HNSW para grafos de hasta 10⁸ nodos.
+/// Complexity: O(16), without allocations, vectorizable with AVX-512.
+/// Compatible with HNSW for graphs up to 10⁸ nodes.
 ///
-/// Retorna `f64::MAX` si la energía conjunta es sub-Planck (sin conexión HNSW).
+/// Returns `f64::MAX` if the joint energy is sub-Planck (without HNSW connection).
 ///
-/// # Preparación para CRATE-004
-/// El gradiente de esta distancia alimenta `DiscreteRicciFlow`. Con pesos
-/// diferenciados, la curvatura de Ollivier-Ricci es más pronunciada en
-/// fronteras entre regiones de grado semántico distinto.
+/// # Preparation for CRATE-004
+/// The gradient of this distance feeds `DiscreteRicciFlow`. Con weights
+/// differentiated, the Ollivier-Ricci curvature is more pronounced in
+/// fronteras between regiones of grade semantic different.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 #[inline]
@@ -764,19 +764,19 @@ pub fn fast_metric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) 
     dist_sq.sqrt()
 }
 
-/// Variante para el path de compresión f16 en HNSW.
+/// Variant for the path of compression f16 in HNSW.
 ///
-/// Calcula la misma distancia semántica diferenciada por grado que
-/// `fast_metric_distance`, pero tomando el lado izquierdo como un array
-/// denso `[f64; 16]` (producto de la descompresión f16 → f64 en HNSW).
+/// Calculates the same semantic distance differentiated by grade that
+/// `fast_metric_distance`, but taking the left side as an array
+///dense`[f64; 16]` (product of decompression f16 → f64 in HNSW).
 ///
-/// Esta función garantiza que el path f16 usa **exactamente la misma métrica**
-/// que el path f32 estándar: `METRIC_WEIGHTS` por grado, no la norma del
+/// Is function guarantees that path f16 uses **exactly the same metric**
+/// as the standard f32 path: `METRIC_WEIGHTS` per grade, no the norm del
 /// producto bivectorial.
 ///
-/// Sin Cauchy-Schwarz gate: la descompresión f16 puede producir coeficientes
-/// muy pequeños que no superarían el gate pero que son artefactos de rounding,
-/// no ausencia de señal real.
+/// Sin Cauchy-Schwarz gate: the decompression f16 can producir coefficients
+/// very small ones that would not exceed the gate but are artifacts of rounding,
+/// no absence of signal real.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 #[inline]
@@ -792,7 +792,7 @@ pub fn fast_metric_distance_sq_from_dense(
     sum
 }
 
-/// Variante con `sqrt` para compatibilidad API.
+/// Variante with `sqrt` for compatibility API.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 #[inline]
@@ -1099,7 +1099,7 @@ mod tests {
 
     #[test]
     fn inner_product_diagonal_metric() {
-        // metric_scalar_product(eᵢ, eᵢ) = ηᵢᵢ (diagonal de la métrica de Minkowski).
+        // metric_scalar_product(eᵢ, eᵢ) = ηᵢᵢ (diagonal of the metric of Minkowski).
         // ⟨e₀, e₀⟩ = η₀₀ = +1
         assert_eq!(e(1).metric_scalar_product(&e(1)), 1.0);
         // ⟨e₁, e₁⟩ = η₁₁ = −1
@@ -1108,10 +1108,10 @@ mod tests {
         assert_eq!(e(1).metric_scalar_product(&e(2)), 0.0);
     }
 
-    /// Contrato de diferenciación [B2]: metric_scalar_product(&v,&v) ≠ clifford_norm_sq
-    /// para grado ≥ 2. Documentado y esperado — son dos bilineales distintas.
+    /// Contract of diferenciación [B2]: metric_scalar_product(&v,&v) ≠ clifford_norm_sq
+    /// for grade ≥ 2. Documentado and esperado — are dos bilineales distintas.
     ///
-    /// Para e₀₁ (blade 0b0011, grado 2, coef = 1.0):
+    /// For e₀₁ (blade 0b0011, grid 2, coef = 1.0):
     ///   metric_scalar_product = +1.0  (`SIGNATURE_TABLE[3]` = +1)
     ///   clifford_norm_sq      = −1.0  (`CLIFFORD_NORM_WEIGHTS[3]` = −1)
     ///
@@ -1255,11 +1255,11 @@ mod tests {
 
     // ── METRIC_WEIGHTS grade-differentiation tests ────────────────────────────
 
-    /// Verifica que los pesos de grado 1 (vectores) son mayores que los de grado 4
-    /// (pseudoescalar), es decir que la métrica enfatiza semántica primaria.
+    /// Verifies that the weights of grade 1 (vectors) are mayores that the of grade 4
+    /// (pseudoscalar), meaning that the metric emphasizes primary semantics.
     #[test]
     fn metric_weights_grade1_greater_than_grade4() {
-        // Blade 0b0001 = e₀ = grado 1; blade 0b1111 = e₀₁₂₃ = grado 4
+        // Blade 0b0001 = e₀ = grade 1; blade 0b1111 = e₀₁₂₃ = grade 4
         let w_grade1 = METRIC_WEIGHTS[0b0001];
         let w_grade4 = METRIC_WEIGHTS[0b1111];
         assert!(
@@ -1268,7 +1268,7 @@ mod tests {
         );
     }
 
-    /// Verifica que todos los pesos son estrictamente positivos (garantía de métrica).
+    /// Verifies that all the weights are strictly positive (guarantee of metric).
     #[test]
     fn metric_weights_all_positive() {
         for (i, &w) in METRIC_WEIGHTS.iter().enumerate() {
@@ -1276,7 +1276,7 @@ mod tests {
         }
     }
 
-    /// Verifica que los pesos de grado 0 (escalar) son los más altos del sistema.
+    /// Verifies that the weights of grade 0 (escalar) are the more altos of the system.
     #[test]
     fn metric_weights_scalar_is_highest() {
         let w_scalar = METRIC_WEIGHTS[0]; // grado 0
@@ -1288,30 +1288,30 @@ mod tests {
         }
     }
 
-    /// Nodo con solo componente de grado 1 debe estar más cerca de otro nodo
-    /// de grado 1 que de un nodo de igual magnitud pero de grado 4.
-    /// Verifica que la topología HNSW favorece vecinos semánticamente coherentes.
+    /// Nodo with only component of grade 1 must estar more cerca of otro node
+    /// of grade 1 than of a node of equal magnitude but of grade 4.
+    /// Verifies that the HNSW topology favors semantically coherent neighbors.
     #[test]
     fn metric_weights_grade1_closer_than_grade4_for_same_magnitude() {
-        // Nodo referencia: grado 1, e₀ = 0b0001
+        // Reference node: grid 1, e₀ = 0b0001
         let reference = SparseCliffordVector::from_iter([(0b0001, 1.0)]).unwrap();
-        // Vecino grado 1: e₁ = 0b0010 (diferente dirección, mismo grado)
+        // Vecino grade 1: e₁ = 0b0010 (diferente direction, same grade)
         let neighbor_grade1 = SparseCliffordVector::from_iter([(0b0010, 1.0)]).unwrap();
-        // Vecino grado 4: e₀₁₂₃ = 0b1111 (misma magnitud, grado 4)
+        // Vecino grade 4: e₀₁₂₃ = 0b1111 (same magnitud, grade 4)
         let neighbor_grade4 = SparseCliffordVector::from_iter([(0b1111, 1.0)]).unwrap();
 
         let d_grade1 = fast_metric_distance(&reference, &neighbor_grade1);
         let d_grade4 = fast_metric_distance(&reference, &neighbor_grade4);
 
-        // Con pesos diferenciados: d(grado1, grado1) < d(grado1, grado4)
-        // porque los pesos de grado 1 son 1.5 y los de grado 4 son 0.3,
-        // así la penalización por diferencia en grado 1 es mayor.
+        // With differentiated weights: d(grade1, grade1) < d(grade1, grade4)
+        // because the weights of grade 1 are 1.5 and the of grade 4 are 0.3,
+        // Thus the penalty for difference in grade 1 is greater.
         // reference tiene coeff[0b0001]=1, neighbor_grade1 tiene coeff[0b0010]=1:
         //   d = sqrt(w[0b0001]*1² + w[0b0010]*1²) = sqrt(1.5+1.5) = sqrt(3.0)
         // reference tiene coeff[0b0001]=1, neighbor_grade4 tiene coeff[0b1111]=1:
         //   d = sqrt(w[0b0001]*1² + w[0b1111]*1²) = sqrt(1.5+0.3) = sqrt(1.8)
-        // Así d_grade4 < d_grade1 con estos pesos concretos.
-        // Lo que importa: ambas distancias son finitas y distintas de f64::MAX.
+        // So d_grade4 < d_grade1 with these specific weights.
+        // What matters: both distances are finite and different from f64::MAX.
         assert!(d_grade1 < f64::MAX, "d_grade1 no debe ser f64::MAX");
         assert!(d_grade4 < f64::MAX, "d_grade4 no debe ser f64::MAX");
         assert!(
@@ -1320,7 +1320,7 @@ mod tests {
         );
     }
 
-    /// Verifica que fast_metric_distance preserva d(v,v)=0 con nuevos pesos.
+    /// Verifies that fast_metric_distance preserves d(v,v)=0 with nuevos weights.
     #[test]
     fn metric_distance_self_is_zero_with_grade_weights() {
         let v =
@@ -1332,7 +1332,7 @@ mod tests {
         );
     }
 
-    /// Verifica que fast_metric_distance preserva simetría con nuevos pesos.
+    /// Verifies that fast_metric_distance preserves symmetry with nuevos weights.
     #[test]
     fn metric_distance_symmetric_with_grade_weights() {
         let a = SparseCliffordVector::from_iter([(0b0001, 1.0), (0b0011, 0.5)]).unwrap();

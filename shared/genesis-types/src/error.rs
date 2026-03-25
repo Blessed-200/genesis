@@ -1,4 +1,4 @@
-//! # GÉNESIS Error Taxonomy
+//! # GENESIS Error Taxonomy
 //!
 //! Centralised, typed error hierarchy for all genesis crates.
 //! Every variant maps to a specific layer of the cognitive architecture.
@@ -8,7 +8,7 @@
 //! This ensures that error propagation never breaks the dependency graph
 //! defined in `MACRO_ARCHITECTURE` §3.
 //!
-//! **`IrrevocableDomainReset` removed (CORRECCIÓN ESTRUCTURAL-2):** The previous
+//! **`IrrevocableDomainReset` removed (STRUCTURAL CORRECTION-2):** The previous
 //! `IrrevocableDomainReset` variant was the runtime enforcement of AXIOMA-009.
 //! It has been replaced by the compile-time type-state in
 //! `DomainConsolidationSignal<State>`: `DomainResetSignal::validate_against`
@@ -80,7 +80,7 @@ pub const fn domain_code(input: &str) -> DomainCode {
 // TOP-LEVEL ERROR ENUM
 // ============================================================================
 
-/// Unified error type for the entire GÉNESIS cognitive core.
+/// Unified error type for the entire GENESIS cognitive core.
 ///
 /// Variants are organised by the crate layer that produces them,
 /// matching the dependency hierarchy in `MACRO_ARCHITECTURE` §3.
@@ -233,7 +233,7 @@ pub enum GenesisError {
     // ------------------------------------------------------------------
     // CRATE-004: genesis-evolution — Ricci / Fisher / Heat errors
     // ------------------------------------------------------------------
-    /// The Sinkhorn transport algorithm failed to converge within
+    /// The Sinkhorn transport algorithm failed to converges within
     /// `SINKHORN_MAX_ITER` iterations (Ollivier-Ricci curvature aborted).
     ///
     /// AX-ID: AXIOMA-015, `ENGINEERING_BLUEPRINT` §4.1
@@ -356,7 +356,7 @@ pub enum GenesisError {
     ///
     /// This replaces the old runtime `IrrevocableDomainReset` check, which
     /// is now enforced at compile time via the type-state in
-    /// `DomainConsolidationSignal<State>` (CORRECCIÓN ESTRUCTURAL-2).
+    /// `DomainConsolidationSignal<State>` (STRUCTURAL CORRECTION-2).
     ///
     /// AX-ID: AXIOMA-008, AXIOMA-009
     #[error(
@@ -429,30 +429,30 @@ pub enum GenesisError {
     // ------------------------------------------------------------------
     // PROOF SYSTEM — Mutation certification errors
     // ------------------------------------------------------------------
-    /// Una mutación estructural intentó ejecutarse sin generar un Proof válido.
+    /// A structural mutation attempted to execute without generating a valid Proof.
     ///
     /// AX-ID: `LEY_FUNDACIONAL` §5.5 (`ProofGuard`)
     #[error("Proof violation: '{mutation_name}' sin Proof válido")]
     ProofMissing {
-        /// Nombre de la mutación que violó el protocolo.
+        /// Name of the mutation that violated the protocol.
         mutation_name: &'static str,
     },
 
-    /// Un Proof falló verificación (hash corrupto o axioma faltante).
+    /// A Proof failed verifiestion (corrupt hash or missing axiom).
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.4
     #[error("Proof inválido: hash o axioma {axiom_id} fallido")]
     ProofInvalid {
-        /// ID del axioma que falló (0-6 según `AxiomID`).
+        /// ID of the axiom that failed (0-6 according to `AxiomID`).
         axiom_id: u8,
     },
 
-    /// Un axioma fue verificado antes de la mutación y resultó falso.
+    /// An axiom was verified before the mutation and evaluated false.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §3
     #[error("Invariante violado: axioma {axiom_id} falló pre-mutación")]
     InvariantViolation {
-        /// ID del axioma violado (0-6 según `AxiomID`).
+        /// ID of the violated axiom (0-6 according to `AxiomID`).
         axiom_id: u8,
     },
 }

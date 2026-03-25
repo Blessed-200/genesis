@@ -26,14 +26,14 @@
 //! ```
 //!
 //! # CS gate proof (Mandato §2.3)
-//! Para cada blade k del resultado:
+//! For each blade k of the result:
 //!   `|result[k]|` ≤ Σ_{i⊕j=k} `|aᵢ|·|bⱼ|` ≤ 16 · max_abs_a · max_abs_b
 //!
-//! Para k fijo, los pares (i,j) con i⊕j=k son exactamente 16: {(i, i⊕k) : i∈0..15}.
-//! Por tanto: si 16·max_abs_a·max_abs_b < PLANCK, todos los blades del resultado
-//! son sub-Planck. El gate se dispara bajo esta condición más estricta.
-//! La cota laxa anterior (max_abs_a·max_abs_b < PLANCK) suprimía incorrectamente
-//! productos reales en el rango [PLANCK/16, PLANCK].
+//! For fixed k, the pairs (i,j) with i⊕j=k are exactly 16: {(i, i⊕k) : i∈0..15}.
+//! Therefore, if 16·max_abs_a·max_abs_b < PLANCK, all blades of the result
+//! are sub-Planck. The gate triggers under this stricter condition.
+//! The previous loose bound (max_abs_a·max_abs_b < PLANCK) incorrectly suppressed
+//! products real in the range [PLANCK/16, PLANCK].
 //!
 //! # Double-rail accumulation
 //! Two `[f64; 16]` buffers on the call stack (total 256 bytes = 4 cache lines).
@@ -491,8 +491,8 @@ unsafe fn geometric_product_aarch64_neon_dense(
 /// AX-ID: AXIOMA-001, AXIOMA-011
 /// See also: [`crate::sign::fast_cayley_product`]
 #[allow(clippy::many_single_char_names)]
-// Notación canónica GA: i = blade_a, j = blade_b, k = blade_resultado.
-// Renombrar diverge de la literatura estándar (Hestenes 2003, §2.1).
+// Canonical notation GA: i = blade_a, j = blade_b, k = blade_resultado.
+// Renaming diverges from standard literature (Hestenes 2003, §2.1).
 pub fn sparse_geometric_product(
     a: &SparseCliffordVector,
     b: &SparseCliffordVector,
@@ -508,14 +508,14 @@ pub fn sparse_geometric_product(
     if !a.max_abs_coeff.is_finite() || !b.max_abs_coeff.is_finite() {
         return None;
     }
-    // Cota superior demostrable: para cada blade k del resultado,
+    // Provable upper bound: for each blade k of the result,
     //   |result[k]| ≤ Σ_{i⊕j=k} |aᵢ||bⱼ| ≤ 16 · max_abs_a · max_abs_b
-    // (exactamente 16 pares (i, i⊕k) para cada k fijo).
-    // Si 16 · max_abs_a · max_abs_b < PLANCK → todos los blades sub-Planck.
-    // Fix [B1]: cota anterior (sin factor 16) suprimía productos reales en [PLANCK/16, PLANCK].
+    // (exactamente 16 pares (i, i⊕k) for each k fijo).
+    // If 16 · max_abs_a · max_abs_b < PLANCK → all blades are sub-Planck.
+    // Fix [B1]: previous bound (without factor 16) suppressed real products in [PLANCK/16, PLANCK].
     #[allow(clippy::cast_precision_loss)]
-    // TOTAL_BLADES = 16, exactamente representable como f64.
-    // f64 mantissa = 52 bits; 16 = 2^4, sin pérdida de precisión.
+    // TOTAL_BLADES = 16, exactly representable as f64.
+    // f64 mantissa = 52 bits; 16 = 2^4, without precision loss.
     if a.max_abs_coeff * b.max_abs_coeff * (TOTAL_BLADES as f64) < COGNITIVE_PLANCK_CONSTANT {
         return None;
     }
@@ -644,48 +644,48 @@ pub fn sparse_geometric_product_deterministic_strict(
     strict_finalize_result(result_buf)
 }
 
-/// Norma Lorentz del componente de grado 2 de A*B en G(1,3).
+/// Lorentz norm of the grade-2 component of A*B in G(1,3).
 ///
-/// Computa `⟨(A*B)·rev(A*B)⟩₀` restringido a la parte bivectorial,
-/// sin construir un `SparseCliffordVector` completo.
+/// Computes `⟨(A*B)·rev(A*B)⟩₀` restricted to the bivector component,
+/// without constructing un `SparseCliffordVector` full.
 ///
-/// # Propósito
-/// Función de distancia para HNSW en genesis-topology:
+/// # Purpose
+/// Distance function for HNSW in genesis-topology:
 ///   `fast_bivector_distance(a, b) = bivector_norm_sq_of_product(a, b).unwrap_or(f64::MAX)`
 ///
-/// Seis blades de grado 2 en G(1,3):
+/// Six grade-2 blades in G(1,3):
 ///   3 (e₀₁, −1), 5 (e₀₂, −1), 6 (e₁₂, +1),
 ///   9 (e₀₃, −1), 10 (e₁₃, +1), 12 (e₂₃, +1)
 ///
 /// # Retorno
-/// `None` si el CS gate dispara (mismo criterio que `sparse_geometric_product`).
-/// `Some(norm_sq)` donde `norm_sq` puede ser negativo (spacelike), cero (null),
-/// o positivo (timelike). El llamador en HNSW usa `.abs()` como distancia.
+/// `None` if the CS gate triggers (same criterion as `sparse_geometric_product`).
+/// `Some(norm_sq)` where `norm_sq` can be negativo (spacelike), cero (null),
+/// or positivo (timelike). .abs() is used by the HNSW caller as `.abs()` as distance.
 ///
 /// # Rendimiento
-/// Zero heap allocation. Stack buffer de 128 bytes. Seis FMA sobre los
-/// blades de grado 2 post-acumulación.
-/// Target: < 30 ns en hardware con AVX-512.
+/// Zero heap allocation. Stack buffer of 128 bytes. Six FMA operations over the
+/// blades of grade 2 post-accumulation.
+/// Target: < 30 ns in hardware with AVX-512.
 ///
 /// AX-ID: AXIOMA-001, AXIOMA-013, AXIOMA-014
-/// Nota de rendimiento (CRATE-001 v0.2.3): en sandbox sin AVX-512 sostenido,
-/// el benchmark `bivector_norm_sq_of_product_16x16` se mantiene ~420ns.
-/// La causa principal es el costo del loop denso 16×16 y el manejo del
-/// discriminante del enum de retorno bajo `black_box`; no hay heap allocation.
-/// Resultado semántico del producto bivectorial — distingue "cero algebraico"
-/// de "sub-Planck" para que los llamadores puedan implementar d(v,v)=0 correctamente.
+/// Performance note (CRATE-001 v0.2.3): in sandbox without AVX-512 sostenido,
+/// the benchmark `bivector_norm_sq_of_product_16x16` it maintains ~420ns.
+/// The main cause is the cost of the dense loop 16×16 and the management of the
+/// discriminante of the enum of retorno bajo `black_box`; no hay heap allocation.
+/// Semantic result of the bivector product — distinguishes "algebraic zero"
+/// of "sub-Planck" so that callers can implement d(v,v)=0 correctly.
 ///
-/// AX-ID: AXIOMA-001, contrato CRATE-001 v0.2.2
+/// AX-ID: AXIOMA-001, contract CRATE-001 v0.2.2
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub enum BivectorProduct {
-    /// La parte bivectorial del producto fue calculada. El valor puede ser 0.0
-    /// (vectores en relación geométrica nula: paralelos, idénticos, ortogonales
-    /// cuya parte bivectorial se cancela). Esta es información algebraica real.
+    /// The bivector part of the product was computed. The value can be 0.0
+    /// (vectors in null geometric relation: parallel, identicals, orthogonal
+    /// whose bivector part cancels out). This is real algebraic information.
     Computed(f64),
-    /// CS gate disparó: max_abs_a × max_abs_b × 16 < PLANCK, o entrada no finita,
-    /// o active_mask vacío. La energía es insuficiente para computar — no es
-    /// una relación geométrica, es ausencia de señal.
+    /// CS gate triggered: max_abs_a × max_abs_b × 16 < PLANCK, or non-finite input,
+    /// or active_mask empty. Energy is insufficient to compute — is not
+    /// a geometric relation; it is absence of signal.
     SubPlanck,
 }
 
@@ -717,13 +717,13 @@ pub fn bivector_norm_sq_of_product(
     a: &SparseCliffordVector,
     b: &SparseCliffordVector,
 ) -> BivectorProduct {
-    // CS gate — mismo criterio que sparse_geometric_product.
+    // CS gate — same criterion as sparse_geometric_product.
     if !a.max_abs_coeff.is_finite() || !b.max_abs_coeff.is_finite() {
         return BivectorProduct::SubPlanck;
     }
     #[allow(clippy::cast_precision_loss)]
-    // TOTAL_BLADES = 16, exactamente representable como f64.
-    // f64 mantissa = 52 bits; 16 = 2^4, sin pérdida de precisión.
+    // TOTAL_BLADES = 16, exactly representable as f64.
+    // f64 mantissa = 52 bits; 16 = 2^4, without precision loss.
     if a.max_abs_coeff * b.max_abs_coeff * (TOTAL_BLADES as f64) < COGNITIVE_PLANCK_CONSTANT {
         return BivectorProduct::SubPlanck;
     }
@@ -734,8 +734,8 @@ pub fn bivector_norm_sq_of_product(
     // Packed bivector buffer (6 lanes) instead of full dense 16-lane output.
     let mut bivector_buf = [0.0f64; 6];
 
-    // Inner loop idéntico al path general de sparse_geometric_product.
-    // El compilador vectoriza este loop con VFMADD cuando active_mask = 0xFFFF.
+    // Inner loop identical to the path general of sparse_geometric_product.
+    // The compiler vectoriza this loop with VFMADD when active_mask = 0xFFFF.
     let mut mask_a = a.active_mask;
     while mask_a != 0 {
         let i = mask_a.trailing_zeros() as usize;
@@ -1032,21 +1032,21 @@ mod tests {
         assert!(r.is_some());
     }
 
-    /// Regresión [B1]: CS gate anterior (sin factor 16) suprimía productos reales
-    /// en el rango [PLANCK/16, PLANCK]. Con la corrección, estos productos pasan.
+    /// Regression [B1]: CS gate previous (without factor 16) suppressed real products
+    /// in the range [PLANCK/16, PLANCK]. With the correction, these products pass.
     ///
     /// AX-ID: AXIOMA-011, MANDATO §2.3
     #[test]
     fn cs_gate_does_not_suppress_constructive_superposition() {
         use genesis_types::constants::COGNITIVE_PLANCK_CONSTANT;
         // Construir max_abs ≈ sqrt(PLANCK/8): producto = PLANCK/8 ∈ [PLANCK/16, PLANCK].
-        // Con el gate incorrecto (sin ×16): PLANCK/8 < PLANCK → suprimido (INCORRECTO).
-        // Con el gate correcto (×16): 16 × PLANCK/8 = 2×PLANCK > PLANCK → NO suprimido.
+        // With the incorrect gate (without ×16): PLANCK/8 < PLANCK → suppressed (INCORRECT).
+        // With the correct gate (×16): 16 × PLANCK/8 = 2×PLANCK > PLANCK → NO suppressed.
         let coef = (COGNITIVE_PLANCK_CONSTANT * 2.0f64).sqrt();
-        // e₀ × e₀ = +1 (scalar). Ambos vectores tienen max_abs_coeff = coef.
+        // e₀ × e₀ = +1 (scalar). Ambos vectors tienen max_abs_coeff = coef.
         let a = SparseCliffordVector::from_iter([(0b0001usize, coef)]).unwrap();
         let b = SparseCliffordVector::from_iter([(0b0001usize, coef)]).unwrap();
-        // Verificar precondición: 16 × coef² ≥ PLANCK → gate no debe dispararse.
+        // Verify precondition: 16 × coef² ≥ PLANCK → gate must not trigger.
         assert!(
             a.max_abs_coeff * b.max_abs_coeff * (TOTAL_BLADES as f64) >= COGNITIVE_PLANCK_CONSTANT,
             "precondition: gate no debe dispararse con factor 16"
@@ -1062,7 +1062,7 @@ mod tests {
     fn cs_gate_factor_16_boundary() {
         use genesis_types::constants::COGNITIVE_PLANCK_CONSTANT;
 
-        // Caso 1: 15.9999 × (max_a · max_b) < PLANCK ⇒ gate debe suprimir (None).
+        // Case 1: 15.9999 × (max_a · max_b) < PLANCK ⇒ gate must suprimir (None).
         let coef_below = (COGNITIVE_PLANCK_CONSTANT / 16.0001f64).sqrt();
         let a_below = SparseCliffordVector::from_iter([(0b0001usize, coef_below)]).unwrap();
         let b_below = SparseCliffordVector::from_iter([(0b0001usize, coef_below)]).unwrap();
@@ -1071,7 +1071,7 @@ mod tests {
         );
         assert!(sparse_geometric_product(&a_below, &b_below).is_none());
 
-        // Caso 2: 16.0001 × (max_a · max_b) ≥ PLANCK y producto algebraicamente no nulo ⇒ Some.
+        // Case 2: 16.0001 × (max_a · max_b) ≥ PLANCK and producto algebraicamente no nulo ⇒ Some.
         let coef_above = (COGNITIVE_PLANCK_CONSTANT * 1.0001f64).sqrt();
         let a_above = SparseCliffordVector::from_iter([(0b0001usize, coef_above)]).unwrap();
         let b_above = SparseCliffordVector::from_iter([(0b0001usize, coef_above)]).unwrap();
@@ -1314,7 +1314,7 @@ mod tests {
 
     #[test]
     fn bivector_norm_sq_scalar_product_is_computed_zero() {
-        // e₀ * e₀ = +1 (scalar, grado 0). Ningún blade de grado 2 activo → Computed(0.0).
+        // e₀ * e₀ = +1 (scalar, grade 0). No blade of grade 2 active → Computed(0.0).
         let r = bivector_norm_sq_of_product(&e(0b0001), &e(0b0001));
         match r {
             BivectorProduct::Computed(v) => assert!(v.abs() < 1e-15),
@@ -1324,7 +1324,7 @@ mod tests {
 
     #[test]
     fn bivector_norm_sq_consistent_with_full_product() {
-        // Verificar consistencia con sparse_geometric_product para entrada mixta.
+        // Verificar consistency with sparse_geometric_product for mixed input.
         let a = SparseCliffordVector::from_iter([(0b0001, 2.0), (0b0010, 3.0)]).unwrap();
         let b = SparseCliffordVector::from_iter([(0b0100, 1.0), (0b1000, -1.0)]).unwrap();
 
@@ -1334,7 +1334,7 @@ mod tests {
             BivectorProduct::SubPlanck => panic!("unexpected SubPlanck"),
         };
 
-        // Calcular manualmente la norma bivectorial desde el producto completo.
+        // Manually compute the bivector norm from the full product.
         const BIVECTOR_INDICES: [usize; 6] = [3, 5, 6, 9, 10, 12];
         const BIVECTOR_WEIGHTS: [f64; 6] = [-1.0, -1.0, 1.0, -1.0, 1.0, 1.0];
         let biv_ref: f64 = BIVECTOR_INDICES

@@ -420,3 +420,63 @@ Every unsafe block must include:
 
 
 *GÉNESIS Cognitive Core | AGENTS.md v4.0.0 | 384 tests, 0 failures*
+
+## Documentation Language Integrity (CRITICAL RULE)
+
+All documentation (Rustdoc, inline comments, module docs) MUST be written in strict, professional, native-level technical English.
+
+### Absolute requirements
+
+- NEVER mix languages (no Spanish, no hybrid "Spanglish")
+- NEVER perform literal translation
+- ALWAYS rewrite sentences fully when normalizing language
+- ALWAYS preserve domain precision (mathematics, physics, inference systems)
+
+### Forbidden patterns
+
+The following are strictly prohibited:
+
+- Mixed-language constructs ("por blade", "of un node", etc.)
+- Broken grammar from translation
+- Word-by-word translation artifacts
+- Informal or conversational tone
+
+### Required standard
+
+Documentation must read as if written by:
+- a senior systems engineer OR
+- a mathematical physics researcher
+
+Target qualities:
+- precise
+- unambiguous
+- consistent terminology
+- publication-grade clarity
+
+### Semantic preservation rule
+
+- Documentation changes MUST NOT alter meaning
+- Mathematical intent MUST remain identical
+- AX-ID anchors MUST remain unchanged
+
+### Consistency enforcement
+
+When editing any file:
+- Normalize terminology globally (not locally)
+- Ensure consistency across the entire module
+- Prefer rewriting over patching
+
+### Self-validation (mandatory before commit)
+
+The agent MUST verify:
+
+1. No non-English words remain
+2. No hybrid grammar exists
+3. Terminology is consistent across the file
+4. Comments are understandable in isolation
+
+If any condition fails → fix before completing task
+
+### Priority
+
+This rule has HIGHER priority than stylistic preferences.

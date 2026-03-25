@@ -3,19 +3,19 @@
 use genesis_math::SparseCliffordVector;
 use genesis_types::{GenesisError, NodeId};
 
-/// Signatura Minkowski (+,−,−,−) para G(1,3).
-/// Índice 0 = temporal (positivo), índices 1..3 = espaciales (negativos).
+/// Signatura Minkowski (+,−,−,−) for G(1,3).
+/// Index 0 = temporal (positivo), indices 1..3 = spatial (negativos).
 /// AX-ID: AXIOMA-001, `LEY_FUNDACIONAL` §2
 const TRACE_MIN: f64 = 1.0e-12;
 const TRACE_MAX: f64 = 1.0e12;
 
-/// Pesos de norma por blade en G(1,3) para el cálculo de VFE 16D.
+/// Per-blade norm weights in G(1,3) for 16D VFE computation.
 ///
-/// Proporcionados para que `VFE_16D = Σ_i precision_full[i] * (mean_full[i] - target_full[i])²`
-/// sea sensible a la geometría real de G(1,3). Los pesos reflejan la importancia
-/// semántica de cada grado (ver `METRIC_WEIGHTS` en genesis-math).
+/// Provided so that `VFE_16D = Σ_i precision_full[i] * (mean_full[i] - target_full[i])²`
+/// is sensitive to the real geometry of G(1,3). Weights reflect importance
+/// semantic of each grade (ver `METRIC_WEIGHTS` in genesis-math).
 ///
-/// | Grado | Blades   | Peso |
+/// | Grade | Blades   | Weight |
 /// |-------|----------|------|
 /// | 0     | {0}      | 2.0  |
 /// | 1     | {1,2,4,8}| 1.5  |
@@ -23,24 +23,24 @@ const TRACE_MAX: f64 = 1.0e12;
 /// | 3     | {7,11,13,14} | 0.5 |
 /// | 4     | {15}     | 0.3  |
 ///
-/// Consistentes con `METRIC_WEIGHTS` en `genesis-math` para que la distancia
-/// inferencial sea coherente con la distancia topológica en HNSW.
+/// Consistent with `METRIC_WEIGHTS` in `genesis-math` so that the distance
+/// is inferentially coherent with the topological distance in HNSW.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.3
 pub(crate) const VFE_BLADE_WEIGHTS: [f64; 16] = [
-    // blade 0 (grado 0: escalar)
+    // blade 0 (grade 0: climb)
     2.0, // blades 1,2,4,8 (grado 1: vectores — semántica primaria)
     1.5, 1.5, 1.0, // 1(e0), 2(e1), 3(e01)
     1.5, 1.0, 1.0, // 4(e2), 5(e02), 6(e12)
     0.5, 1.5, // 7(e012), 8(e3)
-    // blades 9..14 (grados 2 y 3)
+    // blades 9..14 (grados 2 and 3)
     1.0, 1.0, 0.5, 1.0, 0.5, 0.5, // blade 15 (grado 4: pseudoescalar)
     0.3,
 ];
 
-/// Índices blade de los vectores grado 1 en G(1,3): e₀, e₁, e₂, e₃.
-/// Usados para inicializar `mean_full` desde el prior de 4 componentes
-/// y para retrocompatibilidad del método `mean()`.
+/// Indices blade of the vectors grade 1 in G(1,3): e₀, e₁, e₂, e₃.
+/// Used to initialize `mean_full` from the prior of 4 components
+/// and for backward compatibility of the method `mean()`.
 pub(crate) const GRADE1_BLADE_INDICES: [usize; 4] = [1, 2, 4, 8];
 
 fn is_finite_scalar(v: f64) -> bool {
@@ -72,65 +72,60 @@ fn target_from_sparse_obs(obs: Option<&SparseCliffordVector>) -> Option<[f64; 16
     })
 }
 
-// ── Tipos de creencias ────────────────────────────────────────────────────────
+// ── Tipos of creencias ────────────────────────────────────────────────────────
 
-/// Estado inferencial completo de un nodo sobre el multivector G(1,3).
+/// Full inferential state of a node over the G(1,3) multivector.
 ///
-/// # Representación 16D
+/// # Representation 16D
 ///
-/// `mean_full[i]` es el coeficiente medio del blade `i` ∈ {0,…,15} de G(1,3).
-/// `precision_full[i]` es la precisión diagonal del blade `i`.
+/// `mean_full[i]` is the mean coefficient of the blade `i` ∈ {0,…,15} of G(1,3).
+/// `precision_full[i]` is the diagonal precision of the blade `i`.
 ///
-/// La media cubre los 16 blades (5 grados), lo que permite que el sistema
-/// inferencial opere sobre la estructura algebraica completa del concepto,
-/// no solo sobre su componente vectorial.
+/// The mean spans all 16 blades (5 grades), allowing inference to operate over
+/// the full algebraic structure of the concept rather than only its vector part.
 ///
-/// # Retrocompatibilidad
+/// # Backward compatibility
 ///
-/// - `add_node(id, prior_mean: [f64; 4])` — inicializa `mean_full` con los 4
-///   valores en los blades de grado 1 (índices 1,2,4,8) y cero en el resto.
-/// - `mean()` — retorna los 4 componentes de grado 1, idéntico al comportamiento anterior.
-/// - `compute_vfe(id, obs: Option<&[f64; 4]>)` — calcula VFE sobre grado 1 únicamente.
-///   Sin cambio de comportamiento.
-/// - `compute_vfe_with_grad(id, obs)` — ahora retorna `(f64, [f64; 16])`.
-///   **Esto cambia la firma.** Callers en CRATE-004 recibirán el gradiente completo.
-///   Callers en CRATE-003 que solo usaban los 4 primeros valores no tienen callers
-///   internos activos (solo tests) — actualizados abajo.
+/// - `add_node(id, prior_mean: [f64; 4])` initializes `mean_full` with the four
+///   grade-1 blade values (indices 1, 2, 4, 8) and zeros elsewhere.
+/// - `mean()` returns the four grade-1 components, matching previous behavior.
+/// - `compute_vfe(id, obs: Option<&[f64; 4]>)` computes VFE over grade 1 only.
+/// - `compute_vfe_with_grad(id, obs)` returns `(f64, [f64; 16])`.
 ///
-/// # Preparación para CRATE-004
-/// `DiscreteRicciFlow` usará `compute_vfe_with_grad() -> [f64; 16]` para calcular
-/// la señal de curvatura Ollivier-Ricci con información de todos los grados, no
-/// solo del subespacio vectorial.
+/// # Preparation for CRATE-004
+/// `DiscreteRicciFlow` uses `compute_vfe_with_grad() -> [f64; 16]` to compute
+/// the Ollivier-Ricci curvature signal using information from all grades,
+/// not only from the vector subspace.
 ///
 /// AX-ID: AXIOMA-003, `H_información` (`LEY_FUNDACIONAL` §3.3)
 #[derive(Clone, Debug)]
 pub struct Belief {
-    /// μᵢ — estado inferencial medio sobre los 16 blades de G(1,3).
+    /// μᵢ — state inferential medio over the 16 blades of G(1,3).
     ///
-    /// Inicializa con los 4 componentes de grado 1 en posiciones `GRADE1_BLADE_INDICES`
-    /// y cero en el resto. Evoluciona con `update_full()` hacia observaciones completas
-    /// o con `update()` (grado 1 únicamente) para retrocompatibilidad.
+    /// Initialize with the 4 components of grade 1 in positions `GRADE1_BLADE_INDICES`
+    /// and zero in the rest. Evolves with `update_full()` towards full observations
+    /// or with `update()` (grado 1 only) for backward compatibility.
     pub mean_full: [f64; 16],
-    /// Precisión diagonal sobre los 16 blades. `precision_full[i]` ∈ [0, 1e6].
-    /// Inicializa en `1.0` para todos los blades (prior no informativo).
+    /// Diagonal precision over 16 blades. `precision_full[i]` ∈ [0, 1e6].
+    /// Initializes to `1.0` for all blades (previously not informative).
     pub precision_full: [f64; 16],
     /// Node identifier this belief is associated with.
     pub node_id: NodeId,
 }
 
-/// Información de Fisher escalarizada para el gate de saciedad AXIOMA-008.
+/// Information of Fisher scalarized for the gate of satiation AXIOMA-008.
 ///
-/// La métrica de Fisher completa 𝒢ᵢ ∈ ℝ¹⁶ˣ¹⁶ se aproxima como c·I₁₆ (Fisher
-/// isotrópica), por lo que toda la información relevante es su traza escalar.
+/// The full Fisher metric 𝒢ᵢ ∈ ℝ¹⁶ˣ¹⁶ is approximated as c·I₁₆ (Fisher
+/// isotropic), so every relevant information is its scalar trace.
 ///
-/// Con la extensión a 16D, la traza cubre todos los blades, no solo grado 1.
-/// El gate de saciedad AXIOMA-008 opera igual: saciedad cuando ΔTr < ε.
+/// With the extension to 16D, the trace covers all the blades, not only grade 1.
+/// The AXIOMA-008 satiation gate behaves identically: satiation when ΔTr < ε.
 ///
 /// AX-ID: AXIOMA-008
 #[derive(Clone, Debug)]
 pub struct FisherInfo {
-    /// Traza escalar de la métrica de Fisher isotrópica: Tr(𝒢ᵢ) = 16c.
-    /// Inicializa en 1.0. Floor: 1e-12.
+    /// Trace escalar of the metric of Fisher isotropic: Tr(𝒢ᵢ) = 16c.
+    /// Inicializa in 1.0. Floor: 1e-12.
     pub trace: f64,
     /// ‖∂𝒢/∂t‖_F ≈ 0.5 · |ΔTr|
     pub delta_g: f64,
@@ -139,7 +134,7 @@ pub struct FisherInfo {
 impl Belief {
     fn new(id: NodeId, prior_mean: [f64; 4]) -> Self {
         let mut mean_full = [0.0f64; 16];
-        // Inicializar solo los 4 blades de grado 1 con el prior
+        // Initialize only the 4 blades of grade 1 with the prior
         for (k, &blade_idx) in GRADE1_BLADE_INDICES.iter().enumerate() {
             mean_full[blade_idx] = prior_mean[k];
         }
@@ -150,10 +145,10 @@ impl Belief {
         }
     }
 
-    /// Componentes de grado 1 (vectores e₀,e₁,e₂,e₃) — retrocompatibilidad.
+    /// Componentes of grade 1 (vectors e₀,e₁,e₂,e₃) — backward compatibility.
     ///
-    /// Retorna los 4 coeficientes del subespacio vectorial, idéntico al
-    /// campo `mean: [f64; 4]` original.
+    /// Returns the 4 coefficients of the vector subspace, identical to
+    /// field `mean: [f64; 4]` original.
     ///
     /// AX-ID: AXIOMA-003
     #[inline]
@@ -161,8 +156,8 @@ impl Belief {
         core::array::from_fn(|k| self.mean_full[GRADE1_BLADE_INDICES[k]])
     }
 
-    /// Traza de Fisher (para FisherGate, AXIOMA-008).
-    /// Suma de las precisiones sobre los 16 blades.
+    /// Trace of Fisher (para FisherGate, AXIOMA-008).
+    /// Sums of the precisions over the 16 blades.
     #[inline]
     pub fn fisher_trace(&self) -> f64 {
         self.precision_full.iter().sum()
@@ -194,14 +189,14 @@ impl FisherInfo {
     }
 }
 
-/// Re-exportado desde `genesis_types` para que `genesis-evolution` (CRATE-004)
-/// pueda verificar `DualityConsistency` sin importar `genesis-dynamics` (CRATE-003).
+/// Re-exported from `genesis_types` for `genesis-evolution` (CRATE-004)
+/// can verify `DualityConsistency` without importing `genesis-dynamics` (CRATE-003).
 ///
 /// AX-ID: LEY_FUNDACIONAL §3.6, §5.6
 pub use genesis_types::FisherEdgeMetric;
 
-/// Función auxiliar canónica de arista — mantenida internamente para compatibilidad
-/// con tests que la referencian directamente dentro de este módulo.
+/// Function helper canonical of edge — kept internally for compatibility
+/// with tests that the reference directly dentro of this module.
 #[inline]
 const fn canonical_edge(i: NodeId, j: NodeId) -> (NodeId, NodeId) {
     if i.get() <= j.get() {
@@ -213,21 +208,21 @@ const fn canonical_edge(i: NodeId, j: NodeId) -> (NodeId, NodeId) {
 
 // ── VFEMinimizer ──────────────────────────────────────────────────────────────
 
-/// Minimizador de Energía Libre Variacional.
+/// Minimizer of Energy Free Variational.
 ///
 /// `F = D_KL(Q(s) ‖ P(s|o)) − ln P(o)`
-/// Aproximación computable: `F ≈ Σᵢ Tr(𝒢ᵢ) · ‖μᵢ − μ̂ᵢ‖²`
+/// Approximation computable: `F ≈ Σᵢ Tr(𝒢ᵢ) · ‖μᵢ − μ̂ᵢ‖²`
 ///
-/// El mecanismo de aprendizaje ÚNICO es la minimización de F.
-/// PROHIBIDO: cross-entropy, MSE, cualquier pérdida externa. (AXIOMA-003)
-/// PROHIBIDO: esperar prompts para activarse. (AXIOMA-003: vida cognitiva continua)
+/// El mechanism of learning ONLY is the minimization of F.
+/// Forbidden: cross-entropy, MSE, cualquier loss externa. (AXIOMA-003)
+///Forbidden: wait for prompts for activerse. (AXIOMA-003: cognitive life continues)
 ///
 /// AX-ID: AXIOMA-003, AXIOMA-008, `H_información` (`LEY_FUNDACIONAL` §3.3)
 pub struct VFEMinimizer {
     beliefs: Vec<Belief>,
     fisher: Vec<FisherInfo>,
-    /// `NodeId` → índice en `beliefs` usando páginas sparse on-demand.
-    /// `u32::MAX` = no registrado.
+    /// `NodeId` → index in `beliefs` using pages sparse on-demand.
+    /// `u32::MAX` = no registered.
     id_to_idx: PagedIndex,
 }
 
@@ -293,9 +288,9 @@ impl VFEMinimizer {
     /// Panics if `id.get()` cannot fit in `usize` on the target architecture,
     /// or if the node count exceeds `u32::MAX`.
     ///
-    /// # Política de valores no finitos
-    /// `prior_mean` debe contener solo valores finitos (`is_finite`).
-    /// Si contiene `NaN`/`+Inf`/`-Inf`, el nodo se rechaza y no se persiste.
+    /// # Policy of values no finite
+    /// `prior_mean` must contener only values finite (`is_finite`).
+    /// If contiene `NaN`/`+Inf`/`-Inf`, the node it rejects and no it persiste.
     /// Register a new node with a grade-1 prior mean.
     ///
     /// # Scaling (BN-05)
@@ -337,7 +332,7 @@ impl VFEMinimizer {
         }
     }
 
-    /// Lookup interno: `NodeId` → índice en `Vec`.
+    /// Lookup internal: `NodeId` → index in `Vec`.
     ///
     /// O(1) direct-index access. Returns None for unregistered IDs without panic.
     fn lookup(&self, id: NodeId) -> Option<usize> {
@@ -349,15 +344,15 @@ impl VFEMinimizer {
             .and_then(|idx| usize::try_from(idx).ok())
     }
 
-    /// VFE sobre el subespacio de grado 1 — retrocompatibilidad con callers `[f64;4]`.
+    /// VFE over the subespacio of grade 1 — backward compatibility with callers `[f64;4]`.
     ///
-    /// Calcula la distancia de Mahalanobis al cuadrado entre `mean_full[grade1]`
-    /// y `obs` (interpretado como 4 componentes de grado 1). Siempre ≥ 0.
+    /// Calculate the distance of Mahalanobis to the square between `mean_full[grade1]`
+    /// and `obs` (interpreted as 4 components of grade 1). Always ≥ 0.
     ///
-    /// Con obs=None: predicción interna μ̂ = `[0,0,0,0]` (prior no informativo).
+    /// Con obs=None: prediction interna μ̂ = `[0,0,0,0]` (prior no informative).
     ///
-    /// # Política de valores no finitos
-    /// Si `obs` contiene `NaN`/`±Inf`, retorna `0.0`.
+    /// # Policy of values no finite
+    /// If `obs` contiene `NaN`/`±Inf`, returns `0.0`.
     pub fn compute_vfe(&self, id: NodeId, obs: Option<&[f64; 4]>) -> f64 {
         let Some(idx) = self.lookup(id) else {
             return 0.0;
@@ -373,7 +368,7 @@ impl VFEMinimizer {
         // loop-invariant, hoisted
         // CRYSTAL: O29 — inevitable
         let target: [f64; 4] = obs.map_or([0.0; 4], |o| *o);
-        // VFE sobre los 4 blades de grado 1 — Kahan summation.
+        // VFE over the 4 blades of grade 1 — Kahan summation.
         // Applies VFE_BLADE_WEIGHTS for consistency with compute_vfe_with_grad (FIX-3).
         let mut sum = 0.0f64;
         let mut comp = 0.0f64;
@@ -390,25 +385,25 @@ impl VFEMinimizer {
         sum
     }
 
-    /// VFE completo sobre los 16 blades de G(1,3) y gradiente `[f64; 16]`.
+    /// VFE full over the 16 blades of G(1,3) and gradiente `[f64; 16]`.
     ///
     /// ```text
     /// VFE_16D = Σ_{i=0}^{15} precision_full[i] · (mean_full[i] − target_full[i])²
     /// grad[i] = 2 · precision_full[i] · (mean_full[i] − target_full[i])
     /// ```
     ///
-    /// El target completo se extrae de `obs.coeffs[0..16]` cuando `obs` es `Some`.
-    /// Con `obs=None`, el target es el vector cero (prior vacío).
+    /// The target full it extracts from `obs.coeffs[0..16]` when `obs` is `Some`.
+    /// With `obs=None`, the target is the zero vector (prior empty).
     ///
-    /// # Uso en CRATE-004
-    /// `DiscreteRicciFlow::step()` llama este método para obtener el gradiente
-    /// completo 16D que dirige la deformación de la métrica de aristas. El gradiente
-    /// cubre todos los grados de Clifford, produciendo señal de curvatura en la
-    /// geometría completa del concepto, no solo en su componente vectorial.
+    /// # Usage in CRATE-004
+    /// `DiscreteRicciFlow::step()` calls this method for obtener the gradiente
+    /// full 16D that drives the deformation of the metric of edges. The gradient
+    /// covers all the grades of Clifford, producing signal of curvature in the
+    /// geometry full of the concept, no only in su component vectorial.
     ///
-    /// # Cambio de firma respecto a v1.0
-    /// Retorna `[f64; 16]` en lugar de `[f64; 4]`. Callers que solo necesitan
-    /// los 4 componentes de grado 1 deben indexar `grad[GRADE1_BLADE_INDICES]`.
+    /// # Cambio of signature respecto a v1.0
+    /// Returns `[f64; 16]` instead of `[f64; 4]`. Callers that only necesitan
+    /// the 4 components of grade 1 must indexar `grad[GRADE1_BLADE_INDICES]`.
     ///
     /// AX-ID: AXIOMA-003, H_información (LEY_FUNDACIONAL §3.3)
     pub fn compute_vfe_with_grad(
@@ -451,8 +446,8 @@ impl VFEMinimizer {
         (vfe, grad)
     }
 
-    /// Gradiente de grado 1 únicamente — acceso conveniente para callers
-    /// que solo necesitan la señal de los 4 vectores base.
+    /// Gradiente of grade 1 only — access conveniente for callers
+    /// which only need the signal of the 4 base vectors.
     ///
     /// Equivalente a `compute_vfe_with_grad()[1][GRADE1_BLADE_INDICES]`.
     ///
@@ -467,13 +462,13 @@ impl VFEMinimizer {
         (vfe, grad4)
     }
 
-    /// Drive interno: retorna el `NodeId` con mayor VFE 16D bajo prior vacío.
+    /// Drive internal: returns the `NodeId` with mayor VFE 16D bajo prior empty.
     ///
-    /// El VFE 16D cubre todos los grados de G(1,3), por lo que el nodo con
-    /// mayor sorpresa puede ser uno con alta discrepancia en bivectores o
-    /// trivectores, no solo en la componente vectorial.
+    /// The VFE 16D covers all the degrees of G(1,3), so the node with
+    /// biggest surprise can be one with high discrepancy in bivectors or
+    ///trivectors, not only in the vector component.
     ///
-    /// Sin estímulo externo el sistema minimiza F internamente. (AXIOMA-003)
+    /// Without external stimulus the system minimizes F internally. (AXIOM-003)
     pub fn internal_drive(&mut self) -> Option<NodeId> {
         if self.beliefs.is_empty() {
             return None;
@@ -507,11 +502,11 @@ impl VFEMinimizer {
         max_id
     }
 
-    /// Actualiza las creencias de grado 1 tras observación — retrocompatibilidad.
+    /// Updates beliefs of grade 1 after observation — backward compatibility.
     ///
-    /// Mismo comportamiento que en v1.0: solo actualiza los 4 blades de grado 1
-    /// (`mean_full[GRADE1_BLADE_INDICES]`). Para actualizar todos los 16 blades,
-    /// usar `update_full()`.
+    /// Same behavior as in v1.0: only updates the 4 blades of grade 1
+    /// (`mean_full[GRADE1_BLADE_INDICES]`). Para updatesr all the 16 blades,
+    /// use `update_full()`.
     ///
     /// AX-ID: AXIOMA-003, AXIOMA-008
     pub fn update(&mut self, id: NodeId, observation: &[f64; 4], dt: f64) {
@@ -528,7 +523,7 @@ impl VFEMinimizer {
             return;
         }
 
-        // Actualizar solo los 4 blades de grado 1
+        // Update only the 4 blades of grade 1
         let mut error_sq = 0.0f64;
         for (k, &blade_idx) in GRADE1_BLADE_INDICES.iter().enumerate() {
             let err = observation[k] - belief.mean_full[blade_idx];
@@ -546,17 +541,17 @@ impl VFEMinimizer {
         fisher.delta_g = 0.5_f64.mul_add((fisher.trace - old_trace).abs(), 0.0);
     }
 
-    /// Actualiza las creencias sobre los 16 blades completos de G(1,3).
+    /// Updates the beliefs over the 16 blades full of G(1,3).
     ///
-    /// La observación `obs` debe ser un `SparseCliffordVector` — sus 16 coeficientes
-    /// se usan como target completo. Actualiza `mean_full` y `precision_full` en todos
-    /// los blades con señal no nula en `obs`.
+    /// The observation `obs` must be a `SparseCliffordVector` — its 16 coefficients
+    /// it usan as target full. Actualiza `mean_full` and `precision_full` in all
+    /// blades with non-null signal in `obs`.
     ///
-    /// Para observaciones solo de grado 1, usar `update()` que es más eficiente.
+    /// For observations only of grade 1, use `update()` which is more efficient.
     ///
-    /// # Preparación para CRATE-004
-    /// `DiscreteRicciFlow` puede suministrar observaciones completas 16D al
-    /// ajustar creencias post-colapso de wormhole.
+    /// # Preparation for CRATE-004
+    /// `DiscreteRicciFlow` can suministrar observaciones completas 16D al
+    /// ajustar creencias post-colapso of wormhole.
     ///
     /// AX-ID: AXIOMA-003, AXIOMA-008
     pub fn update_full(&mut self, id: NodeId, obs: &SparseCliffordVector, dt: f64) {
@@ -594,13 +589,13 @@ impl VFEMinimizer {
         fisher.delta_g = 0.5_f64.mul_add((fisher.trace - old_trace).abs(), 0.0);
     }
 
-    /// Acceso a `FisherInfo` de un nodo.
+    /// Access a `FisherInfo` of un node.
     pub fn fisher(&self, id: NodeId) -> Option<&FisherInfo> {
         let idx = self.lookup(id)?;
         Some(&self.fisher[idx])
     }
 
-    /// `ΔG = ||∂𝒢/∂t||` para `FisherGate` (AXIOMA-008).
+    /// `ΔG = ||∂𝒢/∂t||` for `FisherGate` (AXIOMA-008).
     pub fn delta_g(&self, id: NodeId) -> f64 {
         self.lookup(id).map_or(0.0, |idx| self.fisher[idx].delta_g)
     }
@@ -658,7 +653,7 @@ mod tests {
         let a = NodeId::try_new(0).expect("NodeId válido por construcción");
         let b = NodeId::try_new(1).expect("NodeId válido por construcción");
         let c = NodeId::try_new(2).expect("NodeId válido por construcción");
-        // mean más grande → VFE más alto (con trace=1.0 uniforme)
+        // mean more large → VFE more alto (con trace=1.0 uniforme)
         vfe.add_node(a, [0.1, 0.0, 0.0, 0.0]);
         vfe.add_node(b, [10.0, 0.0, 0.0, 0.0]); // mayor VFE
         vfe.add_node(c, [1.0, 0.0, 0.0, 0.0]);
@@ -695,9 +690,9 @@ mod tests {
 
     #[test]
     fn vfe_no_external_loss_function() {
-        // Verifica que el ÚNICO mecanismo de actualización es la observación.
-        // VFE disminuye tras update: la actualización interna converge, no diverge.
-        // No existe API para inyectar gradientes externos — garantía de compilador.
+        // Verifies that the ONLY mechanism of updates is observation.
+        // VFE decreases after update: the internal updates converge, not diverge.
+        // No exists API for inyectar gradientes externals — guarantee of compilador.
         let mut vfe = VFEMinimizer::new();
         let id = NodeId::try_new(0).expect("NodeId válido por construcción");
         vfe.add_node(id, [2.0, 0.0, 0.0, 0.0]);
@@ -705,7 +700,7 @@ mod tests {
         let before = vfe.compute_vfe(id, Some(&obs));
         vfe.update(id, &obs, 0.1);
         let after = vfe.compute_vfe(id, Some(&obs));
-        // VFE con observación igual a media = 0 → debe mantenerse en 0 o bajar
+        // VFE with observation equal to mean = 0 → must stay at 0 or lower
         assert!(after <= before + 1e-12);
     }
 
@@ -734,7 +729,7 @@ mod tests {
 
     #[test]
     fn vfe_update_multiple_steps_converges() {
-        // Tras muchas actualizaciones con la misma observación, VFE → 0.
+        // After many updates with the same observation, VFE → 0.
         let mut vfe = VFEMinimizer::new();
         let id = NodeId::try_new(0).expect("NodeId válido por construcción");
         vfe.add_node(id, [0.0; 4]);
@@ -752,25 +747,25 @@ mod tests {
 
     #[test]
     fn vfe_minkowski_temporal_spatial_asymmetry() {
-        // En G(1,3), el error temporal y espacial tienen signos opuestos.
-        // Un error puramente espacial debe producir VFE NEGATIVO antes de abs().
-        // Verificar que la signatura Minkowski está correctamente aplicada.
+        // In G(1,3), the temporal and spatial error have opposite signs.
+        // Un error purely espacial must producir VFE NEGATIVO before of abs().
+        // Verify that the Minkowski signature is correctly applied.
         let mut vfe = VFEMinimizer::new();
         let id = NodeId::try_new(0).expect("NodeId válido por construcción");
         // mean = [0,0,0,0], obs_temporal = [1,0,0,0] → error temporal positivo
         vfe.add_node(id, [0.0; 4]);
         let obs_t = [1.0f64, 0.0, 0.0, 0.0];
         let vfe_temporal = vfe.compute_vfe(id, Some(&obs_t));
-        // Reiniciar con error puramente espacial
+        // Reiniciar with error purely espacial
         let mut vfe2 = VFEMinimizer::new();
         vfe2.add_node(id, [0.0; 4]);
         let obs_x = [0.0f64, 1.0, 0.0, 0.0];
         let vfe_spatial = vfe2.compute_vfe(id, Some(&obs_x));
         // Temporal: sign=+1 → error_sq > 0. Espacial: sign=-1 → error_sq_raw < 0, abs > 0.
-        // Ambos positivos por el abs(), pero los gradientes internos son opuestos.
+        // Both positive by abs(), but the internal gradients are opposite.
         assert!(vfe_temporal >= 0.0, "VFE temporal debe ser ≥ 0");
         assert!(vfe_spatial >= 0.0, "VFE espacial debe ser ≥ 0");
-        // Con Tr(G)=1.0, error=1.0, y VFE_BLADE_WEIGHTS=1.5 (grade-1): VFE = 1.5
+        // Con Tr(G)=1.0, error=1.0, and VFE_BLADE_WEIGHTS=1.5 (grade-1): VFE = 1.5
         assert!(
             (vfe_temporal - 1.5).abs() < 1e-12,
             "VFE temporal = {} (expected 1.5 with w=1.5)",
@@ -785,8 +780,8 @@ mod tests {
 
     #[test]
     fn vfe_delta_g_has_correct_frobenius_scale() {
-        // Para Fisher isotrópica 4x4 con traza T: ‖ΔG‖_F = |ΔT|/2.
-        // Verificar que delta_g == 0.5 * |ΔTr| tras una actualización.
+        // Para Fisher isotropic 4x4 with trace T: ‖ΔG‖_F = |ΔT|/2.
+        // Verify that delta_g == 0.5 * |ΔTr| after an update.
         let mut vfe = VFEMinimizer::new();
         let id = NodeId::try_new(0).expect("NodeId válido por construcción");
         vfe.add_node(id, [0.0; 4]);
@@ -805,13 +800,13 @@ mod tests {
 
     #[test]
     fn vfe_kahan_cancellation_near_lightcone() {
-        // Verifica que compute_vfe es numéricamente estable cuando mean ≈ target.
-        // Sin Kahan, para valores grandes el error relativo puede ser O(1).
+        // Verifies that compute_vfe is numéricamente stable when mean ≈ target.
+        // Without Kahan, for values ​​larges the relative error can be O(1).
         let mut vfe = VFEMinimizer::new();
         let id = NodeId::try_new(0).expect("NodeId válido por construcción");
         // mean = [1000.0, 1000.0, 0.0, 0.0] — near the light cone.
         vfe.add_node(id, [1000.0, 1000.0, 0.0, 0.0]);
-        // target = mean exactamente → VFE debe ser 0.
+        // target = mean exactmente → VFE must be 0.
         let obs = [1000.0f64, 1000.0, 0.0, 0.0];
         let vfe_val = vfe.compute_vfe(id, Some(&obs));
         assert!(
@@ -823,7 +818,7 @@ mod tests {
 
     #[test]
     fn add_node_rejects_out_of_range_id_without_panic() {
-        // NodeId::MAX_VALID = u64::MAX − 1; sólo u64::MAX es rechazado por try_new.
+        // NodeId::MAX_VALID = u64::MAX − 1; only u64::MAX is rechazado per try_new.
         assert!(NodeId::try_new(u64::MAX).is_err());
 
         // BN-05: 2_000_000 is now well within the new MAX_ALLOWED_NODE_ID = 100_000_000.
@@ -1052,16 +1047,16 @@ mod tests {
 
     #[test]
     fn vfe_grad_matches_finite_difference() {
-        // El gradiente de compute_vfe_with_grad es ahora [f64; 16].
-        // mean[k] (grado 1, componente k) se almacena en mean_full[GRADE1_BLADE_INDICES[k]].
+        // The gradient of compute_vfe_with_grad is now [f64; 16].
+        // mean[k] (grado 1, component k) it almacena in mean_full[GRADE1_BLADE_INDICES[k]].
         // GRADE1_BLADE_INDICES[0] = 1 → blade e₀.
-        // La diferencia finita perturba mean[0] → blade 1, y debemos comparar
-        // con grad[GRADE1_BLADE_INDICES[0]] = grad[1].
+        // The finite difference perturbs mean[0] → blade 1, and we must compare
+        // with grad[GRADE1_BLADE_INDICES[0]] = grad[1].
         let id = NodeId::try_new(0).expect("NodeId válido por construcción");
         let mean = [1.3, -0.2, 0.4, 0.1];
 
-        // obs con coeficientes en todos los blades incluyendo los de grado 1
-        // (blades 1,2,4,8 según GRADE1_BLADE_INDICES)
+        // obs with coefficients on all blades including those of grade 1
+        // (blades 1,2,4,8 according to GRADE1_BLADE_INDICES)
         let obs = SparseCliffordVector::from_iter([
             (1usize, 0.1), // blade e₀ (grado 1, índice 0 de mean)
             (2, -0.4),     // blade e₁ (grado 1, índice 1 de mean)
@@ -1104,8 +1099,8 @@ mod tests {
         );
     }
 
-    /// Verifica que el gradiente 16D cubre correctamente los blades de grado 1.
-    /// Los componentes de grado 1 son los más semánticamente relevantes.
+    /// Verifies that the 16D gradient correctly covers the blades of grade 1.
+    /// The components of grade 1 are the most semantically relevant.
     #[test]
     fn vfe_grad_16d_grade1_components_consistent() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -1129,7 +1124,7 @@ mod tests {
             "grad[blade e₀] debe ser 3.0 (2*w*prec*delta), got {}",
             grad[GRADE1_BLADE_INDICES[0]]
         );
-        // Gradientes en blades no activados por obs o mean deben ser 0
+        // Gradients on blades not activated by obs or mean must be 0
         assert_eq!(grad[0], 0.0, "blade escalar no activado, grad debe ser 0");
         assert_eq!(
             grad[15], 0.0,
@@ -1137,8 +1132,8 @@ mod tests {
         );
     }
 
-    /// Verifica que compute_vfe_with_grad_grade1 retorna exactamente los 4
-    /// componentes de grado 1 del gradiente 16D.
+    /// Verifies that compute_vfe_with_grad_grade1 returns exactmente the 4
+    /// components of grade 1 of the gradiente 16D.
     #[test]
     fn vfe_grad_grade1_convenience_matches_full_grad() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -1161,7 +1156,7 @@ mod tests {
         }
     }
 
-    /// Verifica que update_full actualiza todos los 16 blades activos en obs.
+    /// Verifies that update_full updates all the 16 blades active in obs.
     #[test]
     fn update_full_updates_all_active_blades() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -1180,14 +1175,14 @@ mod tests {
         vfe.update_full(id, &obs, 0.1);
         let belief_after = vfe.beliefs[0].mean_full;
 
-        // Blades 0, 1, 3, 15 deben haber cambiado (había error ≠ 0)
+        // Blades 0, 1, 3, 15 must have changed (there was error ≠ 0)
         for &blade in &[0usize, 1, 3, 15] {
             assert!(
                 (belief_after[blade] - belief_before[blade]).abs() > 1e-10,
                 "blade {blade} debe haber cambiado tras update_full"
             );
         }
-        // Blade 7 (no activado en obs) no debe haber cambiado
+        // Blade 7 (no activedo in obs) no must haber cambiado
         assert_eq!(
             belief_after[7], belief_before[7],
             "blade 7 no activado en obs no debe cambiar"

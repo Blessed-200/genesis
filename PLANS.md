@@ -863,3 +863,18 @@ Remaining risk:
 - `cargo clippy -p genesis-topology -- -D warnings 2>&1 | grep "^error"`
 - `cargo bench -p genesis-topology --bench topology -- --output-format bencher hnsw_insert hnsw_search 2>&1 | grep "bench:"`
 - Repository required gates: `cargo check --workspace`, `cargo test --workspace`, `cargo check --workspace 2>&1 | grep "^warning:"`.
+
+## 0.5 Workspace comment/doc English unification (2026-03-25)
+
+### Root cause
+- Targeted workspace files contained mixed Spanish/English Rustdoc and inline comments, reducing API documentation consistency.
+
+### File-level actions
+1. Update only `///`, `//!`, and `//` comments in the requested files.
+2. Preserve logic, strings, AX-ID references, and runtime behavior.
+3. Run workspace validation commands after translation pass.
+
+### Validation
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo test --workspace --release 2>&1 | grep -E "FAILED|^test result"`
+- `cargo clippy --workspace -- -D warnings 2>&1 | grep "^error"`

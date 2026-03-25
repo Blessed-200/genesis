@@ -15,46 +15,46 @@ const LANCZOS_REORTHOGONALIZE_EVERY: usize = 10;
 const LANCZOS_CONVERGENCE_EPS: f64 = 1e-9;
 const POWER_REFINE_MAX_ITERS: usize = 800;
 
-// Política de mantenimiento para colectores topológicos críticos.
+// Policy of maintenance for collectors topological critical.
 //
-// - `#[inline(always)]` está prohibido por defecto; una excepción requiere
-//   justificación documentada (benchmark + motivo arquitectónico + riesgo).
-// - Reglas `cfg` del codec: cualquier rama condicionada por
-//   `feature = "hnsw-f16"` o `genesis_const_layer0_codec` debe mantener
-//   contraparte `not(...)` verificable para prevenir símbolos huérfanos.
+// - `#[inline(always)]` is forbidden by default; an exception requires
+//   justification documentada (benchmark + architectural rationale + risk).
+// - `cfg` rules of the codec: any branch conditioned by
+//   `feature = "hnsw-f16"` or `genesis_const_layer0_codec` must keep
+//   counterpart `not(...)` verifiesble for prevent symbols orphan.
 //
 // AX-ID: AXIOMA-007, AXIOMA-013, H_restricción (LEY_FUNDACIONAL §5.6)
 
-// ── HyperbolicCoord — Contrato para CRATE-004 ─────────────────────────────────
+// ── HyperbolicCoord — Contract for CRATE-004 ─────────────────────────────────
 
-/// Coordenada en el disco de Poincaré ℍ² (modelo de curvatura constante −1).
+/// Coordinate in the Poincaré disk ℍ² (model of curvature constant −1).
 ///
-/// # Invariante
-/// `x² + y² < 1` siempre — el punto vive estrictamente dentro del disco unitario.
+/// # Invariant
+/// `x² + y² < 1` always — the point lives strictly within the unit disk.
 ///
-/// # Semántica cognitiva
+/// # Cognitive semantics
 ///
-/// El disco de Poincaré representa jerarquías de forma natural:
-/// - **Centro del disco** (`|coord| → 0`): conceptos raíz de alta conectividad
-///   (baja curvatura de Ollivier-Ricci, muchos vecinos HNSW).
-/// - **Borde del disco** (`|coord| → 1`): conceptos hoja de baja conectividad
-///   (alta curvatura, pocos vecinos, alta especificidad semántica).
+/// The Poincaré disk represents hierarchies naturally:
+/// - **Center of the disk** (`|coord| → 0`): concepts root of high connectivity
+///   (baja Ollivier-Ricci curvature, muchos vecinos HNSW).
+/// - **Edge of the disk** (`|coord| → 1`): concepts hoja of baja connectivity
+///   (high curvature, pocos vecinos, high especificidad semantic).
 ///
-/// La distancia hiperbólica entre dos puntos crece exponencialmente hacia el
-/// borde, lo que permite representar jerarquías con profundidad exponencial
-/// en espacio lineal.
+/// The hyperbolic distance between two points grows exponentially towards the
+///edge, which allows representing hierarchies with exponential depth
+/// in espacio lineal.
 ///
-/// # Estado de activación
+/// # State of activation
 ///
-/// **CONTRATO — no activo todavía.**
-/// El campo `hyperbolic_coords` en `ManifoldCollector` existe pero siempre
-/// devuelve `None` hasta que `DiscreteRicciFlow` (CRATE-004) comience a
-/// actualizar coordenadas con `ManifoldCollector::set_hyperbolic_coord()`.
+/// **Contract — no active yet.**
+/// The field `hyperbolic_coords` in `ManifoldCollector` exists but always
+/// returns `None` until `DiscreteRicciFlow` (CRATE-004) starts
+/// updatesr coordenadas with `ManifoldCollector::set_hyperbolic_coord()`.
 ///
-/// CRATE-004 calculará coordenadas usando la fórmula de proyección basada en
-/// curvatura local: `r = tanh(K_avg_node / 2)`, ángulo desde sincronía Kuramoto.
+/// CRATE-004 will compute coordinates using the projection formula based on
+/// curvature local: `r = tanh(K_avg_node / 2)`, an angle derived from Kuramoto synchrony.
 ///
-/// # Invariantes físicos del disco de Poincaré
+/// # Invariants physical of the disk of Poincaré
 /// ```
 /// use genesis_topology::manifold::HyperbolicCoord;
 ///
@@ -70,20 +70,20 @@ const POWER_REFINE_MAX_ITERS: usize = 800;
 /// assert!((d - 2.0_f64 * 0.5_f64.atanh()).abs() < 1e-12);
 /// ```
 ///
-/// AX-ID: AXIOMA-004 (paisaje de atractores), LEY_FUNDACIONAL §7.2
+/// AX-ID: AXIOMA-004 (paisaje of atractores), LEY_FUNDACIONAL §7.2
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HyperbolicCoord {
-    /// Coordenada x en el disco de Poincaré. `x² + y² < 1`.
+    /// Coordinate x on the disk of Poincaré. `x² + y² < 1`.
     pub x: f64,
-    /// Coordenada y en el disco de Poincaré. `x² + y² < 1`.
+    /// Coordinate and on the disk of Poincaré. `x² + y² < 1`.
     pub y: f64,
 }
 
 impl HyperbolicCoord {
-    /// Constructor validado. Retorna `None` si `x² + y² ≥ 1`.
+    /// Constructor validated. Returns `None` if `x² + y² ≥ 1`.
     ///
-    /// # Invariante
-    /// Todo `HyperbolicCoord` válido satisface `self.norm_sq() < 1.0`.
+    /// # Invariant
+    /// Todo `HyperbolicCoord` valid satisfies `self.norm_sq() < 1.0`.
     ///
     /// ```
     /// use genesis_topology::manifold::HyperbolicCoord;
@@ -109,14 +109,14 @@ impl HyperbolicCoord {
         }
     }
 
-    /// Norma euclidiana al cuadrado: `x² + y²`. Siempre < 1 por invariante.
+    /// Euclidean norm to the square: `x² + y²`. Always < 1 for invariant.
     #[inline]
     #[must_use]
     pub fn norm_sq(&self) -> f64 {
         self.x.mul_add(self.x, self.y * self.y)
     }
 
-    /// Distancia hiperbólica al origen del disco.
+    /// Hyperbolic distance to the origin of the disk.
     /// `d(0, p) = 2·arctanh(|p|)`
     #[inline]
     #[must_use]
@@ -125,10 +125,10 @@ impl HyperbolicCoord {
     }
 }
 
-/// Workspace por hilo para `compute_lambda2`. Todos los buffers son `Vec` dinámicos.
-/// Se redimensionan lazy con crecimiento geométrico (`next_power_of_two`) para
-/// amortizar reasignaciones y mejorar localidad de caché.
-/// Sin límite fijo de nodos — solo la memoria del sistema lo acotat.
+/// Workspace per thread for `compute_lambda2`. All the buffers are `Vec` dynamic.
+/// It redimensionan lazy with crecimiento geometric (`next_power_of_two`) para
+/// amortize reallocations and improve locality of cache.
+/// Sin limit fijo of nodes — only the memory of the system lo acotat.
 #[repr(C, align(32))]
 #[derive(Default)]
 struct LambdaWorkspace {
@@ -155,7 +155,7 @@ impl LambdaWorkspace {
 }
 
 fn ensure_lambda_workspace_capacity(ws: &mut LambdaWorkspace, n: usize, max_iters: usize) {
-    // ── Redimensionamiento lazy con crecimiento geométrico ──────────
+    // ── Redimensionamiento lazy with crecimiento geometric ──────────
     let n_cap = n.next_power_of_two();
     if ws.degrees.len() < n {
         ws.degrees.resize(n_cap, 0.0);
@@ -187,33 +187,33 @@ fn ensure_lambda_workspace_capacity(ws: &mut LambdaWorkspace, n: usize, max_iter
 thread_local! {
     static LAMBDA_SCRATCH: RefCell<LambdaWorkspace> = RefCell::new(LambdaWorkspace::new());
 }
-/// AX-ID: AXIOMA-007, AXIOMA-013, `H_restricción` (λ₂, H¹, densidad)
+/// AX-ID: AXIOMA-007, AXIOMA-013, `H_restricción` (λ₂, H¹, density)
 /// `ManifoldCollector`: the cognitive manifold wrapping `HnswGraph`.
 /// Provides `compute_lambda2()`, `compute_edge_density()`, `compute_h1()`,
 /// `find_affected_nodes()`, and edge/node count delegation.
 use genesis_types::{GenesisError, NodeId, REDUNDANCY_RADIUS};
 
-/// `ManifoldCollector` — the cognitive space where GÉNESIS concepts exist.
+/// `ManifoldCollector` — the cognitive space where GENESIS concepts exist.
 ///
 /// Wraps `HnswGraph` and provides:
 /// - Topological metrics (λ₂, edge density, H¹)
 /// - Structural queries (affected nodes)
-/// - Invariant verification interfaces
+/// - Invariant verifiestion interfaces
 /// - Hyperbolic coordinates (contract for CRATE-004 — inactive until Ricci flow)
 ///
 /// AX-ID: AXIOMA-007, AXIOMA-013, AXIOMA-014, `H_restricción` §3.5
 pub struct ManifoldCollector {
     graph: HnswGraph,
     h1_state: IncrementalH1State,
-    /// Coordenadas hiperbólicas por nodo en el disco de Poincaré.
+    /// Hyperbolic coordinates per node on the disk of Poincaré.
     ///
-    /// **CONTRATO — poblado por CRATE-004 (`DiscreteRicciFlow`).**
-    /// Antes de que CRATE-004 esté implementado, este Vec está vacío y
-    /// `hyperbolic_coord(id)` siempre retorna `None`.
+    /// **Contract — populated by CRATE-004 (`DiscreteRicciFlow`).**
+    /// Before of that CRATE-004 this implementado, this Vec is empty y
+    /// `hyperbolic_coord(id)` siempre returns `None`.
     ///
-    /// Almacenado como Vec ordenado por `NodeId::get()` para búsqueda O(log N)
-    /// sin HashMap (cumple restricción de hot-path del workspace).
-    /// Insertado mediante `set_hyperbolic_coord()` con mantenimiento de orden.
+    /// Stored as Vec sorted by `NodeId::get()` for search O(log N)
+    /// without HashMap (cumple restricción of hot-path of the workspace).
+    /// Insertado mediante `set_hyperbolic_coord()` with maintenance of order.
     ///
     /// AX-ID: AXIOMA-004, LEY_FUNDACIONAL §7.2
     hyperbolic_coords: Vec<(u64, HyperbolicCoord)>,
@@ -246,7 +246,7 @@ impl ManifoldCollector {
     pub fn insert(&mut self, id: NodeId, vec: &SparseCliffordVector) -> Result<(), GenesisError> {
         self.graph.insert(id, vec)?;
 
-        // Actualizar estado incremental de H¹.
+        // Actualizar state incremental of H¹.
         self.h1_state.add_node();
 
         // BN-02: Stack-allocated neighbour buffer — max M0 neighbours at layer 0.
@@ -271,7 +271,7 @@ impl ManifoldCollector {
         }
         let neighbors = &mut neighbors_buf[..neighbor_count];
 
-        // Registrar aristas nuevas.
+        // Registrar edges nuevas.
         for &v in neighbors.iter() {
             self.h1_state.add_edge(id, v);
         }
@@ -280,10 +280,10 @@ impl ManifoldCollector {
         // O(K log K) where K ≤ M0 = 32. Entirely in L1 cache.
         neighbors.sort_unstable();
 
-        // Detectar triángulos: para cada par (v, w) de vecinos de `id`,
-        // comprobar si v y w están conectados → triángulo (id, v, w).
+        // Detect triangles: for each pair (v, w) of vecinos of `id`,
+        // comprobar if v and w are conectados → triangle (id, v, w).
         // Binary search on sorted stack array replaces HashSet lookup.
-        // Complejidad: O(K² · log K) por inserción. Para K=32: ~5120 ops — L1.
+        // Complexity: O(K² · log K) per insertion. Para K=32: ~5120 ops — L1.
         for i in 0..neighbor_count {
             let v = neighbors[i];
             for w in self.graph.neighbors(v) {
@@ -350,12 +350,12 @@ impl ManifoldCollector {
         if n < 2 {
             return 0.0;
         }
-        // N = node_count(). Para N < 2^52 (límite físico de memoria), usize→f64 exacto.
-        // Cálculo de densidad de aristas: N·log(N) no requiere precisión de entero exacto.
+        // N = node_count(). Para N < 2^52 (limit físico of memory), usize→f64 exact.
+        // Calculation of density of edges: N·log(N) no requires precisión of entero exact.
         #[allow(clippy::cast_precision_loss)]
         let n_f = n as f64;
         let log_n = n_f.log(EDGE_DENSITY_LOG_BASE).max(1.0);
-        // edge_count ≤ N² y para N < 2^52 el cast a f64 es aceptable para métrica.
+        // edge_count ≤ N² and for N < 2^52 the cast a f64 is aceptable for metric.
         #[allow(clippy::cast_precision_loss)]
         let edge_count_f = self.graph.edge_count() as f64;
         edge_count_f / (n_f * log_n)
@@ -368,8 +368,8 @@ impl ManifoldCollector {
     /// Convergence: `|λ_new - λ_old| < 1e-9` or max 50 iterations.
     /// Reorthogonalisation: every 10 iterations.
     ///
-    /// En grafos N<200 power iteration puede ser competitivo; Lanczos gana
-    /// a escala N>1000 por convergencia en menos iteraciones.
+    /// En graphs N<200 power iteration can be competitivo; Lanczos gana
+    /// at scale N>1000 by convergence in fewer iterations.
     /// Returns 0.0 for disconnected graphs or graphs with < 2 nodes.
     ///
     /// # Panics
@@ -389,7 +389,7 @@ impl ManifoldCollector {
             ensure_lambda_workspace_capacity(&mut ws, n, max_iters);
             // CRYSTAL: FO121 — inevitable
 
-            // ── Manejo seguro del contador de generación ────────────────────
+            // ── Safe handling of the generation counter ────────────────────
             if ws.seen_generation == u32::MAX {
                 ws.seen_marks.fill(0);
                 ws.seen_generation = 1;
@@ -478,10 +478,10 @@ impl ManifoldCollector {
         usize::from(!CohomologyValidator::check_h1(&complex))
     }
 
-    /// Verifica H¹ = 0 usando el estado incremental (O(1)).
+    /// Verifica H¹ = 0 using the state incremental (O(1)).
     ///
-    /// Para verificación completa (con rebuild de RipsComplex), usar
-    /// `compute_h1()` que sigue disponible para checkpointing.
+    /// Para verifiestion full (con rebuild of RipsComplex), use
+    /// `compute_h1()` which is still available for checkpointing.
     ///
     /// AX-ID: AXIOMA-007, AXIOMA-009
     #[allow(clippy::inline_always)]
@@ -490,7 +490,7 @@ impl ManifoldCollector {
         self.h1_state.h1_is_zero()
     }
 
-    /// Dimensión de H¹ según el estado incremental.
+    /// Dimension of H¹ according to the incremental state.
     #[allow(clippy::inline_always)]
     #[inline(always)]
     pub const fn h1_dim_fast(&self) -> usize {
@@ -530,15 +530,15 @@ impl ManifoldCollector {
 
     // ── Hyperbolic coordinate contract (CRATE-004 interface) ─────────────────
 
-    /// Retorna la coordenada hiperbólica del nodo, si ha sido asignada por CRATE-004.
+    /// Returns the hyperbolic coordinate of the node, if it has been assigned by CRATE-004.
     ///
-    /// # Estado actual
-    /// Siempre retorna `None` hasta que `DiscreteRicciFlow` (CRATE-004) comience
-    /// a llamar `set_hyperbolic_coord()`. Ver `HyperbolicCoord` para la
-    /// especificación completa del protocolo de activación.
+    /// # State actual
+    /// Always returns `None` until `DiscreteRicciFlow` (CRATE-004) starts
+    /// a llamar `set_hyperbolic_coord()`. Ver `HyperbolicCoord` for la
+    /// full specification of the activation protocol.
     ///
-    /// # Complejidad
-    /// O(log N) — búsqueda binaria sobre Vec ordenado (sin HashMap).
+    /// # Complexity
+    /// O(log N) — search binaria over Vec sorted (sin HashMap).
     ///
     /// AX-ID: AXIOMA-004, LEY_FUNDACIONAL §7.2
     pub fn hyperbolic_coord(&self, id: NodeId) -> Option<HyperbolicCoord> {
@@ -549,17 +549,17 @@ impl ManifoldCollector {
             .map(|idx| self.hyperbolic_coords[idx].1)
     }
 
-    /// Asigna o actualiza la coordenada hiperbólica de un nodo.
+    /// Assigns or updates the hyperbolic coordinate of a node.
     ///
-    /// # Contrato de llamada
-    /// Solo debe ser llamado por `DiscreteRicciFlow` (CRATE-004) tras calcular
-    /// la curvatura de Ollivier-Ricci del nodo.
+    /// # Contract of llamada
+    ///Only must be called per `DiscreteRicciFlow` (CRATE-004) tras compute
+    /// the Ollivier-Ricci curvature of the node.
     ///
-    /// # Invariante preservado
-    /// `coord.norm_sq() < 1.0` — garantizado por `HyperbolicCoord::new()`.
+    /// # Invariant preservado
+    /// `coord.norm_sq() < 1.0` — guaranteed by `HyperbolicCoord::new()`.
     ///
-    /// # Complejidad
-    /// O(log N) amortizado — búsqueda binaria + inserción ordenada.
+    /// # Complexity
+    /// O(log N) amortized — binary search + ordered insert.
     ///
     /// AX-ID: AXIOMA-004, LEY_FUNDACIONAL §7.2
     pub fn set_hyperbolic_coord(&mut self, id: NodeId, coord: HyperbolicCoord) {
@@ -573,10 +573,10 @@ impl ManifoldCollector {
         }
     }
 
-    /// Número de nodos con coordenadas hiperbólicas asignadas.
+    /// Number of nodes with assigned hyperbolic coordinates.
     ///
-    /// En estado normal (CRATE-004 no implementado): siempre 0.
-    /// Útil para diagnóstico y tests.
+    /// En state normal (CRATE-004 no implementado): siempre 0.
+    /// Useful for diagnóstico and tests.
     pub const fn hyperbolic_coord_count(&self) -> usize {
         self.hyperbolic_coords.len()
     }
@@ -885,8 +885,8 @@ fn tridiagonal_mv(alpha: &[f64], beta: &[f64], x: &[f64], out: &mut [f64]) {
 
 /// Project out the all-ones component from v (deflation for λ₁=0).
 fn deflate_ones(v: &mut [f64]) {
-    // Longitud del eigenvector ≤ N. Para N < 2^52, cast exacto. Normalización de
-    // eigenvector no requiere aritmética de entero exacto.
+    // Length of the eigenvector ≤ N. For N < 2^52, cast exact. Normalization of
+    // eigenvector no requires arithmetic of entero exact.
     #[allow(clippy::cast_precision_loss)]
     let n = v.len() as f64;
     let mean = v.iter().sum::<f64>() / n;
@@ -1217,7 +1217,7 @@ mod tests {
 
     // ── HyperbolicCoord contract tests ────────────────────────────────────────
 
-    /// Verifica que HyperbolicCoord::new rechaza puntos fuera del disco unitario.
+    /// Verifies that HyperbolicCoord::new rejects puntos fuera of the disk unitario.
     #[test]
     fn hyperbolic_coord_rejects_outside_disk() {
         assert!(
@@ -1238,7 +1238,7 @@ mod tests {
         );
     }
 
-    /// Verifica que HyperbolicCoord::new acepta puntos válidos dentro del disco.
+    /// Verifies that HyperbolicCoord::new acepta puntos valids dentro of the disk.
     #[test]
     fn hyperbolic_coord_accepts_inside_disk() {
         let c = HyperbolicCoord::new(0.5, 0.5).expect("0.25+0.25=0.5 < 1, debe aceptarse");
@@ -1251,14 +1251,14 @@ mod tests {
         assert_eq!(origin.hyperbolic_distance_to_origin(), 0.0);
     }
 
-    /// Verifica que ManifoldCollector retorna None para nodos sin coordenada asignada.
+    /// Verifies that ManifoldCollector returns None for nodes without coordinate asignada.
     #[test]
     fn manifold_hyperbolic_coord_none_before_crate004() {
         let mut m = ManifoldCollector::new(16);
         for i in 0..5u64 {
             m.insert(NodeId::try_new(i).unwrap(), &make_vec(i)).unwrap();
         }
-        // Antes de CRATE-004: ningún nodo tiene coordenada hiperbólica.
+        // Before of CRATE-004: any node has hyperbolic coordinate.
         for i in 0..5u64 {
             assert!(
                 m.hyperbolic_coord(NodeId::try_new(i).unwrap()).is_none(),
@@ -1268,7 +1268,7 @@ mod tests {
         assert_eq!(m.hyperbolic_coord_count(), 0);
     }
 
-    /// Verifica set/get de coordenadas hiperbólicas (contrato de CRATE-004).
+    /// Check set/get of hyperbolic coordinates (contract of CRATE-004).
     #[test]
     fn manifold_hyperbolic_coord_set_and_get() {
         let mut m = ManifoldCollector::new(16);
@@ -1294,7 +1294,7 @@ mod tests {
         );
     }
 
-    /// Verifica que set_hyperbolic_coord actualiza en lugar de duplicar.
+    /// Verifies that set_hyperbolic_coord updates instead of duplicar.
     #[test]
     fn manifold_hyperbolic_coord_update_preserves_count() {
         let mut m = ManifoldCollector::new(16);
@@ -1341,7 +1341,7 @@ mod tests {
             .all(|record| record.nodes.iter().all(|n| n != &removed)));
     }
 
-    /// Verifica la distancia hiperbólica al origen para un punto conocido.
+    /// Checks the hyperbolic distance to the origin for a known point.
     /// d(0, (r,0)) = 2·arctanh(r). Para r=0.5: 2·arctanh(0.5) ≈ 1.0986.
     #[test]
     fn hyperbolic_distance_to_origin_known_value() {

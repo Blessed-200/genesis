@@ -297,14 +297,14 @@ fn slab_distance(
     }
 }
 
-// Política de mantenimiento para módulos críticos de topología.
+// Maintenance policy for critical topology modules.
 //
-// - `#[inline(always)]` está prohibido salvo excepción documentada con
-//   benchmark reproducible + motivo arquitectónico + evaluación de riesgo.
-// - Los símbolos del codec layer-0 deben mantener simetría de `cfg`:
-//   `feature = "hnsw-f16"`, `genesis_const_layer0_codec`, y `test`.
-//   Cualquier símbolo condicionado por `cfg` debe tener contraparte
-//   explícita `not(...)` para evitar símbolos huérfanos entre perfiles.
+// - `#[inline(always)]` is prohibited except for a documented exception with
+//   benchmark reproducible + architectural rationale + risk evaluation.
+// - Layer-0 codec symbols must maintain `cfg` symmetry:
+//   `feature = "hnsw-f16"`, `genesis_const_layer0_codec`, and `test`.
+// Any symbol conditioned by `cfg` must have a counterpart
+// an explicit `not(...)` counterpart to avoid orphan symbols between profiles.
 //
 // AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
 
@@ -359,7 +359,7 @@ mod layer0_codec {
         }
     }
 
-    /// Trait sellado para codificación densa de layer-0.
+    /// Sealed trait for layer-0 dense encoding.
     ///
     /// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
     #[allow(dead_code)]
@@ -743,7 +743,7 @@ impl NodeAdj {
 }
 
 /// Level multiplier: 1.0 / ln(M).
-// M es una constante pequeña (≤ 64). M as f64 es exacto: M < 2^53.
+// M is a small constant (≤ 64). M as f64 is exact: M < 2^53.
 #[allow(clippy::cast_precision_loss)]
 fn ml() -> f64 {
     1.0_f64 / (M as f64).ln()
@@ -821,10 +821,10 @@ pub fn fast_metric_distance_f16(stored: &[u16; 16], query: &SparseCliffordVector
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 pub fn fast_metric_distance_f16_sq(stored: &[u16; 16], query: &SparseCliffordVector) -> f64 {
-    // NOTA ARQUITECTÓNICA:
-    // Se usa compile-time dispatch en lugar de runtime dispatch para evitar
-    // la pérdida de inlining y la penalización de `vzeroupper` en el hot loop.
-    // En x86_64, compilar con RUSTFLAGS="-C target-cpu=native" para activar AVX2.
+    // ARCHITECTURAL NOTE:
+    // It usa compile-time dispatch instead of runtime dispatch for avoid
+    // loss of inlining and `vzeroupper` penalties in the hot loop.
+    // En x86_64, compilar with RUSTFLAGS="-C target-cpu=native" for activer AVX2.
     // Target primario: Genesis Edge (ARM + NEON).
     let mut decompressed = [0.0_f64; 16];
 
@@ -837,7 +837,7 @@ pub fn fast_metric_distance_f16_sq(stored: &[u16; 16], query: &SparseCliffordVec
         use std::arch::x86_64::*;
         let s = stored.as_ptr().cast::<__m128i>();
 
-        // SAFETY: se leen/escriben exactamente 16 elementos dentro de límites y las features AVX2/F16C están garantizadas por cfg.
+        // SAFETY: it reads/writes exactly 16 elements within limits and the AVX2/F16C features are guaranteed by cfg.
         unsafe {
             let half0 = _mm_loadu_si128(s);
             let wide0 = _mm256_cvtph_ps(half0);
@@ -892,10 +892,10 @@ pub struct HnswGraph {
     entry_layer: usize,
     /// `ef_construction` parameter.
     ef_construction: usize,
-    /// Mapa directo `NodeId.get()` → `internal_idx` cuando `NodeIds` son consecutivos.
-    /// Capacidad dinámica: se expande al insertar `NodeIds` mayores.
+    /// Mapa directo `NodeId.get()` → `internal_idx` when `NodeIds` are consecutivos.
+    /// Dynamic layercity: expands when inserting `NodeIds` mayores.
     direct_index: Vec<u32>, // u32::MAX = no presente
-    /// Estado del índice secundario `id_index`.
+    /// Secondary index state `id_index`.
     state: GraphState,
     /// Per-node local adjacency lists indexed by dense internal node index.
     layer_neighbors: Vec<NodeAdj>,
@@ -963,9 +963,9 @@ pub struct LockFreeHnswIndex {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GraphState {
-    /// Fase online: appends directos en `id_index` sin ordenar.
+    /// Online phase: direct appends in `id_index` unsorted.
     Online,
-    /// Fase post-compactación: `id_index` ordenado para binary search.
+    /// Post-compaction phase: `id_index` sorted for binary search.
     Compacted,
 }
 
@@ -1076,14 +1076,14 @@ impl HnswGraph {
 
     /// Lookup internal index by `NodeId`. O(1) average with direct index, fallback O(log N).
     fn get_idx(&self, id: NodeId) -> Option<usize> {
-        // Contrato CRATE-002: NodeIds son consecutivos desde 0. N < 2^32 en cualquier
-        // deployment de GÉNESIS (límite de memoria física). u64 → usize es seguro.
+        // Contract CRATE-002: NodeIds are consecutive from 0. N < 2^32 in any
+        // GENESIS deployment (physical memory limit). u64 → usize is seguro.
         #[allow(clippy::cast_possible_truncation)]
         let raw = id.get() as usize;
         if raw < self.direct_index.len() {
-            // Para uso concurrente (producción multi-hilo): direct_index debe ser
-            // Vec<AtomicU32>. Actualmente el acceso es exclusivo por &mut self / &self
-            // con contrato de single-writer. Fence no tiene efecto sobre tipos no-atómicos.
+            // For concurrent use (multi-threaded production): direct_index must be
+            // Vec<AtomicU32>. Currently access is exclusive to &mut self / &self
+            // under a single-writer contract. Fence has no effect on non-atomic types.
             let idx = self.direct_index[raw];
             if idx != u32::MAX {
                 return Some(idx as usize);
@@ -1128,8 +1128,8 @@ impl HnswGraph {
             .get()
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1_442_695_040_888_963_407);
-        // u uniforme en (0, 1): usa 53 bits y desplaza medio ULP para evitar 0 exacto.
-        // x >> 11 ∈ [0, 2^53). Las conversiones son exactas en f64 para 53 bits.
+        // uniform u in (0, 1): usa 53 bits and shifts by half an ULP to avoid exact 0.
+        // x >> 11 ∈ [0, 2^53). Conversions are exact in f64 for 53 bits.
         #[allow(clippy::cast_precision_loss)]
         let mut u = (((x >> 11) as f64) + 0.5) * (1.0 / ((1_u64 << 53) as f64));
         if !u.is_finite() {
@@ -1197,9 +1197,9 @@ impl HnswGraph {
             if let Some(next_len) = next_direct_len {
                 self.direct_index.resize(next_len, u32::MAX);
             }
-            // Barrera Release: no necesaria sobre Vec<u32> con &mut self (single-writer).
-            // Para publicar este índice a lectores concurrentes, direct_index debe ser
-            // Vec<AtomicU32> con store(Release). Por ahora: single-threaded, sin contención.
+            // Release barrier: not required over Vec<u32> with &mut self (single-writer).
+            // To publish this index to concurrent readers, direct_index must be
+            // Vec<AtomicU32> with store(Release). For now: single-threaded, no contention.
             self.direct_index[id_raw] = new_idx_u32;
             debug_assert!(
                 self.get_idx(id) == Some(new_idx),
@@ -1223,8 +1223,8 @@ impl HnswGraph {
         // Phase 2: beam search and connect from target_layer down to 0
         for lc in (0..=target_layer.min(entry_layer)).rev() {
             let layer_m = if lc == 0 { M0 } else { M };
-            // nodes.len() + 1 ≤ N. Para N < 2^53 (límite físico), usize→f64 es exacto.
-            // log2(N).ceil() es siempre positivo (N ≥ 1). f64→usize sin pérdida de signo.
+            // nodes.len() + 1 ≤ N. For N < 2^53 (physical limit), usize→f64 is exact.
+            // log2(N).ceil() is always positive (N ≥ 1). f64→usize without sign loss.
             #[allow(
                 clippy::cast_precision_loss,
                 clippy::cast_possible_truncation,
@@ -1588,9 +1588,9 @@ impl HnswGraph {
         candidates.into_iter()
     }
 
-    /// Recorre vecinos únicos de un nodo en todas las capas sin asignaciones.
+    /// Iterates unique neighbors of a node across all layers without allocations.
     ///
-    /// Usa `marks` como bitmap por índice interno con `stamp` como generación.
+    /// Uses `marks` as an internal-index bitmap with `stamp` as generation.
     /// Requiere `marks.len() >= self.node_count()`.
     pub(crate) fn extend_neighbors_dedup(
         &self,
@@ -1625,7 +1625,7 @@ impl HnswGraph {
         pushed
     }
 
-    /// Obtiene el vector asociado a un `NodeId`.
+    /// Gets the vector associated with a `NodeId`.
     pub fn get_vector(&self, id: NodeId) -> Option<&SparseCliffordVector> {
         self.get_idx(id).map(|idx| &self.nodes[idx].vec)
     }
@@ -1887,7 +1887,7 @@ impl Drop for LockFreeHnswIndex {
     }
 }
 
-/// LSD radix sort para pares `(NodeId, internal_idx)` por `NodeId.get()` en O(8N).
+/// LSD radix sort for `(NodeId, internal_idx)` pairs by `NodeId.get()` in O(8N).
 fn radix_sort_node_ids(index: &mut Vec<(NodeId, usize)>) {
     if index.len() <= 1 {
         return;
@@ -1925,11 +1925,11 @@ fn radix_sort_node_ids(index: &mut Vec<(NodeId, usize)>) {
     *index = src;
 }
 
-/// Iterador sobre vecinos deduplicados de un nodo en todas las capas.
+/// Iterator over deduplicated neighbors of a node across all layers.
 ///
-/// Usa un bitmap de 64 bits en stack para nodos con ID < 64 (caso típico
-/// en grafos pequeños a medianos). Para IDs ≥ 64 usa un Vec<u64> ordenado
-/// con búsqueda binaria: O(log seen) en lugar de O(seen) lineal.
+/// Usa un bitmap of 64 bits in stack for nodes with ID < 64 (typical case
+/// in small-to-medium graphs). For IDs ≥ 64, it uses a sorted Vec<u64>
+/// with binary search: O(log seen) instead of O(seen) lineal.
 ///
 /// AX-ID: AXIOMA-013
 struct NeighborIter<'a> {
@@ -1940,7 +1940,7 @@ struct NeighborIter<'a> {
     /// Deduplicated node IDs already emitted, sorted ascending for binary search.
     ///
     /// # BN-07: SmallVec eliminates heap allocation
-    /// Inline capacity of 128 covers the theoretical maximum of unique neighbours
+    /// Inline layercity of 128 covers the theoretical maximum of unique neighbours
     /// across all HNSW layers: M0 (32) + M × MAX_LAYERS (16 × 6 = 96) = 128.
     /// The 99.9% common case (< 64 unique neighbours) never touches the heap.
     /// Graceful spill to heap for rare deep-hierarchy nodes (no panic, no truncation).
@@ -2598,7 +2598,7 @@ mod tests {
 
     #[test]
     fn neighbor_iter_deduplicated_across_layers() {
-        // Un nodo con vecinos solapados entre capas debe emitir cada ID exactamente una vez.
+        // A node with overlapping neighbors across layers must emit each ID exactly once.
         let mut g = HnswGraph::new(16);
         for i in 0..20u64 {
             let v = make_vec((i as f64).mul_add(0.1, 0.1));
@@ -2623,7 +2623,7 @@ mod tests {
 
     #[test]
     fn search_layer_results_sorted_ascending() {
-        // Los resultados de search_nearest deben estar ordenados por distancia.
+        // search_nearest results must be ordered by distance.
         let mut g = HnswGraph::new(16);
         for i in 0..50u64 {
             let v = make_vec((i as f64).mul_add(0.05, 0.1));
@@ -2635,7 +2635,7 @@ mod tests {
         }
         let query = make_vec(1.5);
         let results = g.search_nearest(&query, 10);
-        // Verificar que HNSW devuelve resultados sin duplicados.
+        // Verify that HNSW returns results without duplicates.
         let mut ids = std::collections::HashSet::new();
         for id in &results {
             assert!(

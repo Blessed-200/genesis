@@ -1,12 +1,12 @@
-//! TDA Incremental: mantenimiento exacto de H¹(M, F) = 0.
+//! TDA Incremental: maintenance exact of H¹(M, F) = 0.
 //!
-//! Este módulo reemplaza el full-rebuild O(N·K²) por actualizaciones incrementales
-//! con complejidad amortizada O(K·α(N) + K·L) por inserción, donde:
-//! - K es el grado medio del grafo HNSW (acotado ≈ 32)
-//! - α(N) es la función inversa de Ackermann (≤ 5 para N < 10^80)
-//! - L es la longitud media de ciclos en el grafo (≈ O(1) para HNSW)
+//! This module replaces the O(N·K²) full rebuild with incremental updates
+//! with amortized complexity O(K·α(N) + K·L) per insertion, where:
+//! - K is the average graph degree HNSW (bounded ≈ 32)
+//! - α(N) is the inverse Ackermann function (≤ 5 for N < 10^80)
+//! - L is the average cycle length in the graph (≈ O(1) for HNSW)
 //!
-//! El invariante H¹ = dim(ker ∂₁) − dim(im ∂₂) = 0 se mantiene exactamente.
+//! The invariant H¹ = dim(ker ∂₁) − dim(im ∂₂) = 0 is maintained exactly.
 //!
 //! AX-ID: AXIOMA-007, AXIOMA-009, H_restricción (LEY_FUNDACIONAL §3.5)
 
@@ -15,9 +15,9 @@ use smallvec::SmallVec;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::Arc;
 
-// ── Union-Find para ∂₁ ───────────────────────────────────────────────────────
+// ── Union-Find for ∂₁ ───────────────────────────────────────────────────────
 
-/// Union-Find con compresión de caminos y unión por rango para rank_d1 = N - c.
+/// Union-Find with path compression and union by rank for rank_d1 = N - c.
 #[derive(Clone)]
 pub(crate) struct PersistentUnionFind {
     parent: Vec<u32>,
@@ -91,7 +91,7 @@ impl PersistentUnionFind {
     }
 }
 
-// ── IncrementalD2: Base escalonada de im(∂₂) ─────────────────────────────────
+// ── IncrementalD2: Base escalonada of im(∂₂) ─────────────────────────────────
 
 #[derive(Clone)]
 enum Column {
@@ -395,7 +395,7 @@ fn first_set_bit(bm: &[u64]) -> Option<u32> {
     None
 }
 
-// ── Estado unificado de H¹ incremental ───────────────────────────────────────
+// ── State unificado of H¹ incremental ───────────────────────────────────────
 
 type EdgeKey = u128;
 
@@ -426,10 +426,10 @@ const fn edge_key(u: NodeId, v: NodeId) -> EdgeKey {
     pack_edge_key(a, b)
 }
 
-/// Estado incremental de H¹(M, F).
+/// State incremental of H¹(M, F).
 ///
-/// Mantiene exactamente el invariante dim(ker ∂₁) − dim(im ∂₂) = 0
-/// con complejidad amortizada O(K·α(N) + K·L) por inserción.
+/// Maintains the invariant exactly dim(ker ∂₁) − dim(im ∂₂) = 0
+/// with amortized complexity O(K·α(N) + K·L) per insertion.
 ///
 /// AX-ID: AXIOMA-007, AXIOMA-009
 /// Edge registry: sorted `Vec<(EdgeKey, u32)>` — binary search O(log E).
@@ -499,13 +499,13 @@ impl IncrementalH1State {
         }
     }
 
-    /// Añade un nodo al Union-Find.
+    /// Adds a node to Union-Find.
     pub fn add_node(&mut self) {
         self.uf.add_node();
     }
 
-    /// Registra una arista (u, v). Idempotente si ya existe.
-    /// Retorna el ID de arista (existente o nuevo).
+    /// Registers an edge (u, v). Idempotent if it already exists.
+    /// Returns the ID of edge (existing or new).
     pub fn add_edge(&mut self, u: NodeId, v: NodeId) -> u32 {
         self.inference_step = self.inference_step.saturating_add(1);
         let key = edge_key(u, v);
@@ -537,7 +537,7 @@ impl IncrementalH1State {
         }
     }
 
-    /// Registra un triángulo (a, b, c) si todas sus aristas existen.
+    /// Registers a triangle (a, b, c) if all its edges exist.
     pub fn add_triangle(&mut self, a: NodeId, b: NodeId, c: NodeId) {
         self.inference_step = self.inference_step.saturating_add(1);
         if let (Some(e1), Some(e2), Some(e3)) = (
@@ -638,11 +638,11 @@ impl IncrementalH1State {
     }
 
     const fn run_checkpoint(&mut self) {
-        // Placeholder para compactación de base o validación externa.
+        // Placeholder for basis compaction or external validation.
         self.ops_since_checkpoint = 0;
     }
 
-    /// Retorna true si H¹ = 0 (invariante de cohomología satisfecho). O(1).
+    /// Returns true if H¹ = 0 (invariante of cohomology satisfecho). O(1).
     ///
     /// AX-ID: AXIOMA-007, AXIOMA-009
     pub const fn h1_is_zero(&self) -> bool {
@@ -652,7 +652,7 @@ impl IncrementalH1State {
         dim_ker_d1.saturating_sub(rank_d2) == 0
     }
 
-    /// Dimensión de H¹ según el estado incremental. O(1).
+    /// Dimension of H¹ according to incremental state. O(1).
     pub const fn h1_dim(&self) -> usize {
         let rank_d1 = self.uf.rank_d1();
         let rank_d2 = self.d2.rank();
@@ -881,12 +881,12 @@ mod tests {
             })
             .collect();
         let (node_a, node_b, node_c, node_d) = (nodes[0], nodes[1], nodes[2], nodes[3]);
-        // Triángulo 1: a-b-c
+        // Triangle 1: a-b-c
         h1_state.add_edge(node_a, node_b);
         h1_state.add_edge(node_b, node_c);
         h1_state.add_edge(node_a, node_c);
         h1_state.add_triangle(node_a, node_b, node_c);
-        // Triángulo 2: a-b-d
+        // Triangle 2: a-b-d
         h1_state.add_edge(node_a, node_d);
         h1_state.add_edge(node_b, node_d);
         h1_state.add_triangle(node_a, node_b, node_d);

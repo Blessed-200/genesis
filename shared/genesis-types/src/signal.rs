@@ -1,11 +1,11 @@
-//! # GÉNESIS System Signals
+//! # GENESIS System Signals
 //!
 //! Asynchronous event types that flow between cognitive layers via
 //! `crossbeam::channel` (`MACRO_ARCHITECTURE` §4.1 — message passing).
 //!
 //! ## Corrections applied (Audit Rev 1)
 //!
-//! - **CORRECCIÓN ESTRUCTURAL-1:** `SpikeComponents` adopts a **`SoA` layout**
+//! - **STRUCTURAL CORRECTION-1:** `SpikeComponents` adopts a **`SoA` layout**
 //!   (indices: `[u16; 16]`, values: `[f64; 16]`, count: `u8`, pad: `[u8; 7]`,
 //!   tail pad: `[u8; 24]`).
 //!   Blade indices are `u16`, supporting G(1,3+n) expansion to D ≤ 15 (2^15 = 32,768
@@ -13,9 +13,9 @@
 //!   `GramSchmidtExpander` without future binary-contract breakage. `presence_mask`
 //!   is eliminated; active blades are identified by `indices[..count]`. `u16`
 //!   supports G(1,3+n) up to D=15 (2^15 = 32,768 blades ≤ `u16::MAX`), sufficient
-//!   for all planned GÉNESIS roadmap phases.
+//!   for all planned GENESIS roadmap phases.
 //!
-//! - **CORRECCIÓN ESTRUCTURAL-2:** `DomainConsolidationSignal<State>` uses the
+//! - **STRUCTURAL CORRECTION-2:** `DomainConsolidationSignal<State>` uses the
 //!   **type-state pattern** (`PhantomData<State>`) with two marker types
 //!   (`Saturated`, `Certified`). `DomainResetSignal::validate_against` only
 //!   accepts `&DomainConsolidationSignal<Saturated>`, making a reset against a
@@ -23,7 +23,7 @@
 //!   `is_irrevocable()` and `ConsolidationKind` are eliminated — the type IS the
 //!   invariant.
 //!
-//! - **CORRECCIÓN ESTRUCTURAL-3:** `NodeId(u64)` and `Timestamp(u64)` newtypes
+//! - **STRUCTURAL CORRECTION-3:** `NodeId(u64)` and `Timestamp(u64)` newtypes
 //!   prevent accidental transposition of `origin_node_id` and `timestamp_ns` in
 //!   function signatures. Zero-cost (repr transparent).
 //!
@@ -44,7 +44,7 @@ use crate::constants::{CLIFFORD_BASIS_SIZE, COGNITIVE_PLANCK_CONSTANT};
 use crate::error::{domain_code, GenesisError};
 
 // ============================================================================
-// NEWTYPES — CORRECCIÓN ESTRUCTURAL-3
+// NEWTYPES — STRUCTURAL CORRECTION-3
 // ============================================================================
 
 /// Unique identifier for a node in the cognitive manifold.
@@ -70,9 +70,9 @@ pub struct NodeId(u64);
 
 impl NodeId {
     /// Maximum valid `NodeId` value accepted by [`NodeId::try_new`].
-    /// El único ID prohibido es el centinela `NodeId::INVALID` (u64::MAX).
-    /// El límite real de nodos lo impone el HNSW (u32::MAX ≈ 4B nodos),
-    /// no este tipo primitivo.
+    /// The only forbidden ID is the sentinel `NodeId::INVALID` (u64::MAX).
+    /// The practical node limit is imposed by HNSW (u32::MAX ≈ 4B nodes),
+    /// no this tipo primitivo.
     pub const MAX_VALID: u64 = u64::MAX - 1;
 
     /// Sentinel value used to fill empty slots (never a valid node identifier).
@@ -174,14 +174,14 @@ impl Timestamp {
 }
 
 // ============================================================================
-// SPIKE COMPONENTS — CORRECCIÓN ESTRUCTURAL-1: SoA layout, u16 blade indices
+// SPIKE COMPONENTS — STRUCTURAL CORRECTION-1: SoA layout, u16 blade indices
 // ============================================================================
 
 /// Maximum number of blades transported in a single `SpikeEvent` (top-K sparse).
 ///
 /// Fixed at `CLIFFORD_BASIS_SIZE` = 16 for the base G(1,3) algebra.
 /// The `SoA` arrays are sized by this constant; it is the **single source of truth**
-/// for the spike capacity. Changing this constant changes all array sizes
+/// for the spike layercity. Changing this constant changes all array sizes
 /// simultaneously, without silent divergence.
 ///
 /// AX-ID: AXIOMA-001, AXIOMA-018
@@ -268,9 +268,9 @@ pub enum SpikeComponentsError {
 /// `values[0..count]` holds the corresponding coefficients.
 /// Positions `count..SPIKE_MAX_COMPONENTS` are zeroed.
 ///
-/// **u16 blade indices (CORRECCIÓN ESTRUCTURAL-1):** supports G(1,3+n) expansion
+/// **u16 blade indices (STRUCTURAL CORRECTION-1):** supports G(1,3+n) expansion
 /// to D ≤ 15 (2^15 = 32,768 blades ≤ `u16::MAX`). Sufficient for all planned
-/// GÉNESIS roadmap phases. Changing from `u8` now (before CRATE-001 deployment)
+/// GENESIS roadmap phases. Changing from `u8` now (before CRATE-001 deployment)
 /// avoids a binary-breaking API change later.
 ///
 /// Layout (#[repr(C)]):
@@ -310,7 +310,7 @@ pub struct SpikeComponents {
     tail_pad: [u8; 24],
 }
 
-// Compile-time layout verification.
+// Compile-time layout verifiestion.
 static_assertions::assert_eq_size!(SpikeComponents, [u8; 192]);
 static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 64);
 
@@ -776,7 +776,7 @@ pub struct SpikeEvent {
     /// - `None` → spontaneous internal drive (AX-ID: AXIOMA-003).
     /// - `Some(g)` → phase collapse at grade g (AX-ID: AXIOMA-006).
     ///
-    /// `u16` matches the blade index type (CORRECCIÓN ESTRUCTURAL-1).
+    /// `u16` matches the blade index type (STRUCTURAL CORRECTION-1).
     /// Valid grades for G(1,3) are 0..=4; `u16` provides headroom for
     /// expanded algebras.
     pub collapse_grade: Option<u16>,
@@ -1103,23 +1103,23 @@ static_assertions::const_assert_eq!(
 );
 
 // ============================================================================
-// TYPE-STATE MARKERS — CORRECCIÓN ESTRUCTURAL-2
+// TYPE-STATE MARKERS — STRUCTURAL CORRECTION-2
 // ============================================================================
 
-// ── Sealed trait para ConsolidationState ─────────────────────────────────────
-// Previene que tipos externos implementen ConsolidationState e inyecten
-// estados inválidos en DomainConsolidationSignal<T>.
-// Solo Saturated y Certified pueden ser State — invariante de tipo compile-time.
+// ── Sealed trait for ConsolidationState ─────────────────────────────────────
+// Prevents external types from implementing ConsolidationState and injecting
+// states invalids in DomainConsolidationSignal<T>.
+// Only Saturated and Certified can be State — compile-time type invariant.
 //
 // AX-ID: GENESIS_PROOF_SPEC §A4, AXIOMA-008, AXIOMA-009
 mod private {
     pub trait Sealed {}
 }
 
-/// Restricción de tipo para los marcadores de estado de consolidación.
+/// Type restriction for consolidation state markers.
 ///
-/// Solo `Saturated` y `Certified` implementan este trait — sellado mediante
-/// `mod private`. Ningún tipo externo puede ser usado como `State` en
+/// Only `Saturated` and `Certified` implement this trait — sellado mediante
+/// `mod private`. No external type can be used as `State` in
 /// `DomainConsolidationSignal<State>`.
 ///
 /// AX-ID: AXIOMA-008, AXIOMA-009
@@ -1153,7 +1153,7 @@ impl private::Sealed for Certified {}
 impl ConsolidationState for Certified {}
 
 // ============================================================================
-// DOMAIN CONSOLIDATION SIGNAL — CORRECCIÓN ESTRUCTURAL-2
+// DOMAIN CONSOLIDATION SIGNAL — STRUCTURAL CORRECTION-2
 // ============================================================================
 
 /// Signal emitted by `FisherGate` when a domain reaches satiation or
@@ -1172,7 +1172,7 @@ impl ConsolidationState for Certified {}
 /// `&'static str`, `Timestamp`, `f64`, `PhantomData` — zero heap).
 ///
 /// `domain: &'static str` — domain names are compile-time module/crate
-/// identifiers (CORRECCIÓN DE CALIDAD-2; eliminates per-signal heap alloc).
+/// identifiers (QUALITY CORRECTION-2; eliminates per-signal heap alloc).
 ///
 /// AX-ID: AXIOMA-008 (Saturated), AXIOMA-009 (Certified)
 #[derive(Clone, Copy, Debug)]
@@ -1276,7 +1276,7 @@ impl<State: ConsolidationState + Hash> Hash for DomainConsolidationSignal<State>
 }
 
 // ============================================================================
-// DOMAIN RESET SIGNAL — CORRECCIÓN ESTRUCTURAL-2 + DE CALIDAD-2
+// DOMAIN RESET SIGNAL — STRUCTURAL CORRECTION-2 + DE CALIDAD-2
 // ============================================================================
 
 /// Re-opens a previously consolidated domain for ingestion.
@@ -1290,7 +1290,7 @@ impl<State: ConsolidationState + Hash> Hash for DomainConsolidationSignal<State>
 /// `validate_against` only accepts `&DomainConsolidationSignal<Saturated>`.
 /// Passing a `DomainConsolidationSignal<Certified>` is a **compile error** —
 /// the irrevocability of `Certified` domains is enforced by the type system,
-/// not by runtime logic (CORRECCIÓN ESTRUCTURAL-2 / AXIOMA-009).
+/// not by runtime logic (STRUCTURAL CORRECTION-2 / AXIOMA-009).
 ///
 /// `domain: &'static str` and `justification: &'static str` — zero heap alloc.
 ///
@@ -1678,7 +1678,7 @@ mod tests {
 
     #[test]
     fn node_id_try_new_rejects_upper_bound() {
-        // El único ID inválido es el centinela u64::MAX.
+        // The only invalid ID is the u64::MAX sentinel.
         let err = NodeId::try_new(u64::MAX).expect_err("u64::MAX (centinela) debe ser rechazado");
         assert_eq!(err, GenesisError::NodeIdOutOfRange { raw: u64::MAX });
     }

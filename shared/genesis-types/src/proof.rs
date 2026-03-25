@@ -1,10 +1,10 @@
 //! # Proof-Carrying Mutations
 //!
-//! Toda auto-modificación estructural debe generar un [`Proof`] válido antes
-//! de ejecutarse. Este módulo implementa el sistema de certificación que
-//! garantiza que ninguna mutación viole los invariantes axiomáticos.
+//! Every auto-modification structural must generate un [`Proof`] valid before
+//! of execute. This module implements the certification system that
+//! guarantees that no mutation violates axiomatic invariants.
 //!
-//! ## Flujo de uso
+//! ## Flujo of usage
 //!
 //! ```rust
 //! use genesis_types::proof::{WitnessBuilder, AxiomID, AxiomGuard};
@@ -29,7 +29,7 @@ use smallvec::SmallVec;
 use crate::{error::GenesisError, signal::NodeId};
 
 /// SSO witness buffer — stack-inline for witnesses ≤ 512 bytes (matches
-/// `WitnessBuffer::Small` capacity, guaranteeing zero-alloc end-to-end),
+/// `WitnessBuffer::Small` layercity, guaranteeing zero-alloc end-to-end),
 /// heap spill only for larger witnesses.
 ///
 /// # Why 512, not 64 (BN-03 revision, FIX-5)
@@ -37,7 +37,7 @@ use crate::{error::GenesisError, signal::NodeId};
 /// `WitnessBuffer::Small` stores up to 512 bytes inline in `ArrayVec<u8, 512>`.
 /// A `Proof::witness` of `SmallVec<[u8; 64]>` would force a heap allocation for
 /// any witness in the range 65–512 bytes, silently breaking the zero-alloc contract
-/// promised by `WitnessBuilder`. Unifying both capacities at 512 bytes eliminates
+/// promised by `WitnessBuilder`. Unifying both layercities at 512 bytes eliminates
 /// the allocation for all current (20–28 byte) and anticipated proof types.
 ///
 /// Stack cost: 512 bytes per `Proof` struct (acceptable — Proofs are not persisted
@@ -46,33 +46,33 @@ use crate::{error::GenesisError, signal::NodeId};
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.2, BN-03
 pub type Witness = SmallVec<[u8; 512]>;
 
-/// Inline capacity of the `Witness` SSO buffer in bytes.
+/// Inline layercity of the `Witness` SSO buffer in bytes.
 ///
 /// Used in `debug_assert!` in `WitnessBuilder::build()` to verify that the
 /// assembled witness fits inline. If this fires, increase both this constant
-/// and the SmallVec capacity in the `Witness` type alias above.
+/// and the SmallVec layercity in the `Witness` type alias above.
 ///
 /// AX-ID: GENESIS_PROOF_SPEC §2.2, FIX-C
 pub const WITNESS_INLINE_CAPACITY: usize = 512;
 
-/// Hash canónico de un [`Proof`] (BLAKE3, 32 bytes).
+/// Canonical hash of un [`Proof`] (BLAKE3, 32 bytes).
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.2
 pub type ProofHash = [u8; 32];
 
-/// Capacidad inline para premisas causales antes de hacer spill a heap.
+/// Inline layercity for causal premises before spilling to heap.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
 pub const PREMISES_INLINE_CAPACITY: usize = 4;
 
-/// Buffer de premisas con ruta hot-path sin heap para ≤4 entradas.
+/// Premise buffer with heap-free hot path for ≤4 entries.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Premises {
-    /// Ruta stack-only para historiales causales cortos.
+    /// Stack-only path for short causal histories.
     Small(ArrayVec<ProofHash, PREMISES_INLINE_CAPACITY>),
-    /// Spill a heap cuando el grafo requiere más premisas.
+    /// Spills to heap when the graph requires more premises.
     Large(Vec<ProofHash>),
 }
 
@@ -83,14 +83,14 @@ impl Default for Premises {
 }
 
 impl Premises {
-    /// Crea un contenedor vacío de premisas causales.
+    /// Creates un contenedor empty of premises causales.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
     pub fn new() -> Self {
         Self::Small(ArrayVec::new())
     }
 
-    /// Retorna el número de premisas.
+    /// Returns the number of premises.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
     pub const fn len(&self) -> usize {
@@ -100,14 +100,14 @@ impl Premises {
         }
     }
 
-    /// Retorna `true` si no hay premisas.
+    /// Returns `true` if no hay premises.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
     pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Agrega una premisa causal al final.
+    /// Add a causal premise to the end.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
     pub fn push(&mut self, premise: ProofHash) {
@@ -126,7 +126,7 @@ impl Premises {
         }
     }
 
-    /// Itera sobre las premisas almacenadas.
+    /// Iterates over the stored premises.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
     pub fn iter(&self) -> impl Iterator<Item = &ProofHash> {
@@ -149,16 +149,16 @@ impl From<Vec<ProofHash>> for Premises {
     }
 }
 
-/// Metadatos opcionales de consistencia histórica para un [`Proof`].
+/// Optional historical-consistency metadata for a [`Proof`].
 ///
 /// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofMeta {
-    /// Nodo que originó la mutación o aserción certificada.
+    /// Node that originated the certified mutation or assertion.
     pub origin_node: NodeId,
-    /// Dominio lógico del target (mutación o aserción), hash estable.
+    /// Logical target domain (mutation or assertion), stable hash.
     pub target_domain_hash: ProofHash,
-    /// Hash del estado/aserción resultante tras aplicar la prueba.
+    /// Hash of the resulting state/assertion after applying the proof.
     pub resulting_state_hash: ProofHash,
 }
 
@@ -166,10 +166,10 @@ pub struct ProofMeta {
 // AxiomID
 // ============================================================================
 
-/// Identificadores de axiomas verificables en mutaciones estructurales.
+/// Identificadores of axioms verifiesbles in mutations estructurales.
 ///
-/// El valor `repr(u8)` es estable — cambiar los discriminantes rompe el
-/// formato del witness serializado y todos los [`Proof`]s existentes.
+/// The value `repr(u8)` is stable — changing the discriminants breaks the
+/// format of the serialized witness and all existing [`Proof`]s.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.1
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -183,34 +183,34 @@ pub enum AxiomID {
     AlgebraicConnectivity = 2,
     /// `COGNITIVE_PLANCK_CONSTANT` inmutable — `LEY_FUNDACIONAL` §5.4
     PlanckConstant = 3,
-    /// Toda mutación tiene Proof — `LEY_FUNDACIONAL` §5.5
+    /// Every mutation has a Proof — `LEY_FUNDACIONAL` §5.5
     ProofGuard = 4,
-    /// Expansión dimensional actualiza métrica de Fisher — `LEY_FUNDACIONAL` §5.6
+    /// Dimensional expansion updates Fisher metric — `LEY_FUNDACIONAL` §5.6
     DualityConsistency = 5,
-    /// `ΔH_total` < `C_dim(N)` antes de crear nueva dimensión — `LEY_FUNDACIONAL` §5.7
+    /// `ΔH_total` < `C_dim(N)` before creating a new dimension — `LEY_FUNDACIONAL` §5.7
     DimensionalAdmission = 6,
 }
 
-/// Máscara compacta de axiomas verificados/requeridos.
+/// Compact mask of verified/required axioms.
 ///
-/// El bit `i` representa la presencia de `AxiomID = i` para `0..=6`.
+/// Bit `i` represents the presence of `AxiomID = i` for `0..=6`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AxiomSet(pub u8);
 
 impl AxiomSet {
     const VALID_BITS: u8 = 0b0111_1111;
 
-    /// Retorna el conjunto vacío (`0b0000_0000`).
+    /// Returns the empty set (`0b0000_0000`).
     pub const fn empty() -> Self {
         Self(0)
     }
 
-    /// Construye un conjunto unitario con un único axioma activo.
+    /// Builds a singleton set with one active axiom.
     pub const fn from_axiom(axiom: AxiomID) -> Self {
         Self(1u8 << (axiom as u8))
     }
 
-    /// Construye un conjunto a partir de una lista de [`AxiomID`].
+    /// Constructs an array from a list of [`AxiomID`].
     pub fn from_slice(axioms: &[AxiomID]) -> Self {
         let mut set = Self::empty();
         for &axiom in axioms {
@@ -219,57 +219,57 @@ impl AxiomSet {
         set
     }
 
-    /// Retorna la máscara de bits interna.
+    /// Returns the internal bit mask.
     pub const fn bits(self) -> u8 {
         self.0
     }
 
-    /// Inserta un axioma en el conjunto.
+    /// Inserts an axiom into the set.
     #[allow(clippy::missing_const_for_fn)] // &mut self not const-stable on MSRV 1.75
     pub fn insert(&mut self, axiom: AxiomID) {
         self.0 |= Self::from_axiom(axiom).0;
     }
 
-    /// Retorna `true` si el axioma está presente en el conjunto.
+    /// Returns `true` if the axiom is present in the set.
     pub const fn contains(self, axiom: AxiomID) -> bool {
         (self.0 & Self::from_axiom(axiom).0) != 0
     }
 
-    /// Retorna `true` si `self` es subconjunto de `other`.
+    /// Returns `true` if `self` is subset of `other`.
     pub const fn is_subset_of(self, other: Self) -> bool {
         (self.0 & other.0) == self.0
     }
 
-    /// Retorna `true` si `self` es superconjunto de `other`.
+    /// Returns `true` if `self` is superset of `other`.
     pub const fn is_superset_of(self, other: Self) -> bool {
         other.is_subset_of(self)
     }
 
-    /// Retorna la unión entre `self` y `other`.
+    /// Returns the union between `self` and `other`.
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
         Self((self.0 | other.0) & Self::VALID_BITS)
     }
 
-    /// Retorna `true` si `self` y `other` comparten al menos un axioma.
+    /// Returns `true` if `self` and `other` share at least one axiom.
     pub const fn intersects(self, other: Self) -> bool {
         (self.0 & other.0) != 0
     }
 
-    /// Retorna la diferencia de conjuntos `self - other`.
+    /// Returns the set difference `self - other`.
     #[must_use]
     pub const fn difference(self, other: Self) -> Self {
         Self((self.0 & !other.0) & Self::VALID_BITS)
     }
 
-    /// Retorna `true` si todos los bits pertenecen al rango válido `0..=6`.
+    /// Returns `true` if all the bits belong to the valid range `0..=6`.
     pub const fn is_valid(self) -> bool {
         (self.0 & !Self::VALID_BITS) == 0
     }
 }
 
 impl AxiomID {
-    /// Invariantes requeridos para mutaciones estructurales estándar.
+    /// Invariants required for mutations estructurales standard.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.1
     pub const STRUCTURAL_REQUIRED: &'static [Self] = &[
@@ -280,8 +280,8 @@ impl AxiomID {
         Self::ProofGuard,
     ];
 
-    /// Invariantes requeridos para expansión dimensional.
-    /// Incluye verificación de dualidad Fisher y admisión energética.
+    /// Invariants required for expansion dimensional.
+    /// Includes Fisher duality verifiestion and energy admission.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.1
     pub const EXPANSION_REQUIRED: &'static [Self] = &[
@@ -299,13 +299,13 @@ impl AxiomID {
 // Proof
 // ============================================================================
 
-/// Certificado criptográfico de que una mutación preserva los invariantes
-/// axiomáticos. El `hash` es BLAKE3 del `witness`.
+/// Cryptographic certificate that a mutation preserves the invariants
+/// axiomatic. The `hash` is the BLAKE3 of `witness`.
 ///
-/// Un [`Proof`] es válido si y solo si:
-/// 1. `blake3(witness) == hash` (integridad)
-/// 2. El witness serializado contiene un frame válido para cada axioma en
-///    `axioms_checked` con `result == 1` (verificación positiva)
+/// Un [`Proof`] is valid if and only if:
+/// 1. `blake3(witness) == hash` (integrity)
+/// 2. The serialized witness contains a valid frame for each axiom in
+///    `axioms_checked` with `result == 1` (positive verifiestion)
 ///
 /// # Memory model (BN-03)
 /// `witness` uses SSO: inline stack storage for witnesses ≤ 64 bytes
@@ -316,25 +316,25 @@ impl AxiomID {
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.2
 #[derive(Debug, Clone)]
 pub struct Proof {
-    /// Lista de axiomas verificados positivamente en este Proof.
+    /// Lista of axioms verifiesdos positivamente in this Proof.
     pub axioms_checked: AxiomSet,
-    /// Traza binaria serializada de la verificación (SSO — inline ≤ 64 bytes).
-    /// Formato por frame: [`axiom_id`: u8, result: u8, `ctx_len`: u16le, ctx: [u8; `ctx_len`]]
+    /// Serialized binary verifiestion trace (SSO — inline ≤ 64 bytes).
+    /// Formato per frame: [`axiom_id`: u8, result: u8, `ctx_len`: u16le, ctx: [u8; `ctx_len`]]
     pub witness: Witness,
-    /// Timestamp en nanosegundos del momento de generación.
+    /// Generation timestamp in nanoseconds.
     pub timestamp: u64,
-    /// BLAKE3 del campo `witness`. Detecta cualquier modificación post-generación.
+    /// BLAKE3 of the field `witness`. Detects any post-generation modification.
     pub hash: ProofHash,
-    /// Referencia opcional al proof padre en la cadena causal.
+    /// Optional reference to the parent proof in the causal chain.
     pub parent_proof_hash: Option<ProofHash>,
-    /// Premisas causales explícitas (DAG) de este proof.
+    /// Explicit causal premises (DAG) of this proof.
     pub premises: Premises,
-    /// Capa opcional de metaconsistencia (origen, dominio y estado resultante).
+    /// Optional metaconsistency layer (origin, dominio and state resultante).
     pub meta: Option<ProofMeta>,
 }
 
 impl Proof {
-    /// Construye un [`Proof`] calculando el hash BLAKE3 del witness (SSO, zero malloc).
+    /// Construye un [`Proof`] computesndo the hash BLAKE3 of the witness (SSO, zero malloc).
     pub fn new(axioms: AxiomSet, witness: Witness, timestamp: u64) -> Self {
         let hash = blake3_hash(&witness);
         Self {
@@ -348,26 +348,26 @@ impl Proof {
         }
     }
 
-    /// Verifica que el hash almacenado coincide con BLAKE3(witness).
-    /// Detecta modificación del witness post-generación.
+    /// Verifies that the stored hash matches BLAKE3(witness).
+    /// Detects modification of the witness post-generation.
     pub fn is_internally_consistent(&self) -> bool {
         blake3_hash(&self.witness) == self.hash
     }
 
-    /// Verifica que el Proof no ha expirado (anti-replay).
+    /// Verifies that the Proof has not expired (anti-replay).
     ///
-    /// Un Proof es fresco si `current_ns >= timestamp` (no del futuro)
-    /// y `current_ns - timestamp < PROOF_MAX_AGE_NS` (dentro de la ventana).
+    /// Un Proof is fresco if `current_ns >= timestamp` (no from the future)
+    /// and `current_ns - timestamp < PROOF_MAX_AGE_NS` (within the window).
     ///
-    /// Corrección [A1-1]: `saturating_sub` aceptaba timestamps futuros
+    /// Correction [A1-1]: `saturating_sub` accepted future timestamps
     /// (`current_ns` < timestamp → 0 < `PROOF_MAX_AGE_NS` → siempre fresco).
-    /// La nueva implementación rechaza explícitamente proofs del futuro.
+    /// The new implementation explicitly rejects proofs from the future.
     pub const fn is_fresh(&self, current_ns: u64) -> bool {
         use crate::constants::PROOF_MAX_AGE_NS;
         current_ns >= self.timestamp && current_ns - self.timestamp < PROOF_MAX_AGE_NS
     }
 
-    /// Adjunta relaciones causales opcionales sin alterar el hash base.
+    /// Attaches optional causal relations without alterar the hash base.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
     #[must_use]
@@ -381,7 +381,7 @@ impl Proof {
         self
     }
 
-    /// Adjunta metadatos de dominio para validación histórica.
+    /// Attaches domain metadata for historical validation.
     ///
     /// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
     #[must_use]
@@ -395,33 +395,33 @@ fn blake3_hash(data: &[u8]) -> ProofHash {
     *blake3::hash(data).as_bytes()
 }
 
-/// Resultado de una validación de metaconsistencia.
+/// Result of una validation of metaconsistency.
 ///
 /// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
 #[derive(Debug, Clone, PartialEq)]
 pub enum MetaConsistencyError {
-    /// Falló la validación base (hash+witness+axiomas) del layer existente.
+    /// Failed the validation base (hash+witness+axiomas) of the layer existente.
     Base(GenesisError),
-    /// El grafo causal contiene un ciclo, violando la estructura DAG.
+    /// The causal graph contains a loop, violating the DAG structure.
     CausalCycle,
-    /// Existe conflicto histórico con otro proof válido.
+    /// Exists conflict historical with otro proof valid.
     Conflict {
-        /// Hash del proof candidato que intenta entrar al historial.
+        /// Hash of the proof candidate who tries to enter to the history.
         candidate: ProofHash,
-        /// Hash del proof histórico ya aceptado con el que colisiona.
+        /// Hash of the proof historical ya accepted with the that collides.
         existing: ProofHash,
     },
 }
 
-/// Regla pluggable para detección de conflictos históricos.
+/// Rule pluggable for detection of conflicts históricos.
 ///
 /// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
 pub trait ConflictRule {
-    /// Retorna `true` si `candidate` y `existing` son mutuamente incompatibles.
+    /// Returns `true` if `candidate` and `existing` are mutuamente incompatibles.
     fn conflicts(&self, candidate: &Proof, existing: &Proof) -> bool;
 }
 
-/// Heurística base de conflicto: mismo nodo + mismo dominio + estado distinto.
+/// Heuristic base of conflict: same node + same dominio + state different.
 ///
 /// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
 #[derive(Debug, Clone, Copy, Default)]
@@ -440,7 +440,7 @@ impl ConflictRule for NodeDomainStateConflictRule {
     }
 }
 
-/// Capa separada de validación histórica sobre proofs internamente válidos.
+/// Capa separate of validation histórica over proofs internally valids.
 ///
 /// AX-ID: AXIOMA-009, `GENESIS_PROOF_SPEC` §2.5
 #[derive(Debug, Clone)]
@@ -449,14 +449,14 @@ pub struct MetaConsistencyValidator<R: ConflictRule = NodeDomainStateConflictRul
 }
 
 impl<R: ConflictRule> MetaConsistencyValidator<R> {
-    /// Construye un validador con una regla de conflicto pluggable.
+    /// Build a validator with a pluggable rule of conflict.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
     pub const fn new(rule: R) -> Self {
         Self { rule }
     }
 
-    /// Ejecuta validación histórica: DAG + conflictos contra historial válido.
+    /// Executes historical validation: DAG + conflicts against history validation.
     ///
     /// # Errors
     ///
@@ -543,15 +543,15 @@ impl Default for MetaConsistencyValidator<NodeDomainStateConflictRule> {
 // VerifiedProof token — compile-time guarantee
 // ============================================================================
 
-/// Token de prueba verificada. **No constructible fuera de [`AxiomGuard::verify_for`].**
+/// Token of proof verifiesda. **No constructible fuera of [`AxiomGuard::verify_for`].**
 ///
-/// Garantía compile-time: [`Mutation::apply`] solo puede ser llamado si
-/// `AxiomGuard::verify_for` retorna `Some(token)` — es decir, si el [`Proof`]
-/// fue verificado exitosamente. No hay camino para construir este token sin
-/// pasar por la verificación.
+/// Guarantee compile-time: [`Mutation::apply`] only can be called si
+/// `AxiomGuard::verify_for` returns `Some(token)` — is decir, if the [`Proof`]
+/// was successfully verified. There is no way to construct this token without
+/// go through verification.
 ///
-/// El `PhantomData<&'mutation M>` vincula el token al tipo de mutación y
-/// a un lifetime específico, impidiendo reutilización entre mutaciones.
+/// The `PhantomData<&'mutation M>` links the token to the type of mutation and
+/// a un lifetime specific, preventing reuse between mutations.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.3
 pub struct VerifiedProof<'mutation, M: Mutation> {
@@ -562,33 +562,33 @@ pub struct VerifiedProof<'mutation, M: Mutation> {
 // Mutation trait
 // ============================================================================
 
-/// Trait que toda mutación estructural debe implementar.
+/// Trait that every mutation structural must implementar.
 ///
-/// El contrato es: `propose()` verifica invariantes y genera un [`Proof`];
-/// `apply()` ejecuta la mutación solo con un [`VerifiedProof`] emitido
-/// por [`AxiomGuard::verify_for`] — garantía compile-time de verificación.
+/// El contract es: `propose()` verifies invariants and generates un [`Proof`];
+/// `apply()` ejecuta the mutation only with un [`VerifiedProof`] emitido
+/// per [`AxiomGuard::verify_for`] — guarantee compile-time of verifiestion.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.3
 pub trait Mutation: Send + Sync {
-    /// Verifica invariantes axiomáticos y genera un [`Proof`] certificado.
-    /// Retorna error si algún invariante falla.
+    /// Verifica invariants axiomatic and generates un [`Proof`] certificado.
+    /// Returns error if some invariant fails.
     /// # Errors
     /// Returns an error if the implementation cannot build a valid proof token.
     fn propose(&self) -> Result<Proof, crate::error::GenesisError>;
 
-    /// Aplica la mutación. REQUIERE token de verificación emitido por
-    /// [`AxiomGuard::verify_for`] — garantía compile-time de proof verificado.
+    /// Applies the mutation. REQUIRES token of verification issued by
+    /// [`AxiomGuard::verify_for`] — guarantee compile-time of proof verifiesdo.
     ///
-    /// `where Self: Sized` — requerido porque `VerifiedProof<'_, Self>` parametriza
-    /// sobre `Self`; los trait objects (`dyn Mutation`) no necesitan `apply` ya que
-    /// todas las mutaciones concretas son tipos `Sized`.
+    /// `where Self: Sized` — required because `VerifiedProof<'_, Self>` parametriza
+    /// over `Self`; the trait objects (`dyn Mutation`) no necesitan `apply` ya que
+    /// todas the mutations concretas are tipos `Sized`.
     /// # Errors
     /// Returns an error if applying the verified proof fails for the target state.
     fn apply(&self, _token: VerifiedProof<'_, Self>) -> Result<(), crate::error::GenesisError>
     where
         Self: Sized;
 
-    /// Nombre estático de la mutación, para mensajes de error.
+    /// Name static of the mutation, for messages of error.
     fn name(&self) -> &'static str;
 }
 
@@ -596,12 +596,12 @@ pub trait Mutation: Send + Sync {
 // AxiomGuard
 // ============================================================================
 
-/// Verificador de certificados [`Proof`].
+/// Verifier for [`Proof`] certificates.
 ///
-/// Realiza dos verificaciones independientes:
-/// 1. Integridad criptográfica: `blake3(witness) == proof.hash`
-/// 2. Replay del witness: cada frame del witness se deserializa y se verifica
-///    que los axiomas reclamados están presentes con resultado `1`.
+/// Performs two independent checks:
+/// 1. Cryptographic integrity: `blake3(witness) == proof.hash`
+/// 2. Witness replay: each witness frame is deserialized and verified, ensuring
+///    all claimed axioms appear with result `1`.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.4
 pub struct AxiomGuard;
@@ -633,21 +633,22 @@ impl AxiomGuard {
         Ok(())
     }
 
-    /// Verifica que `proof` cubre todos los axiomas en `required`.
+    /// Verifies that `proof` covers all the axioms in `required`.
     ///
-    /// Retorna `true` solo si:
-    /// - El hash del witness es correcto
-    /// - Cada axioma en `required` aparece en el witness con resultado positivo
+    /// Returns `true` only if:
+    /// - The witness hash is correct.
+    /// - Each axiom in `required` appears in the witness with positive result.
     pub fn verify(proof: &Proof, required: &[AxiomID]) -> bool {
         Self::verify_with_error(proof, required).is_ok()
     }
 
-    /// Verifica proof y emite token tipado. **ÚNICO camino legítimo hacia `apply()`.**
+    /// Verifies a proof and emits a typed token.
+    /// **This is the only legitimate path to `apply()`.**
     ///
-    /// Retorna `Some(token)` si el proof es válido para `required`.
-    /// El token vincula el tipo de mutación `M` mediante `PhantomData`.
+    /// Returns `Some(token)` if the proof is valid for `required`.
+    /// The token binds the type of mutation `M` via `PhantomData`.
     ///
-    /// Uso típico:
+    /// Typical usage:
     /// ```rust
     /// use genesis_types::proof::{AxiomGuard, AxiomID, Mutation, Proof, VerifiedProof, WitnessBuilder};
     ///
@@ -683,26 +684,24 @@ impl AxiomGuard {
         Self::verify_for_result::<M>(proof, required).ok()
     }
 
-    /// Verifica proof y emite token tipado con diagnóstico estructurado.
+    /// Verifies a proof and emits a typed token with structured diagnostics.
     ///
-    /// Retorna [`crate::error::GenesisError::ProofInvalid`] cuando el proof no
-    /// cumple integridad, cobertura de axiomas o replay del witness.
+    /// Returns [`crate::error::GenesisError::ProofInvalid`] when the proof fails
+    /// integrity, axiom coverage, or witness replay.
     ///
     /// # Errors
     ///
-    /// Retorna [`crate::error::GenesisError::ProofInvalid`] en cualquiera de
-    /// estas condiciones contractuales:
+    /// Returns [`crate::error::GenesisError::ProofInvalid`] in any of the
+    /// following contract violations:
     ///
-    /// - **Violación de integridad topológica del witness**: el hash BLAKE3 del
-    ///   witness no coincide con `proof.hash`, indicando alteración del
-    ///   certificado después de su emisión.
-    /// - **Disonancia de mutación declarada**: falta al menos un axioma de
-    ///   `required` dentro de `proof.axioms_checked`, por lo que la mutación no
-    ///   satisface el contrato mínimo para ser aplicada.
-    /// - **Incumplimiento axiomático en replay**: el witness no puede
-    ///   deserializarse de forma consistente (frames truncados, IDs inválidos o
-    ///   checks con resultado negativo), rompiendo la trazabilidad de los
-    ///   axiomas reclamados por el proof.
+    /// - **Witness integrity violation**: the BLAKE3 hash of the witness
+    ///   does not match `proof.hash`, indicating post-issuance alteration.
+    /// - **Declared-mutation mismatch**: at least one required axiom in
+    ///   `required` is missing from `proof.axioms_checked`, so the mutation
+    ///   does not satisfy the minimum application contract.
+    /// - **Axiomatic replay failure**: the witness cannot be deserialized
+    ///   consistently (truncated frames, invalid IDs, or negative results),
+    ///   breaking traceability of the axioms claimed by the proof.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.4
     pub fn verify_for_result<'p, M: Mutation>(
@@ -715,7 +714,7 @@ impl AxiomGuard {
         })
     }
 
-    /// Verifica la capa base y luego aplica metaconsistencia histórica.
+    /// Verifies the base layer and then applies historical metaconsistency.
     ///
     /// # Errors
     ///
@@ -735,16 +734,16 @@ impl AxiomGuard {
         validator.validate_against_history(proof, history)
     }
 
-    /// Deserializa el witness frame a frame y verifica que todos los axiomas
-    /// reclamados están presentes con `result == 1`.
+    /// Deserializes the witness frame to frame and verifies that there are axioms
+    /// claimed are presentes with `result == 1`.
     ///
-    /// Formato de frame: [`axiom_id`: u8][result: u8][`ctx_len`: u16le][ctx: bytes]
+    /// Formato of frame: [`axiom_id`: u8][result: u8][`ctx_len`: u16le][ctx: bytes]
     fn replay_witness(witness: &[u8], claimed: AxiomSet) -> bool {
         let mut cursor = 0usize;
         let mut verified = AxiomSet::empty();
 
         while cursor < witness.len() {
-            // Necesitamos al menos 4 bytes para el header del frame
+            // Necesitamos to the less 4 bytes for the header of the frame
             if cursor + 4 > witness.len() {
                 return false;
             }
@@ -754,7 +753,7 @@ impl AxiomGuard {
             let ctx_len = u16::from_le_bytes([witness[cursor + 2], witness[cursor + 3]]) as usize;
             cursor += 4 + ctx_len;
 
-            // Frame truncado o resultado negativo
+            // Frame truncado or result negativo
             if cursor > witness.len() || result != 1 {
                 return false;
             }
@@ -773,7 +772,7 @@ impl AxiomGuard {
             verified.insert(axiom);
         }
 
-        // Todos los axiomas reclamados deben estar en el witness verificado
+        // All the axioms claimed must be in the witnessed witness
         (claimed.bits() & verified.bits()) == claimed.bits()
     }
 }
@@ -782,11 +781,11 @@ impl AxiomGuard {
 // WitnessBuilder
 // ============================================================================
 
-/// Construye un witness binario ejecutando checks axiomáticos en secuencia.
+/// Construye un witness binario ejecutando checks axiomatic in secuencia.
 ///
-/// Cada llamada a [`check`][WitnessBuilder::check] serializa un frame
-/// `[axiom_id, result, 0, 0]` al witness interno. Si el check falla,
-/// retorna un error inmediatamente.
+/// Each llamada a [`check`][WitnessBuilder::check] serializa un frame
+/// `[axiom_id, result, 0, 0]` to the witness internal. If the check falla,
+/// returns un error inmediatamente.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §3
 pub struct WitnessBuilder {
@@ -801,7 +800,7 @@ enum WitnessBuffer {
 }
 
 impl WitnessBuilder {
-    /// Crea un builder vacío.
+    /// Creates un builder empty.
     pub fn new() -> Self {
         Self {
             frames: WitnessBuffer::Small(ArrayVec::new()),
@@ -838,9 +837,9 @@ impl WitnessBuilder {
         }
     }
 
-    /// Ejecuta el check `f` para `axiom` y serializa el frame al witness.
+    /// Ejecuta the check `f` for `axiom` and serializa the frame to the witness.
     ///
-    /// Si `f()` retorna `false`, serializa `result=0` y retorna
+    /// If `f()` returns `false`, serializa `result=0` and returns
     /// [`GenesisError::InvariantViolation`][crate::GenesisError::InvariantViolation].
     /// # Errors
     /// Returns `GenesisError::InvariantViolation` when the evaluated axiom check fails.
@@ -865,18 +864,18 @@ impl WitnessBuilder {
         Ok(())
     }
 
-    /// Finaliza el builder y retorna un [`Proof`] con el timestamp dado.
+    /// Finaliza the builder and returns un [`Proof`] with the timestamp dado.
     ///
     /// # Allocation contract (BN-03 + FIX-5)
     /// For witnesses ≤ 512 bytes: zero heap allocation (inline SmallVec matches
-    /// WitnessBuffer::Small capacity — no copy crosses stack/heap boundary).
+    /// WitnessBuffer::Small layercity — no copy crosses stack/heap boundary).
     /// For witnesses > 512 bytes: single heap allocation (SmallVec spill, same
     /// as the builder's WitnessBuffer::Large path).
     pub fn build(self, timestamp: u64) -> Proof {
         let witness: Witness = match self.frames {
             WitnessBuffer::Small(frames) => {
                 // FIX-C: Use WITNESS_INLINE_CAPACITY constant — was hardcoded 64 but
-                // Witness is now SmallVec<[u8; 512]> to match WitnessBuffer::Small capacity.
+                // Witness is now SmallVec<[u8; 512]> to match WitnessBuffer::Small layercity.
                 debug_assert!(
                     frames.len() <= WITNESS_INLINE_CAPACITY,
                     "Witness exceeds SSO inline capacity ({} > {} bytes): \
@@ -1107,21 +1106,21 @@ mod tests {
     fn proof_is_fresh_within_window() {
         use crate::constants::PROOF_MAX_AGE_NS;
         let proof = build_proof(&[(AxiomID::PlanckConstant, true)]).unwrap();
-        // timestamp=0, current=PROOF_MAX_AGE_NS - 1 → dentro del window
+        // timestamp=0, current=PROOF_MAX_AGE_NS - 1 → dentro of the window
         assert!(proof.is_fresh(PROOF_MAX_AGE_NS - 1));
     }
 
     #[test]
     fn proof_from_future_is_not_fresh() {
-        // current_ns < timestamp → debe retornar false.
-        // Simulamos timestamp futuro: crear proof con timestamp=100, verificar en t=50.
+        // current_ns < timestamp → must returnsr false.
+        // Simulamos timestamp futuro: crear proof with timestamp=100, verifiesr in t=50.
         let mut future_proof = build_proof(&[(AxiomID::PlanckConstant, true)]).unwrap();
         future_proof.timestamp = 100;
         assert!(
             !future_proof.is_fresh(50),
             "proof del futuro debe ser not-fresh"
         );
-        // current_ns=0 < timestamp=100 → también no-fresco.
+        // current_ns=0 < timestamp=100 → also non-fresh.
         assert!(
             !future_proof.is_fresh(0),
             "proof del futuro debe ser not-fresh en t=0"
