@@ -515,7 +515,8 @@ pub const KURAMOTO_LAMBDA_MAX_EXPECTED: f64 = 20.0;
 /// Wolfram derivation: Γ_c = 2 × 0.1 / 20.0 = 0.01
 ///
 /// AX-ID: AXIOMA-006, AXIOMA-005 (SOC — system operates near this threshold)
-pub const KURAMOTO_CRITICAL_COUPLING: f64 = 0.01;
+pub const KURAMOTO_CRITICAL_COUPLING: f64 =
+    (2.0 * KURAMOTO_GAMMA_WIDTH) / KURAMOTO_LAMBDA_MAX_EXPECTED;
 
 /// Strong-coupling regime where r_sync → 1 (phase collapse imminent).
 ///
