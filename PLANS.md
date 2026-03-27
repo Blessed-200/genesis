@@ -1,3 +1,30 @@
+## 0.9 genesis-dynamics micro-optimization and branch simplification sweep (2026-03-27)
+
+### Root cause
+- `genesis-dynamics` still contains avoidable modulo operations, branch-heavy parity/sign handling, and iterator/index patterns that add overhead in frequently executed paths (`kuramoto`, `synchrony`, `free_energy`, `phase_semantics`, `criticality`, `attractor`, `oscillator`).
+- Multiple hotspots can be tightened while preserving exact contracts and numerical behavior.
+
+### File-level actions
+1. `core/genesis-dynamics/src/attractor.rs`
+   - Replace `get` + conditional update with `HashMap::entry` update path to avoid duplicate lookups.
+   - Add `#[inline]` to tiny ordering/accessor helpers.
+2. `core/genesis-dynamics/src/criticality.rs`
+   - Simplify critical coupling expression and branchless KS loop parity/sign handling.
+   - Replace `%` index wrap in ring-buffer write/read iterators with branch wrap.
+   - Hoist log invariants in `tau_from_sizes` and simplify theoretical CDF branch.
+3. `core/genesis-dynamics/src/free_energy.rs`
+   - Remove redundant scalar finite helper indirection.
+   - Simplify target extraction and several arithmetic forms while keeping Kahan where present.
+   - Replace checked page growth and conversion patterns with tighter equivalents under existing invariants.
+4. `core/genesis-dynamics/src/kuramoto.rs`, `oscillator.rs`, `phase_semantics.rs`, `synchrony.rs`
+   - Hoist RNG scale constants, use `sin_cos` where beneficial, reduce iterator overhead in fixed-size loops, and replace selected branch patterns with lower-overhead equivalents.
+   - Keep behavior-compatible phase wrapping, synchrony, and semantic statistics contracts.
+
+### Validation
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
 ## 0.8 genesis-math branchless/indexed micro-optimization sweep (2026-03-27)
 
 ### Root cause

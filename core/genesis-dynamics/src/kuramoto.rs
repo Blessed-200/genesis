@@ -2,6 +2,8 @@ use genesis_types::{GenesisError, NodeId};
 
 use crate::oscillator::QuantumOscillator;
 
+const INV_2POW53: f64 = 1.0 / ((1u64 << 53) as f64);
+
 /// Generates an approximately `N(0,1)` via Box-Muller with LCG of 64 bits.
 ///
 /// Algoritmo:
@@ -35,17 +37,17 @@ fn gaussian_noise(rng: &mut u64) -> f64 {
         .wrapping_add(1_442_695_040_888_963_407);
     // `rng >> 11` leaves 53 bits; the conversion to `f64` is accurate by mantissa IEEE-754.
     #[allow(clippy::cast_precision_loss)]
-    let u1 = ((*rng >> 11) as f64 / (1u64 << 53) as f64).clamp(f64::MIN_POSITIVE, 1.0);
+    let u1 = ((*rng >> 11) as f64 * INV_2POW53).clamp(f64::MIN_POSITIVE, 1.0);
 
     *rng = rng
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
     // Same razonamiento: 53 bits efectivos in numerador and 2^53 exact in denominador.
     #[allow(clippy::cast_precision_loss)]
-    let u2 = (*rng >> 11) as f64 / (1u64 << 53) as f64;
+    let u2 = (*rng >> 11) as f64 * INV_2POW53;
 
-    let r = u1.ln().mul_add(-2.0, 0.0).sqrt();
-    let theta = u2.mul_add(2.0 * core::f64::consts::PI, 0.0);
+    let r = (u1.ln() * -2.0).sqrt();
+    let theta = u2 * core::f64::consts::TAU;
     r * theta.cos()
 }
 
@@ -71,7 +73,7 @@ pub(crate) fn wrap_phase(x: f64) -> f64 {
     const INV_TAU: f64 = 1.0 / core::f64::consts::TAU;
     let turns = x.mul_add(INV_TAU, 0.5).floor();
     let wrapped = core::f64::consts::TAU.mul_add(-turns, x);
-    if wrapped.to_bits() == core::f64::consts::PI.to_bits() {
+    if wrapped == core::f64::consts::PI {
         -core::f64::consts::PI
     } else {
         wrapped
@@ -293,9 +295,9 @@ impl QuantumKuramotoNetwork {
             if !osc.state.contributes_to_sync() {
                 continue;
             }
-            let phase = osc.primary_phase();
-            sum_cos += phase.cos();
-            sum_sin += phase.sin();
+            let (sin, cos) = osc.primary_phase().sin_cos();
+            sum_cos += cos;
+            sum_sin += sin;
             count += 1.0;
         }
 
@@ -430,7 +432,7 @@ impl QuantumKuramotoNetwork {
         let noise_enabled = self.temperature > 0.0;
         // loop-invariant, hoisted
         // CRYSTAL: O17 — inevitable
-        let sqrt_2k_t_dt = self.temperature.mul_add(2.0 * dt, 0.0).sqrt();
+        let sqrt_2k_t_dt = (self.temperature * (2.0 * dt)).sqrt();
 
         for i in 0..n {
             if !self.oscillators[i].state.contributes_to_sync() {
@@ -474,7 +476,7 @@ impl QuantumKuramotoNetwork {
                 }
             }
 
-            for (g, &coupling_sum) in coupling_sums.iter().enumerate() {
+            for g in 0..5 {
                 let omega = self.oscillators[i].frequencies[g];
                 let eta = if noise_enabled {
                     self.next_gaussian() * sqrt_2k_t_dt
@@ -482,7 +484,7 @@ impl QuantumKuramotoNetwork {
                     0.0
                 };
                 self.oscillators[i].phases[g] =
-                    dt.mul_add(omega + coupling_sum, self.oscillators[i].phases[g]) + eta;
+                    dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]) + eta;
             }
         }
 
@@ -530,10 +532,10 @@ impl QuantumKuramotoNetwork {
             .zip(oj.phases.iter())
             .map(|(&phi_i, &phi_j)| {
                 let d = wrap_phase_diff(phi_i - phi_j);
-                d.mul_add(d, 0.0)
+                d * d
             })
             .sum();
-        (sum_sq / 5.0).sqrt()
+        (sum_sq * 0.2).sqrt()
     }
 
     // ── Integration ──────────────────────────────────────────────────────────
@@ -557,7 +559,7 @@ impl QuantumKuramotoNetwork {
             self.phase_scratch[i] = self.oscillators[i].phases;
         }
 
-        let sqrt_2k_t_dt = self.temperature.mul_add(2.0 * dt, 0.0).sqrt();
+        let sqrt_2k_t_dt = (self.temperature * (2.0 * dt)).sqrt();
 
         if self.temperature > 0.0 {
             self.step_inner_noisy(dt, sqrt_2k_t_dt);
@@ -583,18 +585,17 @@ impl QuantumKuramotoNetwork {
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1_442_695_040_888_963_407);
         #[allow(clippy::cast_precision_loss)]
-        let u1 =
-            ((self.rng_state >> 11) as f64 / (1u64 << 53) as f64).clamp(f64::MIN_POSITIVE, 1.0);
+        let u1 = ((self.rng_state >> 11) as f64 * INV_2POW53).clamp(f64::MIN_POSITIVE, 1.0);
 
         self.rng_state = self
             .rng_state
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1_442_695_040_888_963_407);
         #[allow(clippy::cast_precision_loss)]
-        let u2 = (self.rng_state >> 11) as f64 / (1u64 << 53) as f64;
+        let u2 = (self.rng_state >> 11) as f64 * INV_2POW53;
 
-        let r = u1.ln().mul_add(-2.0, 0.0).sqrt();
-        let theta = u2.mul_add(2.0 * core::f64::consts::PI, 0.0);
+        let r = (u1.ln() * -2.0).sqrt();
+        let theta = u2 * (2.0 * core::f64::consts::PI);
         let (sin_theta, cos_theta) = theta.sin_cos();
         self.spare_gaussian = Some(r * sin_theta);
         r * cos_theta
@@ -625,12 +626,11 @@ impl QuantumKuramotoNetwork {
             let j = j_u32 as usize;
             // loop-invariant, hoisted
             // CRYSTAL: O40 — inevitable
-            if oscillators[j].state.contributes_to_sync() {
-                #[allow(clippy::cast_possible_truncation)]
-                let phi_j = &phase_scratch[j];
-                for (g, sum_g) in sums.iter_mut().enumerate() {
-                    *sum_g = gamma.mul_add((phi_j[g] - phi_i[g] + gauge).sin(), *sum_g);
-                }
+            let active = oscillators[j].state.contributes_to_sync() as i32 as f64;
+            #[allow(clippy::cast_possible_truncation)]
+            let phi_j = &phase_scratch[j];
+            for (g, sum_g) in sums.iter_mut().enumerate() {
+                *sum_g = gamma.mul_add(active * (phi_j[g] - phi_i[g] + gauge).sin(), *sum_g);
             }
         }
         sums
@@ -652,10 +652,10 @@ impl QuantumKuramotoNetwork {
                 &self.oscillators,
                 i,
             );
-            for (g, coupling_sum) in coupling_sums.iter().enumerate() {
+            for g in 0..5 {
                 let omega = self.oscillators[i].frequencies[g];
                 self.oscillators[i].phases[g] =
-                    dt.mul_add(omega + coupling_sum, self.oscillators[i].phases[g]);
+                    dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]);
             }
         }
     }
@@ -680,18 +680,18 @@ impl QuantumKuramotoNetwork {
             // This reduces calls to next_gaussian() from 5/node to ceil(5/2)=3/node
             // (Box-Muller spare sample), and makes the branch predictor pattern
             // for self access more predictable.
-            let noise_buf = {
-                let mut buf = [0.0f64; 5];
-                for n in &mut buf {
-                    *n = self.next_gaussian();
-                }
-                buf
-            };
-            for (g, coupling_sum) in coupling_sums.iter().enumerate() {
+            let noise_buf = [
+                self.next_gaussian(),
+                self.next_gaussian(),
+                self.next_gaussian(),
+                self.next_gaussian(),
+                self.next_gaussian(),
+            ];
+            for g in 0..5 {
                 let omega = self.oscillators[i].frequencies[g];
                 self.oscillators[i].phases[g] = sqrt_2k_t_dt.mul_add(
                     noise_buf[g],
-                    dt.mul_add(omega + coupling_sum, self.oscillators[i].phases[g]),
+                    dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]),
                 );
             }
         }
@@ -730,11 +730,8 @@ impl QuantumKuramotoNetwork {
                     .iter()
                     .fold((0.0f64, 0.0f64, 0.0f64), |(sc, ss, sa), osc| {
                         let a = osc.amplitudes[g];
-                        (
-                            a.mul_add(osc.phases[g].cos(), sc),
-                            a.mul_add(osc.phases[g].sin(), ss),
-                            sa + a,
-                        )
+                        let (sin, cos) = osc.phases[g].sin_cos();
+                        (a.mul_add(cos, sc), a.mul_add(sin, ss), sa + a)
                     });
             // |Σ A·e^{iφ}| / (Σ A) — identical to the classical when A_i = 1.0 ∀i
             r_total += sc.hypot(ss) / (sa + EPS);
