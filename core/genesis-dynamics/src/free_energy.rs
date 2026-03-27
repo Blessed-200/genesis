@@ -43,16 +43,12 @@ pub(crate) const VFE_BLADE_WEIGHTS: [f64; 16] = [
 /// and for backward compatibility of the method `mean()`.
 pub(crate) const GRADE1_BLADE_INDICES: [usize; 4] = [1, 2, 4, 8];
 
-fn is_finite_scalar(v: f64) -> bool {
-    v.is_finite()
-}
-
 fn is_finite_vec4(values: &[f64; 4]) -> bool {
-    values.iter().all(|&v| is_finite_scalar(v))
+    values.iter().all(|v| v.is_finite())
 }
 
 fn is_finite_vec16(values: &[f64; 16]) -> bool {
-    values.iter().all(|&v| is_finite_scalar(v))
+    values.iter().all(|v| v.is_finite())
 }
 
 fn sanitize_trace(trace: f64) -> f64 {
@@ -252,10 +248,7 @@ impl PagedIndex {
         let page = raw >> PAGE_BITS;
         let offset = raw & PAGE_MASK;
         if page >= self.pages.len() {
-            let Some(required) = page.checked_add(1) else {
-                return;
-            };
-            self.pages.resize_with(required, || None);
+            self.pages.resize(page + 1, None);
         }
         let slots = self.pages[page].get_or_insert_with(|| Box::new([u32::MAX; PAGE_SIZE]));
         slots[offset] = val;
@@ -339,9 +332,7 @@ impl VFEMinimizer {
         let Ok(raw) = usize::try_from(id.get()) else {
             return None;
         };
-        self.id_to_idx
-            .get(raw)
-            .and_then(|idx| usize::try_from(idx).ok())
+        self.id_to_idx.get(raw).map(|idx| idx as usize)
     }
 
     /// VFE over the subespacio of grade 1 — backward compatibility with callers `[f64;4]`.
@@ -367,7 +358,7 @@ impl VFEMinimizer {
         let precision_full = &belief.precision_full;
         // loop-invariant, hoisted
         // CRYSTAL: O29 — inevitable
-        let target: [f64; 4] = obs.map_or([0.0; 4], |o| *o);
+        let target = obs.copied().unwrap_or_default();
         // VFE over the 4 blades of grade 1 — Kahan summation.
         // Applies VFE_BLADE_WEIGHTS for consistency with compute_vfe_with_grad (FIX-3).
         let mut sum = 0.0f64;
@@ -376,7 +367,7 @@ impl VFEMinimizer {
             let delta = mean_full[blade_idx] - target[k];
             let w = VFE_BLADE_WEIGHTS[blade_idx];
             let weighted_precision = w * precision_full[blade_idx];
-            let term = delta.mul_add(delta * weighted_precision, 0.0);
+            let term = delta * (delta * weighted_precision);
             let y = term - comp;
             let t = sum + y;
             comp = (t - sum) - y;
@@ -441,7 +432,7 @@ impl VFEMinimizer {
             let t = vfe + y;
             comp = (t - vfe) - y;
             vfe = t;
-            grad[i] = delta.mul_add((2.0 * w) * prec, 0.0);
+            grad[i] = delta * ((2.0 * w) * prec);
         }
         (vfe, grad)
     }
@@ -485,7 +476,7 @@ impl VFEMinimizer {
                 let mut sum = 0.0f64;
                 let mut comp = 0.0f64;
                 for (i, &m) in belief.mean_full.iter().enumerate() {
-                    let term = m.mul_add(m * VFE_BLADE_WEIGHTS[i], 0.0);
+                    let term = m * (m * VFE_BLADE_WEIGHTS[i]);
                     let y = term - comp;
                     let t = sum + y;
                     comp = (t - sum) - y;
@@ -493,7 +484,7 @@ impl VFEMinimizer {
                 }
                 sum
             };
-            let vfe = trace.mul_add(error_sq, 0.0);
+            let vfe = trace * error_sq;
             if vfe > max_vfe {
                 max_vfe = vfe;
                 max_id = Some(belief.node_id);
@@ -530,7 +521,7 @@ impl VFEMinimizer {
             belief.mean_full[blade_idx] = step.mul_add(err, belief.mean_full[blade_idx]);
             belief.precision_full[blade_idx] =
                 (belief.precision_full[blade_idx] + step).clamp(0.0, 1.0e6);
-            error_sq = err.mul_add(err, error_sq);
+            error_sq += err * err;
         }
 
         let old_trace = fisher.trace;
@@ -538,7 +529,7 @@ impl VFEMinimizer {
         let trace_scale = step.mul_add(error_mag.max(TRACE_MIN), 1.0);
         // CRYSTAL: O43 — inevitable
         fisher.trace = sanitize_trace(old_trace / trace_scale);
-        fisher.delta_g = 0.5_f64.mul_add((fisher.trace - old_trace).abs(), 0.0);
+        fisher.delta_g = 0.5 * (fisher.trace - old_trace).abs();
     }
 
     /// Updates the beliefs over the 16 blades full of G(1,3).
@@ -578,7 +569,7 @@ impl VFEMinimizer {
             let err = target - belief.mean_full[i];
             belief.mean_full[i] = step.mul_add(err, belief.mean_full[i]);
             belief.precision_full[i] = (belief.precision_full[i] + step).clamp(0.0, 1.0e6);
-            error_sq = err.mul_add(err, error_sq);
+            error_sq += err * err;
         }
 
         let old_trace = fisher.trace;
@@ -586,7 +577,7 @@ impl VFEMinimizer {
         let trace_scale = step.mul_add(error_mag.max(TRACE_MIN), 1.0);
         // CRYSTAL: O46 — inevitable
         fisher.trace = sanitize_trace(old_trace / trace_scale);
-        fisher.delta_g = 0.5_f64.mul_add((fisher.trace - old_trace).abs(), 0.0);
+        fisher.delta_g = 0.5 * (fisher.trace - old_trace).abs();
     }
 
     /// Access a `FisherInfo` of un node.

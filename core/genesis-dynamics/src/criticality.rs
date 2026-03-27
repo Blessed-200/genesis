@@ -8,7 +8,7 @@ use core::num::NonZeroUsize;
 ///
 /// AX-ID: `H_dinámica` (`LEY_FUNDACIONAL` §3.2)
 pub fn kuramoto_critical_coupling(temperature: f64) -> f64 {
-    temperature.mul_add(2.0 * (2.0 / core::f64::consts::PI).sqrt(), 0.0)
+    temperature * (8.0 / core::f64::consts::PI).sqrt()
 }
 
 /// Lower bound of `r_sync` for the viable cognitive zone.
@@ -84,12 +84,9 @@ fn ks_p_value(z: f64) -> f64 {
     // CRYSTAL: O1 — inevitable
     for k in 1_u32..=20 {
         let k_f = f64::from(k);
-        let term = (-2.0 * (k_f * k_f).mul_add(z_sq, 0.0)).exp();
-        if k % 2 == 1 {
-            sum += term;
-        } else {
-            sum -= term;
-        }
+        let term = (-2.0 * k_f * k_f * z_sq).exp();
+        let sign = if k & 1 != 0 { 1.0 } else { -1.0 };
+        sum += sign * term;
         // Convergence on partial sum change — not on term magnitude
         if (sum - prev_sum).abs() < 1e-15 {
             break;
@@ -116,7 +113,9 @@ impl CriticalityMonitor {
             return None;
         }
         let s_half = (s_min - 0.5).max(0.5);
-        let sum_ln: f64 = sizes.iter().map(|&s| (f64::from(s) / s_half).ln()).sum();
+        let s_half_ln = s_half.ln();
+        let sum_ln: f64 =
+            sizes.iter().map(|&s| f64::from(s).ln()).sum::<f64>() - (n as f64) * s_half_ln;
         if sum_ln < f64::MIN_POSITIVE {
             return None;
         }
@@ -141,7 +140,10 @@ impl CriticalityMonitor {
         let capacity = self.capacity.get();
         // CRYSTAL: O6 — inevitable
         self.avalanche_sizes[self.write_pos] = size;
-        self.write_pos = (self.write_pos + 1) % capacity;
+        self.write_pos += 1;
+        if self.write_pos == capacity {
+            self.write_pos = 0;
+        }
         self.total_recorded += 1;
     }
 
@@ -245,12 +247,7 @@ impl CriticalityMonitor {
         for (i, &s) in sizes.iter().enumerate() {
             let s_f = f64::from(s);
             let f_emp = (i as f64 + 1.0) / n_f;
-            let f_teo = if exponent > 0.0 {
-                1.0 - (s_f / x_min).powf(-exponent)
-            } else {
-                // Degenerate case (τ ≤ 1) should not occur with real data.
-                0.5
-            };
+            let f_teo = 1.0 - (x_min / s_f).powf(exponent);
             ks_d = ks_d.max((f_emp - f_teo).abs());
         }
 
@@ -292,7 +289,10 @@ impl Iterator for ActiveSizes<'_> {
         if self.pos >= self.len {
             return None;
         }
-        let idx = (self.start + self.pos) % self.cap;
+        let mut idx = self.start + self.pos;
+        if idx >= self.cap {
+            idx -= self.cap;
+        }
         self.pos += 1;
         Some(self.buf[idx])
     }

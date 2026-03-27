@@ -55,6 +55,7 @@ impl PartialEq for AttractorEntry {
 impl Eq for AttractorEntry {}
 
 impl Ord for AttractorEntry {
+    #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // total_cmp: deterministic even for NaN (NaN > all finite, consistent with IEEE 754 total order)
         self.energy
@@ -64,6 +65,7 @@ impl Ord for AttractorEntry {
 }
 
 impl PartialOrd for AttractorEntry {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
@@ -120,16 +122,22 @@ impl AttractorLandscape {
     /// If the same `NodeId` already exists with a different energy, the old entry
     /// is removed and the new one inserted. Idempotent for same (id, energy).
     pub fn register(&mut self, id: NodeId, energy: f64) {
-        if let Some(&old_energy) = self.id_to_energy.get(&id) {
-            if old_energy.to_bits() == energy.to_bits() {
-                return; // Exact same value — idempotent, no work needed.
+        match self.id_to_energy.entry(id) {
+            std::collections::hash_map::Entry::Occupied(mut occupied) => {
+                let old_energy = *occupied.get();
+                if old_energy.to_bits() == energy.to_bits() {
+                    return; // Exact same value — idempotent, no work needed.
+                }
+                self.ordered_landscape.remove(&AttractorEntry {
+                    id,
+                    energy: old_energy,
+                });
+                occupied.insert(energy);
             }
-            self.ordered_landscape.remove(&AttractorEntry {
-                id,
-                energy: old_energy,
-            });
+            std::collections::hash_map::Entry::Vacant(vacant) => {
+                vacant.insert(energy);
+            }
         }
-        self.id_to_energy.insert(id, energy);
         self.ordered_landscape.insert(AttractorEntry { id, energy });
         #[cfg(debug_assertions)]
         self.debug_assert_consistent();
@@ -215,16 +223,19 @@ impl AttractorLandscape {
     /// Iterate attractors in ascending energy order.
     ///
     /// Deterministic iteration for CRATE-006 observer when building Ω.
+    #[inline]
     pub fn ascending_energy(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.ordered_landscape.iter().map(|e| e.id)
     }
 
     /// Number of registered attractors. O(1).
+    #[inline]
     pub fn attractor_count(&self) -> usize {
         self.ordered_landscape.len()
     }
 
     /// Registered energy of an attractor. O(1) via HashMap.
+    #[inline]
     pub fn energy_of(&self, id: NodeId) -> Option<f64> {
         self.id_to_energy.get(&id).copied()
     }

@@ -47,11 +47,10 @@ pub(crate) fn poly_sin(x: f64) -> f64 {
     }
     use core::f64::consts::FRAC_PI_2;
     // Standard two-part Cody-Waite from FDLIBM / glibc.
-    const C1: f64 = FRAC_PI_2;
-    const C2: f64 = 0.0;
-    let k = (x / FRAC_PI_2).round();
-    let y = (-k).mul_add(C2, (-k).mul_add(C1, x));
-    let octant = (k as i64).rem_euclid(4);
+    const INV_FRAC_PI_2: f64 = 2.0 / core::f64::consts::PI;
+    let k = (x * INV_FRAC_PI_2).round();
+    let y = (-k).mul_add(FRAC_PI_2, x);
+    let octant = (k as i64) & 3;
     let y2 = y * y;
     match octant {
         0 => sin_kernel(y, y2),
@@ -76,11 +75,10 @@ pub(crate) fn poly_cos(x: f64) -> f64 {
         return x.cos();
     }
     use core::f64::consts::FRAC_PI_2;
-    const C1: f64 = FRAC_PI_2;
-    const C2: f64 = 0.0;
-    let k = (x / FRAC_PI_2).round();
-    let y = (-k).mul_add(C2, (-k).mul_add(C1, x));
-    let octant = (k as i64).rem_euclid(4);
+    const INV_FRAC_PI_2: f64 = 2.0 / core::f64::consts::PI;
+    let k = (x * INV_FRAC_PI_2).round();
+    let y = (-k).mul_add(FRAC_PI_2, x);
+    let octant = (k as i64) & 3;
     let y2 = y * y;
     match octant {
         0 => cos_kernel(y, y2),
@@ -172,7 +170,7 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
             let amplitudes = &osc.amplitudes;
             // loop-invariant, hoisted
             // CRYSTAL: O5 — inevitable
-            for (g, grade_acc) in acc.iter_mut().enumerate().take(N_GRADES) {
+            for (g, grade_acc) in acc.iter_mut().enumerate() {
                 let a = amplitudes[g];
                 #[cfg(feature = "poly_trig")]
                 {
@@ -190,16 +188,11 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
         acc
     }
 
-    let chunk_count = oscs.len().div_ceil(DETERMINISTIC_CHUNK);
-    let mut partials = vec![[(0.0f64, 0.0f64, 0.0f64); N_GRADES]; chunk_count];
-    partials
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(chunk_idx, chunk_out)| {
-            let start = chunk_idx * DETERMINISTIC_CHUNK;
-            let end = (start + DETERMINISTIC_CHUNK).min(oscs.len());
-            *chunk_out = reduce_slice(&oscs[start..end]);
-        });
+    let mut partials: Vec<_> = oscs
+        .par_chunks(DETERMINISTIC_CHUNK)
+        .map(reduce_slice)
+        .collect();
+    let chunk_count = partials.len();
 
     let mut grade_totals = [(0.0f64, 0.0f64, 0.0f64); N_GRADES];
     let mut stride = 1usize;
@@ -223,7 +216,7 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
 
     let r_total: f64 = grade_totals
         .iter()
-        .map(|(sc, ss, sa)| sc.hypot(*ss) / (sa + EPS))
+        .map(|(sc, ss, sa)| (sc.mul_add(*sc, ss * ss)).sqrt() / (sa + EPS))
         .sum();
     #[allow(clippy::cast_precision_loss)]
     {
@@ -251,18 +244,18 @@ pub fn synchrony_order_hubs(network: &QuantumKuramotoNetwork, hub_indices: &[usi
     let inv_grade_count = 1.0 / N_GRADES as f64;
     // loop-invariant, hoisted
     // CRYSTAL: O30 — inevitable
-    for g in 0..N_GRADES {
-        let (mut sc, mut ss, mut sa) = (0.0f64, 0.0f64, 0.0f64);
-        for &idx in hub_indices {
-            if let Some(osc) = oscs.get(idx) {
-                let a = osc.amplitudes[g];
-                sc = a.mul_add(osc.phases[g].cos(), sc);
-                ss = a.mul_add(osc.phases[g].sin(), ss);
-                sa += a;
-            }
+    let mut acc = [(0.0f64, 0.0f64, 0.0f64); N_GRADES];
+    for osc in hub_indices.iter().filter_map(|&i| oscs.get(i)) {
+        for (g, (sc, ss, sa)) in acc.iter_mut().enumerate() {
+            *sc = osc.amplitudes[g].mul_add(osc.phases[g].cos(), *sc);
+            *ss = osc.amplitudes[g].mul_add(osc.phases[g].sin(), *ss);
+            *sa += osc.amplitudes[g];
         }
-        r_total += sc.hypot(ss) / (sa + EPS);
     }
+    r_total += acc
+        .iter()
+        .map(|(sc, ss, sa)| (sc.mul_add(*sc, ss * ss)).sqrt() / (sa + EPS))
+        .sum::<f64>();
     #[allow(clippy::cast_precision_loss)]
     {
         r_total * inv_grade_count
@@ -303,29 +296,21 @@ pub fn synchronized_cluster(network: &QuantumKuramotoNetwork, threshold: f64) ->
     let g_f = N_GRADES as f64;
 
     // Phase mean circular promediada over all the grades
-    let mut mean_cos = 0.0f64;
-    let mut mean_sin = 0.0f64;
-    for g in 0..N_GRADES {
-        let (sc, ss) = oscs.iter().fold((0.0f64, 0.0f64), |(sc, ss), osc| {
-            (sc + osc.phases[g].cos(), ss + osc.phases[g].sin())
-        });
-        mean_cos += sc / g_f;
-        mean_sin += ss / g_f;
-    }
+    let (sum_c, sum_s) = oscs.iter().fold((0.0f64, 0.0f64), |(mc, ms), osc| {
+        osc.phases
+            .iter()
+            .fold((mc, ms), |(c, s), &p| (c + p.cos(), s + p.sin()))
+    });
+    let mean_cos = sum_c / g_f;
+    let mean_sin = sum_s / g_f;
     let mean_phase = mean_sin.atan2(mean_cos);
-
-    let two_pi = 2.0 * core::f64::consts::PI;
 
     oscs.iter()
         .filter(|osc| {
             let avg_diff: f64 = (0..N_GRADES)
                 .map(|g| {
                     let raw = (osc.phases[g] - mean_phase).abs();
-                    if raw > core::f64::consts::PI {
-                        two_pi - raw
-                    } else {
-                        raw
-                    }
+                    core::f64::consts::PI - (raw - core::f64::consts::PI).abs()
                 })
                 .sum::<f64>()
                 / g_f;

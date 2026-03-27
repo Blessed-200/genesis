@@ -267,8 +267,8 @@ impl PhaseSemanticsEngine {
 
         for osc in &network.oscillators {
             let phase = wrap_phase(osc.primary_phase()).rem_euclid(TAU);
-            sum_cos += phase.cos();
-            sum_sin += phase.sin();
+            sum_cos = phase.cos().mul_add(1.0, sum_cos);
+            sum_sin = phase.sin().mul_add(1.0, sum_sin);
             self.phase_buf.push(phase);
             self.node_ids_buf.push(osc.node_id);
 
@@ -425,27 +425,28 @@ impl PhaseSemanticsEngine {
     fn refresh_traces(&mut self) {
         for entry in &mut self.entries {
             let same_marker = entry.trace.previous_marker == entry.state.marker;
-            let same_mask = (same_marker as u32).wrapping_neg();
             let next_duration = entry.trace.duration.saturating_add(1);
-            // CRYSTAL: O88 — inevitable
-            entry.trace.duration = (next_duration & same_mask) | (1_u32 & !same_mask);
-            entry.trace.previous_marker =
-                [entry.state.marker, entry.trace.previous_marker][same_marker as usize];
+            entry.trace.duration = if same_marker { next_duration } else { 1 };
+            entry.trace.previous_marker = entry.state.marker;
         }
     }
 
     fn build_tension_edges(&mut self, network: &QuantumKuramotoNetwork) {
         for &(a, b, _, _) in &network.coupling {
-            let state_a = self.node_semantic_state(a);
-            let state_b = self.node_semantic_state(b);
-            if state_a.marker != state_b.marker {
-                let divergence = wrapped_distance(state_a.phase, state_b.phase);
-                if divergence >= TENSION_DIVERGENCE_MIN {
-                    self.tension_edges.push(SemanticTensionEdge {
-                        node_a: a,
-                        node_b: b,
-                        divergence,
-                    });
+            let idx_a = self.entries.binary_search_by_key(&a, |e| e.state.node).ok();
+            let idx_b = self.entries.binary_search_by_key(&b, |e| e.state.node).ok();
+            if let (Some(ia), Some(ib)) = (idx_a, idx_b) {
+                let state_a = self.entries[ia].state;
+                let state_b = self.entries[ib].state;
+                if state_a.marker != state_b.marker {
+                    let divergence = wrapped_distance(state_a.phase, state_b.phase);
+                    if divergence >= TENSION_DIVERGENCE_MIN {
+                        self.tension_edges.push(SemanticTensionEdge {
+                            node_a: a,
+                            node_b: b,
+                            divergence,
+                        });
+                    }
                 }
             }
         }
@@ -555,7 +556,7 @@ fn assign_node_to_cluster(
         let divergence = wrapped_distance(entry.state.phase, neighbor.phase);
         if divergence <= RESONANCE_DIVERGENCE_MAX {
             nodes.push(dst);
-            coherence_sum += 1.0 - (divergence / PI).clamp(0.0, 1.0);
+            coherence_sum = (-divergence / PI).mul_add(1.0, coherence_sum + 1.0);
             count += 1.0;
         }
     }
@@ -765,23 +766,21 @@ fn local_phase_stats_indexed(
     for &neighbor_idx in &neighbors_flat[start..end] {
         let neighbor_phase = phases[neighbor_idx];
         let divergence = wrapped_distance(phase, neighbor_phase);
-        coherence_acc += 1.0 - (divergence / PI).clamp(0.0, 1.0);
+        coherence_acc = (-divergence / PI).mul_add(1.0, coherence_acc + 1.0);
         divergence_acc += divergence;
         sum_cos += neighbor_phase.cos();
         sum_sin += neighbor_phase.sin();
         count += 1;
     }
 
-    if count == 0 {
-        (1.0, 0.0, 0.0)
-    } else {
-        let count_f = count as f64;
-        (
-            coherence_acc / count_f,
-            divergence_acc / count_f,
-            wrap_phase(sum_sin.atan2(sum_cos)).rem_euclid(TAU),
-        )
-    }
+    let is_zero = (count == 0) as u64;
+    let nz = (is_zero ^ 1) as f64;
+    let count_f = (count as f64) + is_zero as f64;
+    (
+        nz * (coherence_acc / count_f) + is_zero as f64,
+        nz * (divergence_acc / count_f),
+        nz * wrap_phase(sum_sin.atan2(sum_cos)).rem_euclid(TAU),
+    )
 }
 
 fn dominant_and_entropy(entries: &[NodeSemanticEntry]) -> (SemanticMarker, f64) {
@@ -798,17 +797,14 @@ fn dominant_and_entropy(entries: &[NodeSemanticEntry]) -> (SemanticMarker, f64) 
     }
 
     let total = entries.len() as f64;
-    let inv_total = 1.0 / total;
-    // loop-invariant, hoisted
-    // CRYSTAL: O57 — inevitable
-    let mut entropy = 0.0;
+    let mut entropy_sum = 0.0;
     for count in counts {
-        if count == 0 {
-            continue;
+        if count != 0 {
+            let c = count as f64;
+            entropy_sum = c.ln().mul_add(c, entropy_sum);
         }
-        let p = count as f64 * inv_total;
-        entropy -= p * p.ln();
     }
+    let entropy = total.ln() - entropy_sum / total;
 
     let marker = match dominant_idx {
         0 => SemanticMarker::Certainty,

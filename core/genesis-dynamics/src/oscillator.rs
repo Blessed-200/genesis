@@ -141,8 +141,8 @@ impl QuantumOscillator {
     pub fn complex_state(&self, g: usize) -> (f64, f64) {
         debug_assert!(g < 5, "grado {g} fuera de rango [0,4]");
         let a = self.amplitudes[g];
-        let phi = self.phases[g];
-        (a * phi.cos(), a * phi.sin())
+        let (sin, cos) = self.phases[g].sin_cos();
+        (a * cos, a * sin)
     }
 
     /// Amplitud total del oscilador: norma euclidiana del vector de amplitudes.
@@ -157,10 +157,11 @@ impl QuantumOscillator {
     /// AX-ID: AXIOMA-006, AXIOMA-008
     #[inline]
     pub fn amplitude_norm(&self) -> f64 {
-        let sq: f64 = self
-            .amplitudes
-            .iter()
-            .fold(0.0, |acc, &a| a.mul_add(a, acc));
+        let a = &self.amplitudes;
+        let sq = a[0].mul_add(
+            a[0],
+            a[1].mul_add(a[1], a[2].mul_add(a[2], a[3].mul_add(a[3], a[4] * a[4]))),
+        );
         (sq / 5.0_f64).sqrt()
     }
 
@@ -185,7 +186,7 @@ impl QuantumOscillator {
     /// AX-ID: AXIOMA-006, AXIOMA-008, LEY_FUNDACIONAL §3.2
     #[inline]
     pub fn update_amplitude_from_fisher(&mut self, fisher_trace: f64) {
-        let a = (fisher_trace / Self::FISHER_TRACE_INITIAL).clamp(0.0, 1.0);
+        let a = fisher_trace.clamp(0.0, 1.0);
         self.amplitudes = [a; 5];
     }
 
