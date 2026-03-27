@@ -23,7 +23,8 @@ pub fn hodge_dual(value: &SparseCliffordVector) -> SparseCliffordVector {
     while mask != 0 {
         let i = mask.trailing_zeros() as usize;
         let k = i ^ PSEUDOSCALAR_INDEX;
-        out[k] += -value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);
+        let sign = -f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);
+        out[k] += value.coeffs[i] * sign;
         mask &= mask - 1;
     }
 
@@ -37,17 +38,7 @@ pub fn hodge_dual(value: &SparseCliffordVector) -> SparseCliffordVector {
 /// AX-ID: AXIOMA-001, H_estructura (LEY_FUNDACIONAL §3.1)
 #[must_use]
 pub fn hodge_undual(value: &SparseCliffordVector) -> SparseCliffordVector {
-    let mut out = [0.0_f64; TOTAL_BLADES];
-    let mut mask = value.active_mask;
-
-    while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        let k = i ^ PSEUDOSCALAR_INDEX;
-        out[k] += -value.coeffs[i] * f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);
-        mask &= mask - 1;
-    }
-
-    SparseCliffordVector::from_dense_buf(&out)
+    hodge_dual(value)
 }
 
 /// Scalar dual number `value + grad ε` for forward AD.
@@ -118,8 +109,12 @@ impl SparseDualVector {
                 max_abs_coeff_value = max_abs_coeff_value.max(abs);
             }
             let weight = crate::grade::CLIFFORD_NORM_WEIGHTS_F64[k];
-            clifford_norm_sq_value += dual.value * dual.value * weight;
-            clifford_norm_sq_grad += 2.0 * dual.value * dual.grad * weight;
+            clifford_norm_sq_value = dual
+                .value
+                .mul_add(dual.value * weight, clifford_norm_sq_value);
+            clifford_norm_sq_grad = dual
+                .value
+                .mul_add(2.0 * dual.grad * weight, clifford_norm_sq_grad);
         }
 
         Self {
@@ -144,9 +139,9 @@ impl From<SparseCliffordVector> for SparseDualVector {
             value: 0.0,
             grad: 0.0,
         }; TOTAL_BLADES];
-        for (idx, coeff) in value.coeffs.into_iter().enumerate() {
-            coeffs[idx] = Dual {
-                value: coeff,
+        for i in 0..TOTAL_BLADES {
+            coeffs[i] = Dual {
+                value: value.coeffs[i],
                 grad: 0.0,
             };
         }
@@ -208,11 +203,12 @@ pub fn geometric_product_dual(
             let rhs_coeff = rhs.coeffs[rhs_index];
             let sign = f64::from(sign_row[rhs_index]);
 
-            result[result_index].value += sign * (lhs_coeff.value * rhs_coeff.value);
-            result[result_index].grad += sign
-                * lhs_coeff
-                    .grad
-                    .mul_add(rhs_coeff.value, lhs_coeff.value * rhs_coeff.grad);
+            result[result_index].value =
+                (lhs_coeff.value * rhs_coeff.value).mul_add(sign, result[result_index].value);
+            let inner = lhs_coeff
+                .grad
+                .mul_add(rhs_coeff.value, lhs_coeff.value * rhs_coeff.grad);
+            result[result_index].grad = inner.mul_add(sign, result[result_index].grad);
 
             rhs_mask &= rhs_mask - 1;
         }

@@ -82,9 +82,8 @@ pub(crate) const CLIFFORD_NORM_WEIGHTS_F64: [f64; TOTAL_BLADES] = {
 pub fn compute_clifford_norm_sq(coeffs: &[f64; 16]) -> f64 {
     let mut sum = 0.0f64;
     let mut comp = 0.0f64;
-    for i in 0..16 {
-        let coeff = coeffs[i];
-        let term = coeff * coeff * CLIFFORD_NORM_WEIGHTS_F64[i];
+    for (coeff, w) in coeffs.iter().zip(CLIFFORD_NORM_WEIGHTS_F64.iter()) {
+        let term = (coeff * coeff).mul_add(*w, 0.0);
         let y = term - comp;
         let t = sum + y;
         comp = (t - sum) - y;
@@ -112,8 +111,7 @@ pub fn compute_clifford_norm(coeffs: &[f64; 16]) -> f64 {
 ///
 /// AX-ID: AXIOMA-001
 pub fn grade_project(v: &SparseCliffordVector, grade: usize) -> SparseCliffordVector {
-    debug_assert!(grade <= 4, "grade {grade} > 4 is impossible in G(1,3)");
-    debug_assert!(grade <= 4, "grade > 4 viola G(1,3) invariante");
+    debug_assert!(grade <= 4, "grade > 4 violates G(1,3) invariant");
     #[allow(clippy::cast_possible_truncation)]
     let g = grade as u8; // grade ≤ 4 (G(1,3) tiene grados 0..4)
     let mut buf = [0.0f64; 16];
@@ -186,7 +184,7 @@ pub fn even_grade(v: &SparseCliffordVector) -> SparseCliffordVector {
     let mut mask = v.active_mask;
     while mask != 0 {
         let i = mask.trailing_zeros() as usize;
-        if GRADE_TABLE[i].is_multiple_of(2) {
+        if (GRADE_TABLE[i] & 1) == 0 {
             buf[i] = v.coeffs[i];
         }
         mask &= mask - 1;
@@ -225,11 +223,16 @@ pub fn reverse(v: &SparseCliffordVector) -> SparseCliffordVector {
     while mask != 0 {
         let i = mask.trailing_zeros() as usize;
         let grade = GRADE_TABLE[i] as usize;
-        let sign = REVERSE_SIGN[grade];
-        let val = v.coeffs[i] * f64::from(sign);
-        if val.abs() > COGNITIVE_PLANCK_CONSTANT {
-            buf[i] = val;
-        }
+        let val = if REVERSE_SIGN[grade] == 1 {
+            v.coeffs[i]
+        } else {
+            -v.coeffs[i]
+        };
+        buf[i] = if val.abs() > COGNITIVE_PLANCK_CONSTANT {
+            val
+        } else {
+            0.0
+        };
         mask &= mask - 1;
     }
     SparseCliffordVector::from_dense_buf(&buf)
@@ -260,8 +263,9 @@ pub const fn max_grade(v: &SparseCliffordVector) -> u8 {
         let g = GRADE_TABLE[i];
         // CRYSTAL: O66 — inevitable
         // CRYSTAL: FO57 — inevitable
-        let select_mask = ((g > best) as u8).wrapping_neg();
-        best = (best & !select_mask) | (g & select_mask);
+        if g > best {
+            best = g;
+        }
         mask &= mask - 1;
     }
     best
@@ -279,8 +283,9 @@ pub const fn min_grade(v: &SparseCliffordVector) -> u8 {
         let g = GRADE_TABLE[i];
         // CRYSTAL: O67 — inevitable
         // CRYSTAL: FO58 — inevitable
-        let select_mask = ((g < best) as u8).wrapping_neg();
-        best = (best & !select_mask) | (g & select_mask);
+        if g < best {
+            best = g;
+        }
         mask &= mask - 1;
     }
     best

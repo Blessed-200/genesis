@@ -1,3 +1,28 @@
+## 0.8 genesis-math branchless/indexed micro-optimization sweep (2026-03-27)
+
+### Root cause
+- Several `genesis-math` hot-path functions still use avoidable bounds-checked accessors, branchy sign/parity selection, and non-FMA accumulations in tight loops.
+- Dense/sparse kernels include small control-flow patterns that increase instruction count without changing semantics for validated index domains.
+
+### File-level actions
+1. `core/genesis-math/src/basis.rs`
+   - Remove fallback indexing in hot accessors in favor of direct indexed loads under existing invariants.
+   - Replace branchy sign/parity computations with branchless bit arithmetic.
+   - Route prefix parity query to prebuilt Fenwick tree slot lookup.
+2. `core/genesis-math/src/dual.rs`, `core/genesis-math/src/grade.rs`, `core/genesis-math/src/multivector.rs`
+   - Apply FMA-based accumulations and simplified branchless coefficient/sign handling in hot loops.
+   - Simplify dual conversion loops to fixed-range indexed writes.
+3. `core/genesis-math/src/product.rs`, `core/genesis-math/src/semantic.rs`, `core/genesis-math/src/experimental/kernel_dense_g13.rs`
+   - Convert product accumulations to explicit `mul_add` forms and simplify branch structure in dense/sparse dispatch loops while preserving G(1,3) semantics.
+
+### Validation
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
+### Complexity/cache target
+- Preserve O(16²) dense and active-mask sparse complexities while reducing branch pressure and improving arithmetic fusion on floating-point accumulation paths.
+
 # GÉNESIS HPC Root-Cause Remediation Plan (Phase 1)
 
 ## 0.5 genesis-types micro-optimizations and branch simplification (2026-03-26)

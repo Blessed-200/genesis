@@ -34,17 +34,12 @@ pub fn dense_geometric_product_g13(a: &DenseBuf, b: &DenseBuf) -> DenseBuf {
     // HOT PATH: O(16²), dense baseline kernel for G(1,3).
     // Use `i`-outer / `j`-inner traversal so both `CAYLEY_SIGN[i][j]` and `b[j]`
     // are consumed sequentially; only the `out[i ^ j]` scatter remains.
-    let mut i = 0usize;
-    while i < TOTAL_BLADES {
+    for i in 0..TOTAL_BLADES {
         let a_i = a[i];
         let sign_row = &CAYLEY_SIGN_F64[i];
-
-        let mut j = 0usize;
-        while j < TOTAL_BLADES {
+        for j in 0..TOTAL_BLADES {
             out[i ^ j] += a_i * b[j] * sign_row[j];
-            j += 1;
         }
-        i += 1;
     }
 
     out

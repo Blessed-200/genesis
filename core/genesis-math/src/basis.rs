@@ -58,24 +58,6 @@ pub(crate) const SIGNATURE_TABLE: [i8; TOTAL_BLADES] =
 pub(crate) const FENWICK_TABLE: [i32; TOTAL_BLADES + 1] =
     [0, 0, 1, 1, 2, 1, 1, 0, 4, 1, 1, 0, 2, 0, 1, 1, 8];
 
-/// Prefix LUT: `ODD_GRADE_PREFIX_TABLE[k]` = odd-grade blade count in [0, k].
-///
-/// For fixed `TOTAL_BLADES = 16`, direct lookup is strictly lower latency than
-/// Fenwick traversal and remains fully deterministic.
-pub(crate) const ODD_GRADE_PREFIX_TABLE: [i32; TOTAL_BLADES] = {
-    let mut out = [0i32; TOTAL_BLADES];
-    let mut i = 0usize;
-    let mut acc = 0i32;
-    while i < TOTAL_BLADES {
-        // loop-invariant, hoisted
-        // CRYSTAL: O34 — inevitable
-        acc += (GRADE_TABLE[i] & 1) as i32;
-        out[i] = acc;
-        i += 1;
-    }
-    out
-};
-
 // ── CliffordBasis struct ──────────────────────────────────────────────────────
 
 /// Canonical G(1,3) basis descriptor.
@@ -150,7 +132,7 @@ impl CliffordBasis {
     #[inline]
     pub fn grade_of(&self, i: usize) -> u8 {
         debug_assert!(i <= MAX_BLADE_MASK);
-        self.grade.get(i).copied().unwrap_or(0)
+        self.grade[i]
     }
 
     /// Returns the exact metric square \(e_I^2\in\{-1,+1\}\) for blade `I`.
@@ -172,7 +154,7 @@ impl CliffordBasis {
     #[inline(always)]
     pub fn blade_square(&self, i: usize) -> i8 {
         debug_assert!(i <= MAX_BLADE_MASK);
-        self.signature.get(i).copied().unwrap_or(0)
+        self.signature[i]
     }
 
     /// Returns the metric square \(e_I^2\) as `f64` for numeric kernels.
@@ -203,8 +185,13 @@ impl CliffordBasis {
     #[inline]
     pub fn fenwick_prefix_parity(&self, blade_idx: usize) -> i32 {
         debug_assert!(blade_idx < TOTAL_BLADES);
-        let safe_idx = blade_idx.min(TOTAL_BLADES - 1);
-        ODD_GRADE_PREFIX_TABLE[safe_idx]
+        let mut idx = blade_idx + 1;
+        let mut sum = 0i32;
+        while idx > 0 {
+            sum += self.fenwick_parity_tree[idx];
+            idx &= idx - 1;
+        }
+        sum
     }
 
     /// Computes e_I² as `i8` — `const fn` used during compile-time table build.
@@ -213,14 +200,10 @@ impl CliffordBasis {
         let swap_pairs = (k * (k - 1)) >> 1;
         // CRYSTAL: O37 — inevitable
         // CRYSTAL: O38 — inevitable
-        let reorder_sign: i8 = if (swap_pairs & 1) == 0 { 1 } else { -1 };
+        let reorder_sign: i8 = 1 - (((swap_pairs & 1) as i8) << 1);
         let spatial_bits = (blade >> 1) & 0b111;
         let spatial_count = spatial_bits.count_ones();
-        let metric_sign: i8 = if spatial_count.is_multiple_of(2) {
-            1
-        } else {
-            -1
-        };
+        let metric_sign: i8 = 1 - (((spatial_count & 1) as i8) << 1);
         reorder_sign * metric_sign
     }
 

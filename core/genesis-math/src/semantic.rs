@@ -45,10 +45,9 @@ pub fn wedge(lhs: &SparseCliffordVector, rhs: &SparseCliffordVector) -> SparseCl
         let mut mask_rhs = rhs.active_mask;
         while mask_rhs != 0 {
             let j = mask_rhs.trailing_zeros() as usize;
-            let coeff_rhs = rhs.coeffs[j];
             if (i & j) == 0 {
                 let k = i ^ j;
-                out[k] += coeff_lhs * coeff_rhs * f64::from(sign_row[j]);
+                out[k] = coeff_lhs.mul_add(rhs.coeffs[j] * f64::from(sign_row[j]), out[k]);
             }
             mask_rhs &= mask_rhs - 1;
         }
@@ -94,7 +93,7 @@ pub fn left_contraction(
                 let k = i ^ j;
                 let target_grade = grade_j - grade_i;
                 if GRADE_TABLE[k] == target_grade {
-                    out[k] += coeff_lhs * coeff_rhs * f64::from(sign_row[j]);
+                    out[k] = coeff_lhs.mul_add(coeff_rhs * f64::from(sign_row[j]), out[k]);
                 }
             }
             mask_rhs &= mask_rhs - 1;
@@ -141,7 +140,7 @@ pub fn right_contraction(
                 let k = i ^ j;
                 let target_grade = grade_i - grade_j;
                 if GRADE_TABLE[k] == target_grade {
-                    out[k] += coeff_lhs * coeff_rhs * f64::from(sign_row[j]);
+                    out[k] = coeff_lhs.mul_add(coeff_rhs * f64::from(sign_row[j]), out[k]);
                 }
             }
             mask_rhs &= mask_rhs - 1;
@@ -205,11 +204,12 @@ pub fn commutator(a: &SparseCliffordVector, b: &SparseCliffordVector) -> SparseC
 
     let mut out = [0.0_f64; TOTAL_BLADES];
 
+    let half = 0.5;
     if let Some(ab) = sparse_geometric_product(a, b) {
         let mut mask = ab.active_mask;
         while mask != 0 {
             let i = mask.trailing_zeros() as usize;
-            out[i] += 0.5 * ab.coeffs[i];
+            out[i] += half * ab.coeffs[i];
             mask &= mask - 1;
         }
     }
@@ -218,7 +218,7 @@ pub fn commutator(a: &SparseCliffordVector, b: &SparseCliffordVector) -> SparseC
         let mut mask = ba.active_mask;
         while mask != 0 {
             let i = mask.trailing_zeros() as usize;
-            out[i] -= 0.5 * ba.coeffs[i];
+            out[i] -= half * ba.coeffs[i];
             mask &= mask - 1;
         }
     }
@@ -323,7 +323,8 @@ pub fn exp_bivector(b: &SparseCliffordVector) -> Option<SparseCliffordVector> {
         let mut m = b.active_mask;
         while m != 0 {
             let i = m.trailing_zeros() as usize;
-            out[i] = sinc_t * b.coeffs[i];
+            let scale = sinc_t;
+            out[i] = scale * b.coeffs[i];
             m &= m - 1;
         }
     } else {
@@ -334,7 +335,8 @@ pub fn exp_bivector(b: &SparseCliffordVector) -> Option<SparseCliffordVector> {
         let mut m = b.active_mask;
         while m != 0 {
             let i = m.trailing_zeros() as usize;
-            out[i] = sinhc_t * b.coeffs[i];
+            let scale = sinhc_t;
+            out[i] = scale * b.coeffs[i];
             m &= m - 1;
         }
     }
@@ -424,7 +426,8 @@ pub fn slerp_rotor(
     let mut m = log_delta.active_mask;
     while m != 0 {
         let i = m.trailing_zeros() as usize;
-        scaled[i] = t * log_delta.coeffs[i];
+        let scale = t;
+        scaled[i] = scale * log_delta.coeffs[i];
         m &= m - 1;
     }
 
