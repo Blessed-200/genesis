@@ -37,18 +37,13 @@ impl PersistentUnionFind {
     }
 
     pub fn add_node(&mut self) {
-        let idx = self.num_nodes;
-        if idx >= self.parent.len() {
-            self.parent.push(idx as u32);
-            self.rank.push(0);
-        } else {
-            self.parent[idx] = idx as u32;
-            self.rank[idx] = 0;
-        }
+        self.parent.push(self.num_nodes as u32);
+        self.rank.push(0);
         self.num_nodes += 1;
         self.components += 1;
     }
 
+    #[inline]
     pub fn find(&mut self, x: usize) -> usize {
         // Pass 1: walk to root.
         let mut root = x;
@@ -289,6 +284,7 @@ fn xor_columns_opt(a: Column, b: &Column, num_edges: usize) -> Column {
     }
 }
 
+#[inline]
 fn xor_columns(a: Column, b: &Column, num_edges: usize) -> Column {
     match (a, b) {
         (Column::Sparse(sa), Column::Sparse(sb)) => {
@@ -386,6 +382,7 @@ fn low_col(col: &Column) -> Option<u32> {
     }
 }
 
+#[inline]
 fn first_set_bit(bm: &[u64]) -> Option<u32> {
     for (i, &w) in bm.iter().enumerate() {
         if w != 0 {

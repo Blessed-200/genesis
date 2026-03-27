@@ -89,12 +89,13 @@ impl Z2Matrix {
             let pivot_bit = 1u64 << (c % 64);
 
             let mut pivot = None;
+            let mut idx = r * wpr + pivot_word;
             for row in r..self.rows {
-                let idx = row * wpr + pivot_word;
                 if (self.data[idx] & pivot_bit) != 0 {
                     pivot = Some(row);
                     break;
                 }
+                idx += wpr;
             }
 
             if let Some(p) = pivot {
@@ -114,8 +115,9 @@ impl Z2Matrix {
                     }
                 }
 
-                let pivot_start = r * wpr;
-                pivot_row_buf.copy_from_slice(&self.data[pivot_start..pivot_start + wpr]);
+                let start = r * wpr;
+                let src = &self.data[start..][..wpr];
+                pivot_row_buf.copy_from_slice(src);
 
                 for row in 0..self.rows {
                     if row == r {
@@ -123,13 +125,31 @@ impl Z2Matrix {
                     }
                     let row_pivot_idx = row * wpr + pivot_word;
                     if (self.data[row_pivot_idx] & pivot_bit) != 0 {
-                        let dst = row * wpr;
-                        let dst_row = &mut self.data[dst + pivot_word..dst + wpr];
-                        let pivot_tail = &pivot_row_buf[pivot_word..wpr];
-                        for (dst_word, pivot_word_value) in
-                            dst_row.iter_mut().zip(pivot_tail.iter())
-                        {
-                            *dst_word ^= *pivot_word_value;
+                        let base = row * wpr + pivot_word;
+                        let len = wpr - pivot_word;
+                        let mut i = 0;
+                        while i + 4 <= len {
+                            // SAFETY: `base + i + k < base + len <= row * wpr + wpr`, so all
+                            // indices are within the current row and corresponding pivot tail.
+                            unsafe {
+                                *self.data.get_unchecked_mut(base + i) ^=
+                                    *pivot_row_buf.get_unchecked(pivot_word + i);
+                                *self.data.get_unchecked_mut(base + i + 1) ^=
+                                    *pivot_row_buf.get_unchecked(pivot_word + i + 1);
+                                *self.data.get_unchecked_mut(base + i + 2) ^=
+                                    *pivot_row_buf.get_unchecked(pivot_word + i + 2);
+                                *self.data.get_unchecked_mut(base + i + 3) ^=
+                                    *pivot_row_buf.get_unchecked(pivot_word + i + 3);
+                            }
+                            i += 4;
+                        }
+                        while i < len {
+                            // SAFETY: `i < len` implies `base + i` and `pivot_word + i` are in bounds.
+                            unsafe {
+                                *self.data.get_unchecked_mut(base + i) ^=
+                                    *pivot_row_buf.get_unchecked(pivot_word + i);
+                            }
+                            i += 1;
                         }
                     }
                 }
@@ -208,9 +228,9 @@ impl H1Cache {
         }
 
         let mut node = x;
-        while self.uf_parent[node] != node {
+        while self.uf_parent[node] != root {
             let parent = self.uf_parent[node];
-            self.uf_parent[node] = root;
+            self.uf_parent[node] = self.uf_parent[parent];
             node = parent;
         }
 
@@ -226,15 +246,11 @@ impl H1Cache {
 
         let rank_a = self.uf_rank[ra];
         let rank_b = self.uf_rank[rb];
-        match rank_a.cmp(&rank_b) {
-            std::cmp::Ordering::Less => {
-                self.uf_parent[ra] = rb;
-            }
-            std::cmp::Ordering::Greater => {
-                self.uf_parent[rb] = ra;
-            }
-            std::cmp::Ordering::Equal => {
-                self.uf_parent[rb] = ra;
+        if rank_a < rank_b {
+            self.uf_parent[ra] = rb;
+        } else {
+            self.uf_parent[rb] = ra;
+            if rank_a == rank_b {
                 self.uf_rank[ra] = self.uf_rank[ra].saturating_add(1);
             }
         }
@@ -401,8 +417,8 @@ fn build_d2(complex: &RipsComplex, ws: &mut HomologyWorkspace, n_v: usize) -> Z2
                 (edge_end, edge_start)
             };
             if let Some(table) = dense_lookup.as_ref() {
-                let idx = min_vertex * n_v + max_vertex;
-                let row = table[idx];
+                let base = min_vertex * n_v;
+                let row = table[base + max_vertex];
                 if row != u32::MAX {
                     boundary_matrix.set(row as usize, col, true);
                 }

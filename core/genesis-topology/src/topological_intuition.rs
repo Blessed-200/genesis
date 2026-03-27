@@ -139,13 +139,10 @@ impl<'a> TopologicalIntuition<'a> {
         }
 
         let now = h1_state.inference_step();
-        let mut max_lifetime = 0.0;
-        for cycle in cycles {
-            let lifetime = persistent_cycle_lifetime(now, cycle);
-            if lifetime > max_lifetime {
-                max_lifetime = lifetime;
-            }
-        }
+        let max_lifetime = cycles
+            .iter()
+            .map(|cycle| persistent_cycle_lifetime(now, cycle))
+            .fold(0.0, f64::max);
         if max_lifetime <= 0.0 {
             return;
         }
@@ -274,11 +271,10 @@ impl<'a> TopologicalIntuition<'a> {
     fn detect_hierarchical_hubs(&self, out: &mut SmallVec<[TopologicalHypothesis; 32]>) {
         let graph = self.manifold.graph_ref();
 
-        let mut max_degree = 0usize;
-        for id in graph.nodes() {
-            let degree = graph.neighbors(id).count();
-            max_degree = max_degree.max(degree);
-        }
+        let max_degree = graph
+            .nodes()
+            .map(|id| graph.neighbors(id).count())
+            .fold(0, usize::max);
         if max_degree == 0 {
             return;
         }
@@ -307,13 +303,9 @@ impl<'a> TopologicalIntuition<'a> {
 }
 
 fn cmp_nodes(left: &[NodeId], right: &[NodeId]) -> core::cmp::Ordering {
-    for (lhs, rhs) in left.iter().zip(right.iter()) {
-        match lhs.get().cmp(&rhs.get()) {
-            core::cmp::Ordering::Equal => {}
-            order => return order,
-        }
-    }
-    left.len().cmp(&right.len())
+    left.iter()
+        .map(|n| n.get())
+        .cmp(right.iter().map(|n| n.get()))
 }
 
 const fn kind_rank(kind: HypothesisKind) -> usize {
@@ -332,22 +324,14 @@ fn insert_seed(
     id: NodeId,
     degree: usize,
 ) {
-    let mut insert_pos = 0usize;
-    while insert_pos < seeds.len() {
-        let (existing_id, existing_degree) = seeds[insert_pos];
-        if degree > existing_degree || (degree == existing_degree && id.get() < existing_id.get()) {
-            break;
-        }
-        insert_pos += 1;
-    }
+    let pos = seeds
+        .iter()
+        .position(|&(eid, edeg)| degree > edeg || (degree == edeg && id.get() < eid.get()))
+        .unwrap_or(seeds.len());
 
-    if insert_pos >= CURVATURE_SEED_LIMIT {
-        return;
-    }
-
-    seeds.insert(insert_pos, (id, degree));
-    if seeds.len() > CURVATURE_SEED_LIMIT {
-        seeds.pop();
+    if pos < CURVATURE_SEED_LIMIT {
+        seeds.insert(pos, (id, degree));
+        seeds.truncate(CURVATURE_SEED_LIMIT);
     }
 }
 
@@ -358,17 +342,17 @@ fn sorted_neighbors(graph: &HnswGraph, id: NodeId) -> Vec<NodeId> {
 }
 
 fn intersection_count(left: &[NodeId], right: &[NodeId]) -> usize {
-    let mut left_idx = 0usize;
-    let mut right_idx = 0usize;
-    let mut shared = 0usize;
-    while left_idx < left.len() && right_idx < right.len() {
-        match left[left_idx].cmp(&right[right_idx]) {
-            core::cmp::Ordering::Less => left_idx += 1,
-            core::cmp::Ordering::Greater => right_idx += 1,
+    let mut shared = 0;
+    let (mut it_l, mut it_r) = (left.iter(), right.iter());
+    let (mut l, mut r) = (it_l.next(), it_r.next());
+    while let (Some(a), Some(b)) = (l, r) {
+        match a.cmp(b) {
+            core::cmp::Ordering::Less => l = it_l.next(),
+            core::cmp::Ordering::Greater => r = it_r.next(),
             core::cmp::Ordering::Equal => {
                 shared += 1;
-                left_idx += 1;
-                right_idx += 1;
+                l = it_l.next();
+                r = it_r.next();
             }
         }
     }
@@ -406,13 +390,19 @@ fn local_hyperbolic_delta(graph: &HnswGraph, nodes: [NodeId; 4]) -> Option<f64> 
     // loop-invariant, hoisted
     // CRYSTAL: O61, O62, O63, O64, FO44 — inevitable
 
-    let mut sums = [
-        geometric_distance(a, b) + geometric_distance(c, d),
-        geometric_distance(a, c) + geometric_distance(b, d),
-        geometric_distance(a, d) + geometric_distance(b, c),
-    ];
-    sums.sort_by(f64::total_cmp);
-    Some(((sums[2] - sums[1]) * 0.5).max(0.0))
+    let mut x = geometric_distance(a, b) + geometric_distance(c, d);
+    let mut y = geometric_distance(a, c) + geometric_distance(b, d);
+    let mut z = geometric_distance(a, d) + geometric_distance(b, c);
+    if x.total_cmp(&y).is_gt() {
+        core::mem::swap(&mut x, &mut y);
+    }
+    if y.total_cmp(&z).is_gt() {
+        core::mem::swap(&mut y, &mut z);
+    }
+    if x.total_cmp(&y).is_gt() {
+        core::mem::swap(&mut x, &mut y);
+    }
+    Some(((z - y) * 0.5).max(0.0))
 }
 
 fn local_triangle_density(graph: &HnswGraph, neighbors: &[NodeId]) -> f64 {
@@ -420,15 +410,16 @@ fn local_triangle_density(graph: &HnswGraph, neighbors: &[NodeId]) -> f64 {
         return 0.0;
     }
 
-    let possible = neighbors.len() * (neighbors.len() - 1) / 2;
+    let n = neighbors.len();
+    let possible = n * (n - 1) / 2;
     if possible == 0 {
         return 0.0;
     }
 
     let mut triangles = 0usize;
-    for i in 0..neighbors.len() {
-        for j in i + 1..neighbors.len() {
-            if are_adjacent(graph, neighbors[i], neighbors[j]) {
+    for (i, &u) in neighbors.iter().enumerate() {
+        for &v in &neighbors[i + 1..] {
+            if are_adjacent(graph, u, v) {
                 triangles += 1;
             }
         }

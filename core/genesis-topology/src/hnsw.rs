@@ -123,11 +123,7 @@ impl<const CAP: usize> FixedHeap<CAP> {
             return None;
         }
         let best = self.data[0];
-        let mut i = 1;
-        while i < self.len {
-            self.data[i - 1] = self.data[i];
-            i += 1;
-        }
+        self.data.copy_within(1..self.len, 0);
         self.len -= 1;
         Some(best)
     }
@@ -142,16 +138,16 @@ impl<const CAP: usize> FixedHeap<CAP> {
         }
         let mut pos = self.len;
         if self.len < self.limit {
-            self.data[pos] = (dist, idx);
             self.len += 1;
         } else {
             pos = self.limit - 1;
-            self.data[pos] = (dist, idx);
         }
-        while pos > 0 && compare_dist_idx(self.data[pos], self.data[pos - 1]).is_lt() {
-            self.data.swap(pos, pos - 1);
+        let item = (dist, idx);
+        while pos > 0 && compare_dist_idx(item, self.data[pos - 1]).is_lt() {
+            self.data[pos] = self.data[pos - 1];
             pos -= 1;
         }
+        self.data[pos] = item;
         true
     }
 
@@ -168,11 +164,8 @@ fn compare_dist_idx(lhs: (f32, u32), rhs: (f32, u32)) -> Ordering {
 #[inline]
 fn ordered_f64_bits(value: f64) -> u64 {
     let bits = value.to_bits();
-    if (bits & (1_u64 << 63)) != 0 {
-        !bits
-    } else {
-        bits | (1_u64 << 63)
-    }
+    let mask = ((bits as i64) >> 63) as u64;
+    bits ^ (mask | (1_u64 << 63))
 }
 
 fn slab_distance_scalar(
@@ -184,9 +177,11 @@ fn slab_distance_scalar(
     let block_base = block * BLOCK_STRIDE;
     let mut lane = 0;
     while lane < SLAB_LANES {
-        let mut acc = 0.0_f64;
-        let mut dim0 = 0.0_f32;
-        let mut d = 0;
+        // SAFETY: `block_base + lane` is in bounds for the same reason as the loop below.
+        let dim0 = unsafe { *slab_ptr.add(block_base + lane) };
+        let diff0 = f64::from(query_f32[0] - dim0);
+        let mut acc = METRIC_WEIGHTS[0] * diff0 * diff0;
+        let mut d = 1;
         while d < SLAB_DIM {
             let offset = block_base + d * SLAB_LANES + lane;
             // SAFETY: slab storage is 64-byte aligned by construction, `block`
@@ -194,11 +189,8 @@ fn slab_distance_scalar(
             // and `offset < blocks * BLOCK_STRIDE` for all `d < SLAB_DIM` and
             // `lane < SLAB_LANES`. Search reads through `&self`, so no mutable alias exists.
             let v = unsafe { *slab_ptr.add(offset) };
-            if d == 0 {
-                dim0 = v;
-            }
             let diff = f64::from(query_f32[d] - v);
-            acc += METRIC_WEIGHTS[d] * diff * diff;
+            acc = METRIC_WEIGHTS[d].mul_add(diff * diff, acc);
             d += 1;
         }
         out[lane] = if dim0.is_nan() || !acc.is_finite() {
@@ -730,7 +722,7 @@ impl NodeAdj {
         }
         if let Some(upper) = self.upper.as_mut() {
             if let Some(neighbors) = upper.get_mut(layer - 1) {
-                if let Some(pos) = neighbors.iter().position(|&idx| idx == neighbor) {
+                if let Ok(pos) = neighbors.binary_search(&neighbor) {
                     neighbors.remove(pos);
                     return true;
                 }
@@ -1357,7 +1349,7 @@ impl HnswGraph {
         // Extract overflow IDs before mutating adjacency (requires &mut self).
         let drop: SmallVec<[u32; M0]> = scored[m_max..]
             .iter()
-            .map(|&packed| (packed & 0xFFFF_FFFF_FFFF_FFFF) as u32)
+            .map(|&packed| packed as u32)
             .collect();
 
         for nb_idx_u32 in drop {
@@ -1472,17 +1464,14 @@ impl HnswGraph {
                             let block = group.block as usize;
                             let base = block * SLAB_LANES;
                             let mut effective_mask = group.lane_mask;
-                            let mut lane_u8 = 0_u8;
-                            while lane_u8 < SLAB_LANES as u8 {
-                                let lane_bit = 1_u8 << lane_u8;
-                                if (effective_mask & lane_bit) != 0 {
-                                    let nb_idx = base + usize::from(lane_u8);
-                                    if nb_idx >= self.nodes.len() || visited[nb_idx] == search_epoch
-                                    {
-                                        effective_mask &= !lane_bit;
-                                    }
+                            let mut m = effective_mask;
+                            while m != 0 {
+                                let lane_u8 = m.trailing_zeros() as u8;
+                                let nb_idx = base + usize::from(lane_u8);
+                                if nb_idx >= self.nodes.len() || visited[nb_idx] == search_epoch {
+                                    effective_mask &= !(1_u8 << lane_u8);
                                 }
-                                lane_u8 += 1;
+                                m &= m - 1;
                             }
                             if effective_mask == 0 {
                                 continue;
@@ -1490,21 +1479,19 @@ impl HnswGraph {
                             debug_assert!(block < slab_blocks, "block in bounds");
                             debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
                             let distances = slab_distance(slab_ptr, block, &query_f32);
-                            let mut lane = 0;
-                            while lane < SLAB_LANES {
-                                let lane_bit = 1_u8 << lane;
-                                if (effective_mask & lane_bit) != 0 {
-                                    let nb_idx = base + lane;
-                                    if nb_idx >= self.nodes.len() {
-                                        break;
-                                    }
-                                    visited[nb_idx] = search_epoch;
-                                    let d = distances[lane];
-                                    if results.push_or_replace(d, nb_idx as u32) {
-                                        candidates.push_or_replace(d, nb_idx as u32);
-                                    }
+                            let mut m = effective_mask;
+                            while m != 0 {
+                                let lane = m.trailing_zeros() as usize;
+                                let nb_idx = base + lane;
+                                if nb_idx >= self.nodes.len() {
+                                    break;
                                 }
-                                lane += 1;
+                                visited[nb_idx] = search_epoch;
+                                let d = distances[lane];
+                                if results.push_or_replace(d, nb_idx as u32) {
+                                    candidates.push_or_replace(d, nb_idx as u32);
+                                }
+                                m &= m - 1;
                             }
                         }
                     } else {

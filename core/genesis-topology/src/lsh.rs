@@ -61,11 +61,7 @@ const PROJ_COEFFS: [[f64; 16]; TOTAL_PROJECTIONS] = {
 
 #[inline]
 const fn seed_sign(seed: u64) -> f64 {
-    if (seed >> 63) == 0 {
-        1.0
-    } else {
-        -1.0
-    }
+    1.0 - 2.0 * ((seed >> 63) as f64)
 }
 
 /// One LSH table: sorted (`bucket_id`, Vec<NodeId>) pairs, binary searched.
@@ -194,10 +190,10 @@ impl CliffordHashTable {
     fn hash_packed_bivector(&self, packed_bivector: &[f64; 6], t: usize) -> u32 {
         let start = t * N_PROJECTIONS;
         let mut bits: u32 = 0;
+        let coeffs = &self.proj_bivector_coeffs;
         for p in 0..N_PROJECTIONS {
-            if dot_bivector_lanes(packed_bivector, &self.proj_bivector_coeffs[start + p]) >= 0.0 {
-                bits |= 1 << p;
-            }
+            let dot = dot_bivector_lanes(packed_bivector, &coeffs[start + p]);
+            bits |= ((dot >= 0.0) as u32) << p;
         }
         bits
     }

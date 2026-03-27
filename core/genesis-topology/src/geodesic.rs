@@ -15,8 +15,7 @@ use genesis_math::{
 /// and all topological operations.
 ///
 /// AX-ID: AXIOMA-013, AXIOMA-014, LEY_FUNDACIONAL §3.6
-#[allow(clippy::inline_always)]
-#[inline(always)]
+#[inline]
 pub fn geometric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) -> f64 {
     fast_metric_distance(a, b)
 }
@@ -42,8 +41,6 @@ pub fn bivector_interaction(a: &SparseCliffordVector, b: &SparseCliffordVector) 
 ///
 /// AX-ID: AXIOMA-013, AXIOMA-014
 #[deprecated(note = "usar geometric_distance(), que es una métrica verdadera")]
-#[allow(clippy::inline_always)]
-#[inline(always)]
 pub fn fast_bivector_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) -> f64 {
     geometric_distance(a, b)
 }
@@ -211,6 +208,19 @@ mod tests {
             (d_sparse - d_dense).abs() < 1e-12,
             "fast_bivector_distance_from_dense debe coincidir con geometric_distance: \
              sparse={d_sparse:.12}, dense={d_dense:.12}"
+        );
+    }
+
+    #[test]
+    fn bivector_interaction_preserves_spacelike_magnitude() {
+        let e0 = make_vec(&[(0b0001, 1.0)]);
+        let e1 = make_vec(&[(0b0010, 1.0)]);
+
+        let interaction = bivector_interaction(&e0, &e1);
+
+        assert!(
+            (interaction - 1.0).abs() < 1e-12,
+            "spacelike bivector magnitude must remain distinguishable from zero: {interaction}"
         );
     }
 }
