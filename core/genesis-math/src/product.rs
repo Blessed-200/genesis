@@ -203,7 +203,7 @@ fn geometric_product_scalar_sparse(
         while mask_b != 0 {
             let j = mask_b.trailing_zeros() as usize;
             let k = i ^ j;
-            result_buf[k] += coef_a * b_coeffs[j] * sign_row[j];
+            result_buf[k] = (coef_a * sign_row[j]).mul_add(b_coeffs[j], result_buf[k]);
             mask_b &= mask_b - 1;
         }
         mask_a &= mask_a - 1;
@@ -225,7 +225,7 @@ fn geometric_product_scalar_dense(
         let sign_row = &CAYLEY_SIGN_F64[i];
         for j in 0..TOTAL_BLADES {
             let k = i ^ j;
-            result_buf[k] += coef_a * b_coeffs[j] * sign_row[j];
+            result_buf[k] = (coef_a * sign_row[j]).mul_add(b_coeffs[j], result_buf[k]);
         }
     }
 }

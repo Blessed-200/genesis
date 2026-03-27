@@ -130,7 +130,7 @@ pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetad
             active_mask |= 1u32 << k;
             // CRYSTAL: FO100 — inevitable
             max_abs_coeff = max_abs_coeff.max(abs);
-            let term = coeff * coeff * CLIFFORD_NORM_WEIGHTS_F64[k];
+            let term = (coeff * coeff).mul_add(CLIFFORD_NORM_WEIGHTS_F64[k], 0.0);
             let y_norm = term - comp_norm;
             let t_norm = clifford_norm_sq + y_norm;
             comp_norm = (t_norm - clifford_norm_sq) - y_norm;
@@ -291,7 +291,7 @@ impl SparseCliffordVector {
         let mut mask = self.active_mask;
         while mask != 0 {
             let i = mask.trailing_zeros() as usize;
-            sq += self.coeffs[i] * self.coeffs[i];
+            sq = self.coeffs[i].mul_add(self.coeffs[i], sq);
             mask &= mask - 1;
         }
         sq.sqrt()
@@ -496,14 +496,14 @@ impl SparseCliffordVector {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn dot_bivectors(&self, rhs: &Self) -> f64 {
-        // Grade-2 blade bitmasks in G(1,3) where GRADE_TABLE[i] == 2.
-        // Verified: popcount(3)=2, popcount(5)=2, popcount(6)=2,
-        //           popcount(9)=2, popcount(10)=2, popcount(12)=2.
-        const BIVEC_BLADES: [usize; 6] = [3, 5, 6, 9, 10, 12];
+        // Grade-2 blade bitmasks in G(1,3): 3, 5, 6, 9, 10, 12.
         let mut sum = 0.0f64;
-        for &i in &BIVEC_BLADES {
-            sum += self.coeffs[i] * rhs.coeffs[i];
-        }
+        sum = self.coeffs[3].mul_add(rhs.coeffs[3], sum);
+        sum = self.coeffs[5].mul_add(rhs.coeffs[5], sum);
+        sum = self.coeffs[6].mul_add(rhs.coeffs[6], sum);
+        sum = self.coeffs[9].mul_add(rhs.coeffs[9], sum);
+        sum = self.coeffs[10].mul_add(rhs.coeffs[10], sum);
+        sum = self.coeffs[12].mul_add(rhs.coeffs[12], sum);
         sum
     }
 
@@ -709,20 +709,12 @@ pub fn fast_metric_distance_sq(a: &SparseCliffordVector, b: &SparseCliffordVecto
     }
 
     let mut sum = 0.0f64;
-    let union_mask = a.active_mask | b.active_mask;
-    if union_mask.count_ones() <= 8 {
-        let mut mask = union_mask;
-        while mask != 0 {
-            let i = mask.trailing_zeros() as usize;
-            let d = a.coeffs[i] - b.coeffs[i];
-            sum += d * d * METRIC_WEIGHTS[i];
-            mask &= mask - 1;
-        }
-    } else {
-        for (i, weight) in METRIC_WEIGHTS.iter().enumerate().take(TOTAL_BLADES) {
-            let d = a.coeffs[i] - b.coeffs[i];
-            sum += d * d * *weight;
-        }
+    let mut mask = a.active_mask | b.active_mask;
+    while mask != 0 {
+        let i = mask.trailing_zeros() as usize;
+        let d = a.coeffs[i] - b.coeffs[i];
+        sum = (d * d).mul_add(METRIC_WEIGHTS[i], sum);
+        mask &= mask - 1;
     }
     sum
 }

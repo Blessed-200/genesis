@@ -633,7 +633,7 @@ impl NodeAdj {
                 },
             ),
         }
-        debug_assert!(self.layer0_groups.len() <= 4);
+        debug_assert!(self.layer0_groups.len() <= M0);
     }
 
     #[inline]
