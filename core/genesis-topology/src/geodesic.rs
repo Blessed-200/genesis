@@ -15,8 +15,7 @@ use genesis_math::{
 /// and all topological operations.
 ///
 /// AX-ID: AXIOMA-013, AXIOMA-014, LEY_FUNDACIONAL §3.6
-#[allow(clippy::inline_always)]
-#[inline(always)]
+#[inline]
 pub fn geometric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) -> f64 {
     fast_metric_distance(a, b)
 }
@@ -30,7 +29,7 @@ pub fn geometric_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) ->
 /// AX-ID: AXIOMA-001 (estructura G(1,3))
 pub fn bivector_interaction(a: &SparseCliffordVector, b: &SparseCliffordVector) -> f64 {
     match bivector_norm_sq_of_product(a, b) {
-        BivectorProduct::Computed(v) => v.abs().sqrt(),
+        BivectorProduct::Computed(v) => v.max(0.0).sqrt(),
         BivectorProduct::SubPlanck => f64::MAX,
     }
 }
@@ -42,8 +41,6 @@ pub fn bivector_interaction(a: &SparseCliffordVector, b: &SparseCliffordVector) 
 ///
 /// AX-ID: AXIOMA-013, AXIOMA-014
 #[deprecated(note = "usar geometric_distance(), que es una métrica verdadera")]
-#[allow(clippy::inline_always)]
-#[inline(always)]
 pub fn fast_bivector_distance(a: &SparseCliffordVector, b: &SparseCliffordVector) -> f64 {
     geometric_distance(a, b)
 }
