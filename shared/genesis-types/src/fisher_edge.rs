@@ -40,7 +40,7 @@ impl FisherEdgeMetric {
     pub fn get(&self, i: NodeId, j: NodeId) -> f64 {
         let key = canonical_edge(i, j);
         self.edges
-            .binary_search_by_key(&key, |(pair, _)| *pair)
+            .binary_search_by(|(pair, _)| pair.cmp(&key))
             .map_or(0.0, |idx| self.edges[idx].1)
     }
 
@@ -56,7 +56,7 @@ impl FisherEdgeMetric {
     /// AX-ID: LEY_FUNDACIONAL §3.6, BN-10
     pub fn set(&mut self, i: NodeId, j: NodeId, value: f64) {
         let key = canonical_edge(i, j);
-        match self.edges.binary_search_by_key(&key, |(pair, _)| *pair) {
+        match self.edges.binary_search_by(|(pair, _)| pair.cmp(&key)) {
             Ok(pos) => {
                 // Edge exists — update value in-place, no re-sort needed.
                 self.edges[pos].1 = value;
@@ -78,7 +78,7 @@ impl FisherEdgeMetric {
     /// AX-ID: LEY_FUNDACIONAL §3.6, BN-10
     pub fn remove(&mut self, i: NodeId, j: NodeId) {
         let key = canonical_edge(i, j);
-        if let Ok(pos) = self.edges.binary_search_by_key(&key, |(pair, _)| *pair) {
+        if let Ok(pos) = self.edges.binary_search_by(|(pair, _)| pair.cmp(&key)) {
             self.edges.remove(pos);
             self.decrement_degree(key.0);
             self.decrement_degree(key.1);
@@ -98,14 +98,16 @@ impl FisherEdgeMetric {
             .is_ok()
     }
 
+    #[inline(always)]
     fn increment_degree(&mut self, n: NodeId) {
-        match self.node_degrees.binary_search_by_key(&n, |(id, _)| *id) {
-            Ok(pos) => {
-                self.node_degrees[pos].1 = self.node_degrees[pos].1.saturating_add(1);
-            }
-            Err(pos) => {
-                self.node_degrees.insert(pos, (n, 1));
-            }
+        let pos = self
+            .node_degrees
+            .binary_search_by_key(&n, |(id, _)| *id)
+            .unwrap_or_else(|e| e);
+        if pos < self.node_degrees.len() && self.node_degrees[pos].0 == n {
+            self.node_degrees[pos].1 = self.node_degrees[pos].1.saturating_add(1);
+        } else {
+            self.node_degrees.insert(pos, (n, 1));
         }
     }
 
@@ -122,9 +124,13 @@ impl FisherEdgeMetric {
 
     fn normalize(&mut self) {
         for ((left, right), _) in &mut self.edges {
-            if *right < *left {
-                core::mem::swap(left, right);
-            }
+            let (a, b) = if *left <= *right {
+                (*left, *right)
+            } else {
+                (*right, *left)
+            };
+            *left = a;
+            *right = b;
         }
         self.edges.sort_unstable_by_key(|(key, _)| *key);
         self.edges.dedup_by(|lhs, rhs| lhs.0 == rhs.0);

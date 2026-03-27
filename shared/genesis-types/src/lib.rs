@@ -237,7 +237,7 @@ mod integration_tests {
     #[test]
     fn spatial_mask_consistent_with_minkowski_signature() {
         for (i, &sig) in MINKOWSKI_SIGNATURE.iter().enumerate() {
-            let bit_set = (SPATIAL_BASIS_MASK >> i) & 1 == 1;
+            let bit_set = (SPATIAL_BASIS_MASK & (1 << i)) != 0;
             let is_spatial = sig < 0.0;
             assert_eq!(
                 bit_set, is_spatial,

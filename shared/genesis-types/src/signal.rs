@@ -374,10 +374,10 @@ impl SpikeComponents {
 
         for (idx, coef) in iter {
             // Thermal noise gate — AXIOMA-001.
-            if !coef.is_finite() || coef.abs() <= COGNITIVE_PLANCK_CONSTANT {
+            let abs = coef.abs();
+            if !coef.is_finite() || abs <= COGNITIVE_PLANCK_CONSTANT {
                 continue;
             }
-            let abs = coef.abs();
 
             if filled < K {
                 // Buffer not full yet — insert directly.
@@ -385,16 +385,13 @@ impl SpikeComponents {
                 filled += 1;
                 if filled == K {
                     // Find the weakest slot.
-                    if let Some((slot, abs_slot)) = buf[..K]
-                        .iter()
-                        .enumerate()
-                        .min_by(|(_, a), (_, b)| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)))
-                        .map(|(i, &(a, _ix, _))| (i, a))
-                    {
-                        min_slot = slot;
-                        min_abs = abs_slot;
-                    } else {
-                        continue;
+                    min_abs = f64::INFINITY;
+                    for i in 0..K {
+                        let (a, ix, _) = buf[i];
+                        if a < min_abs || (a == min_abs && ix > buf[min_slot].1) {
+                            min_abs = a;
+                            min_slot = i;
+                        }
                     }
                 }
             } else {
@@ -407,14 +404,13 @@ impl SpikeComponents {
                 if stronger {
                     buf[min_slot] = (abs, idx, coef);
                     // Recompute min slot.
-                    if let Some((slot, abs_slot)) = buf[..K]
-                        .iter()
-                        .enumerate()
-                        .min_by(|(_, a), (_, b)| a.0.total_cmp(&b.0).then(b.1.cmp(&a.1)))
-                        .map(|(i, &(a, _ix, _))| (i, a))
-                    {
-                        min_slot = slot;
-                        min_abs = abs_slot;
+                    min_abs = f64::INFINITY;
+                    for i in 0..K {
+                        let (a, ix, _) = buf[i];
+                        if a < min_abs || (a == min_abs && ix > buf[min_slot].1) {
+                            min_abs = a;
+                            min_slot = i;
+                        }
                     }
                 }
             }
@@ -426,14 +422,7 @@ impl SpikeComponents {
             pairs[i] = (buf[i].1, buf[i].2);
         }
 
-        // Insertion sort on filled entries (K≤16 → O(K²) = O(256) cycles maximum).
-        for i in 1..filled {
-            let mut j = i;
-            while j > 0 && pairs[j - 1].0 > pairs[j].0 {
-                pairs.swap(j - 1, j);
-                j -= 1;
-            }
-        }
+        pairs[..filled].sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
         // Copy into canonical SpikeComponents arrays.
         let mut indices = [u16::MAX; SPIKE_MAX_COMPONENTS];
@@ -462,7 +451,7 @@ impl SpikeComponents {
         indices[count..].fill(u16::MAX);
         values[count..].fill(0.0);
 
-        let count_u8 = u8::try_from(count).unwrap_or(u8::MAX);
+        let count_u8 = count as u8;
 
         Self {
             indices,
@@ -571,11 +560,9 @@ impl SpikeComponents {
     pub fn get(&self, blade: u16) -> f64 {
         let n = self.count as usize;
         for i in 0..n {
-            if self.indices[i] == blade {
-                return self.values[i];
-            }
-            if self.indices[i] > blade {
-                break;
+            let idx = self.indices[i];
+            if idx >= blade {
+                return if idx == blade { self.values[i] } else { 0.0 };
             }
         }
         0.0
@@ -608,7 +595,8 @@ impl PartialEq for SpikeComponents {
         }
         // SAFETY: `f64` and `u64` have identical size/alignment. The created slices
         // cover exactly `n` initialized elements from `values[..n]`.
-        let self_bits = unsafe { core::slice::from_raw_parts(self.values.as_ptr().cast::<u64>(), n) };
+        let self_bits =
+            unsafe { core::slice::from_raw_parts(self.values.as_ptr().cast::<u64>(), n) };
         // SAFETY: same invariant as `self_bits` above.
         let other_bits =
             unsafe { core::slice::from_raw_parts(other.values.as_ptr().cast::<u64>(), n) };

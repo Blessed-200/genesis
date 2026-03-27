@@ -113,13 +113,13 @@ impl Premises {
     pub fn push(&mut self, premise: ProofHash) {
         match self {
             Self::Small(items) => {
-                if items.len() < PREMISES_INLINE_CAPACITY {
-                    items.push(premise);
-                } else {
-                    let mut large = Vec::with_capacity(items.len() + 1);
-                    large.extend(items.iter().copied());
+                if items.is_full() {
+                    let mut large = Vec::with_capacity(PREMISES_INLINE_CAPACITY + 1);
+                    large.extend_from_slice(items.as_slice());
                     large.push(premise);
                     *self = Self::Large(large);
+                } else {
+                    items.push(premise);
                 }
             }
             Self::Large(items) => items.push(premise),
@@ -212,11 +212,10 @@ impl AxiomSet {
 
     /// Constructs an array from a list of [`AxiomID`].
     pub fn from_slice(axioms: &[AxiomID]) -> Self {
-        let mut set = Self::empty();
-        for &axiom in axioms {
+        axioms.iter().fold(Self::empty(), |mut set, &axiom| {
             set.insert(axiom);
-        }
-        set
+            set
+        })
     }
 
     /// Returns the internal bit mask.
@@ -620,7 +619,7 @@ impl AxiomGuard {
         }
 
         let required_mask = AxiomSet::from_slice(required);
-        if (required_mask.bits() & proof.axioms_checked.bits()) != required_mask.bits() {
+        if !proof.axioms_checked.is_superset_of(required_mask) {
             let missing = required_mask.difference(proof.axioms_checked).bits();
             let axiom_id = missing.trailing_zeros() as u8;
             return Err(crate::error::GenesisError::ProofInvalid { axiom_id });
@@ -743,8 +742,8 @@ impl AxiomGuard {
         let mut verified = AxiomSet::empty();
 
         while cursor < witness.len() {
-            // Necesitamos to the less 4 bytes for the header of the frame
-            if cursor + 4 > witness.len() {
+            let len = witness.len();
+            if cursor + 4 > len {
                 return false;
             }
 
@@ -753,19 +752,12 @@ impl AxiomGuard {
             let ctx_len = u16::from_le_bytes([witness[cursor + 2], witness[cursor + 3]]) as usize;
             cursor += 4 + ctx_len;
 
-            // Frame truncado or result negativo
-            if cursor > witness.len() || result != 1 {
+            if cursor > len || result != 1 {
                 return false;
             }
 
             let axiom = match axiom_raw {
-                0 => AxiomID::MinkowskiSignature,
-                1 => AxiomID::CohomologyZero,
-                2 => AxiomID::AlgebraicConnectivity,
-                3 => AxiomID::PlanckConstant,
-                4 => AxiomID::ProofGuard,
-                5 => AxiomID::DualityConsistency,
-                6 => AxiomID::DimensionalAdmission,
+                0..=6 => unsafe { core::mem::transmute::<u8, AxiomID>(axiom_raw) },
                 _ => return false,
             };
 
@@ -819,7 +811,11 @@ impl WitnessBuilder {
     fn extend_bytes(&mut self, bytes: &[u8]) {
         self.ensure_capacity(bytes.len());
         match &mut self.frames {
-            WitnessBuffer::Small(frames) => frames.extend(bytes.iter().copied()),
+            WitnessBuffer::Small(frames) => {
+                if frames.try_extend_from_slice(bytes).is_err() {
+                    unreachable!("capacity pre-validated by ensure_capacity")
+                }
+            }
             WitnessBuffer::Large(frames) => frames.extend_from_slice(bytes),
         }
     }
