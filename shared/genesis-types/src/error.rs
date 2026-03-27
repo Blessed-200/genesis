@@ -478,12 +478,6 @@ impl GenesisError {
             _ => "value=unknown",
         };
 
-        let where_hint = if blade_index == u16::MAX {
-            "index=unknown"
-        } else {
-            "index=known"
-        };
-
         let reason = match code {
             SignatureViolationCode::FromSparseInput => {
                 "non-finite coefficient while constructing from sparse input"
@@ -502,8 +496,9 @@ impl GenesisError {
             }
         };
 
-        if blade_index == u16::MAX {
-            format!("Signature violation detail: reason={reason}; {where_hint}; {value_hint}")
+        let is_unknown = blade_index == u16::MAX;
+        if is_unknown {
+            format!("Signature violation detail: reason={reason}; index=unknown; {value_hint}")
         } else {
             format!(
                 "Signature violation detail: reason={reason}; blade_index={blade_index}; {value_hint}"

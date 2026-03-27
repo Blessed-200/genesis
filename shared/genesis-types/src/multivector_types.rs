@@ -46,7 +46,7 @@ impl DerivedMetadata {
     /// Returns true if blade `i` is active in this metadata.
     #[inline] // bit-mask check: always inlined by optimizer anyway
     pub const fn is_active(&self, blade: usize) -> bool {
-        blade < 32 && (self.active_mask & (1u32 << blade)) != 0
+        ((self.active_mask >> blade) & 1) == 1
     }
 
     /// Construct a new `DerivedMetadata` from computed fields.
@@ -65,9 +65,7 @@ impl DerivedMetadata {
     #[inline]
     #[allow(clippy::missing_const_for_fn)] // &mut self not const-stable on MSRV 1.75
     pub fn set_active(&mut self, blade: usize) {
-        if blade < 32 {
-            self.active_mask |= 1u32 << blade;
-        }
+        self.active_mask |= (1u32).wrapping_shl(blade as u32);
     }
 
     /// Mark blade `i` as active without bounds checks.

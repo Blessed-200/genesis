@@ -1,5 +1,34 @@
 # GÉNESIS HPC Root-Cause Remediation Plan (Phase 1)
 
+## 0.5 genesis-types micro-optimizations and branch simplification (2026-03-26)
+
+### Root cause
+- Several `genesis-types` hot/cold utility paths still use avoidable branches, redundant temporary values, or less-direct search/sort APIs.
+- Some checks recompute lengths or duplicate comparisons in tight loops, increasing instruction count.
+
+### File-level actions
+1. `shared/genesis-types/src/fisher_edge.rs`
+   - Use comparator-based `binary_search_by` for edge-key lookups.
+   - Simplify normalization iteration and degree rebuild traversal without index arithmetic.
+2. `shared/genesis-types/src/proof.rs`
+   - Simplify subset checks via `AxiomSet::is_superset_of`.
+   - Tighten witness replay bounds checks and streamline inline/large buffer growth paths.
+   - Replace explicit axiom discriminant match with guarded transmute for `0..=6`.
+3. `shared/genesis-types/src/signal.rs`
+   - Collapse padding-zero checks into full-array comparisons.
+   - Reduce duplicate absolute-value computation and use unstable sort for bounded pair canonicalization.
+   - Simplify linear `get` search and count narrowing cast in fixed-capacity context.
+4. `shared/genesis-types/src/error.rs`, `shared/genesis-types/src/lib.rs`, `shared/genesis-types/src/multivector_types.rs`
+   - Remove redundant branching or shift forms in bit checks and signature diagnostics.
+
+### Validation
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
+### Complexity/cache target
+- Preserve asymptotic behavior while reducing branch count and loop overhead in frequent utility paths.
+
 ## 0.4 NodeAdj layer-0 pre-grouped block projection (2026-03-24)
 
 ### Root cause
