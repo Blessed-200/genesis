@@ -53,8 +53,6 @@ use genesis_types::NodeId;
 pub struct QuantumOscillator {
     /// φ_{i,g} — fases por grado Clifford (g = 0..=4), en radianes.
     pub phases: [f64; 5],
-    /// ω_{i,g} — frecuencias naturales (rad/s), una por grado.
-    pub frequencies: [f64; 5],
     /// A_{i,g} — amplitud por grado Clifford (g = 0..=4), ∈ [0.0, 1.0].
     ///
     /// Inicializa en `1.0` para todos los grados (prior de máxima certeza /
@@ -68,6 +66,8 @@ pub struct QuantumOscillator {
     ///
     /// AX-ID: AXIOMA-006, AXIOMA-008
     pub amplitudes: [f64; 5],
+    /// ω_{i,g} — frecuencias naturales (rad/s), una por grado.
+    pub frequencies: [f64; 5],
     /// Identificador del nodo en el manifold.
     pub node_id: NodeId,
     /// Estado de vida del oscilador (Active, Saturated, Pruned).

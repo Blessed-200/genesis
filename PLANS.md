@@ -1074,3 +1074,27 @@ Remaining risk:
 - `cargo check --workspace`
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.2 genesis-dynamics Phase 2 data-oriented memory-layout pass (2026-03-28)
+
+### Root cause
+- `genesis-dynamics` hot loops in Kuramoto stepping and synchrony still pay avoidable cache misses from field/layout placement and heavyweight state-flag reads.
+- `QuantumKuramotoNetwork` stores Box-Muller spare Gaussian as `Option<f64>`, adding an unnecessary tag word and extra branching.
+
+### File-level actions
+1. `core/genesis-dynamics/src/oscillator.rs`
+   - Reorder `QuantumOscillator` fields to place `amplitudes` adjacent to `phases`, and move `frequencies` after amplitudes to improve CL0 usefulness for synchrony reads.
+2. `core/genesis-dynamics/src/kuramoto.rs`
+   - Replace `spare_gaussian: Option<f64>` with `f64` + `NaN` sentinel and adjust initialization/read/write in `next_gaussian`.
+   - Add `contrib_buf: Vec<u8>` as a mirror of `state.contributes_to_sync()`.
+   - Maintain `contrib_buf` at all oscillator lifecycle mutation sites (`add_oscillator`, `remove_oscillator`).
+   - Route hot outer-loop guards and coupling-sum inner-loop active checks through `contrib_buf`.
+
+### Validation
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-dynamics -- kuramoto --output-format bencher`
+
+### Complexity/cache target
+- Preserve O(N·E) coupling complexity while reducing per-edge state-check memory traffic and eliminating optional-tag overhead for Gaussian buffering.
