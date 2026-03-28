@@ -367,8 +367,7 @@ impl VFEMinimizer {
             let delta = mean_full[blade_idx] - target[k];
             let w = VFE_BLADE_WEIGHTS[blade_idx];
             let weighted_precision = w * precision_full[blade_idx];
-            let term = delta * (delta * weighted_precision);
-            let y = term - comp;
+            let y = delta.mul_add(delta * weighted_precision, -comp);
             let t = sum + y;
             comp = (t - sum) - y;
             sum = t;
@@ -427,12 +426,11 @@ impl VFEMinimizer {
             let prec = precision_full[i];
             let w = VFE_BLADE_WEIGHTS[i];
             let weighted_precision = w * prec;
-            let term = delta.mul_add(delta * weighted_precision, 0.0);
-            let y = term - comp;
+            let y = delta.mul_add(delta * weighted_precision, -comp);
             let t = vfe + y;
             comp = (t - vfe) - y;
             vfe = t;
-            grad[i] = delta * ((2.0 * w) * prec);
+            grad[i] = delta * (2.0 * weighted_precision);
         }
         (vfe, grad)
     }
@@ -476,8 +474,7 @@ impl VFEMinimizer {
                 let mut sum = 0.0f64;
                 let mut comp = 0.0f64;
                 for (i, &m) in belief.mean_full.iter().enumerate() {
-                    let term = m * (m * VFE_BLADE_WEIGHTS[i]);
-                    let y = term - comp;
+                    let y = m.mul_add(m * VFE_BLADE_WEIGHTS[i], -comp);
                     let t = sum + y;
                     comp = (t - sum) - y;
                     sum = t;
@@ -521,7 +518,7 @@ impl VFEMinimizer {
             belief.mean_full[blade_idx] = step.mul_add(err, belief.mean_full[blade_idx]);
             belief.precision_full[blade_idx] =
                 (belief.precision_full[blade_idx] + step).clamp(0.0, 1.0e6);
-            error_sq += err * err;
+            error_sq = err.mul_add(err, error_sq);
         }
 
         let old_trace = fisher.trace;
@@ -569,7 +566,7 @@ impl VFEMinimizer {
             let err = target - belief.mean_full[i];
             belief.mean_full[i] = step.mul_add(err, belief.mean_full[i]);
             belief.precision_full[i] = (belief.precision_full[i] + step).clamp(0.0, 1.0e6);
-            error_sq += err * err;
+            error_sq = err.mul_add(err, error_sq);
         }
 
         let old_trace = fisher.trace;

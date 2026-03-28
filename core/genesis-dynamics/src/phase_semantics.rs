@@ -766,7 +766,7 @@ fn local_phase_stats_indexed(
     for &neighbor_idx in &neighbors_flat[start..end] {
         let neighbor_phase = phases[neighbor_idx];
         let divergence = wrapped_distance(phase, neighbor_phase);
-        coherence_acc = (-divergence / PI).mul_add(1.0, coherence_acc + 1.0);
+        coherence_acc = divergence.mul_add(-core::f64::consts::FRAC_1_PI, coherence_acc + 1.0);
         divergence_acc += divergence;
         sum_cos += neighbor_phase.cos();
         sum_sin += neighbor_phase.sin();

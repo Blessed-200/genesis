@@ -162,7 +162,7 @@ impl QuantumOscillator {
             a[0],
             a[1].mul_add(a[1], a[2].mul_add(a[2], a[3].mul_add(a[3], a[4] * a[4]))),
         );
-        (sq / 5.0_f64).sqrt()
+        (sq * 0.2_f64).sqrt()
     }
 
     /// Actualiza las amplitudes del oscilador desde la traza de Fisher actual.

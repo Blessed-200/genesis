@@ -1050,3 +1050,27 @@ Remaining risk:
 
 ### Complexity/cache target
 - Preserve existing asymptotic complexity and data layout, while lowering arithmetic instruction count in hot loops through explicit fused operations.
+
+## 1.1 genesis-dynamics Phase 1 silicon micro-optimizations (2026-03-28)
+
+### Root cause
+- `genesis-dynamics` still has hot-loop arithmetic patterns that miss explicit FMA opportunities and invariant-hoistable divisions in `criticality`, `free_energy`, `oscillator`, and `phase_semantics`.
+- These paths execute per-sample/per-node and can reduce latency and rounding error without changing public contracts.
+
+### File-level actions
+1. `core/genesis-dynamics/src/criticality.rs`
+   - Fuse alternating-series accumulation with `mul_add` in `ks_p_value`.
+   - Hoist `1/n` reciprocal once in KS loop for `tau_exponent_report` and replace per-iteration division with multiplication.
+2. `core/genesis-dynamics/src/free_energy.rs`
+   - Fuse Kahan loop terms via `mul_add` in `compute_vfe`, `compute_vfe_with_grad`, and `internal_drive`.
+   - Reuse `weighted_precision` in gradient expression.
+   - Fuse squared-error accumulation in both `update` and `update_full`.
+3. `core/genesis-dynamics/src/oscillator.rs`
+   - Replace division by `5.0` with multiplication by reciprocal constant in `amplitude_norm`.
+4. `core/genesis-dynamics/src/phase_semantics.rs`
+   - Replace divide-by-`PI` expression with `FRAC_1_PI` FMA form in `local_phase_stats_indexed`.
+
+### Validation
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
