@@ -810,7 +810,7 @@ fn dot(a: &[f64], b: &[f64]) -> f64 {
 
 fn axpy_inplace(y: &mut [f64], alpha: f64, x: &[f64]) {
     for (yi, xi) in y.iter_mut().zip(x.iter()) {
-        *yi += alpha * *xi;
+        *yi = alpha.mul_add(*xi, *yi);
     }
 }
 
