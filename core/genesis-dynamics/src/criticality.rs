@@ -85,8 +85,8 @@ fn ks_p_value(z: f64) -> f64 {
     for k in 1_u32..=20 {
         let k_f = f64::from(k);
         let term = (-2.0 * k_f * k_f * z_sq).exp();
-        let sign = if k & 1 != 0 { 1.0 } else { -1.0 };
-        sum += sign * term;
+        let sign: f64 = if k & 1 != 0 { 1.0 } else { -1.0 };
+        sum = sign.mul_add(term, sum);
         // Convergence on partial sum change — not on term magnitude
         if (sum - prev_sum).abs() < 1e-15 {
             break;
@@ -243,10 +243,11 @@ impl CriticalityMonitor {
 
         // Calcular statistic KS
         let n_f = n as f64;
+        let inv_n_f = n_f.recip();
         let mut ks_d = 0.0f64;
         for (i, &s) in sizes.iter().enumerate() {
             let s_f = f64::from(s);
-            let f_emp = (i as f64 + 1.0) / n_f;
+            let f_emp = (i as f64 + 1.0) * inv_n_f;
             let f_teo = 1.0 - (x_min / s_f).powf(exponent);
             ks_d = ks_d.max((f_emp - f_teo).abs());
         }
