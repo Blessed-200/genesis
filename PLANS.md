@@ -1123,3 +1123,40 @@ Remaining risk:
 
 ### Complexity/cache target
 - Preserve O(N·E) coupling complexity while reducing per-edge state-check memory traffic and eliminating optional-tag overhead for Gaussian buffering.
+
+## 1.4 Workspace benchmarking + PGO infrastructure baseline (2026-03-28)
+
+### Root cause
+- The workspace has Criterion coverage but no callgrind-stable microbenchmarks for hot paths and no first-class PGO workflow.
+- Existing scripts cannot orchestrate profile-data generation/merge/reuse, preventing measurement-first optimization loops.
+- Topology and dynamics benchmark coverage lacks explicit stress tiers requested for HNSW density enforcement paths, incremental D2 XOR operations, and VFE gradient scaling.
+
+### File-level actions
+1. `Cargo.toml`
+   - Add `iai-callgrind` to workspace dev dependencies.
+   - Add `release-pgo-gen` and `release-pgo-use` profile stanzas inheriting from `release`.
+2. `core/genesis-dynamics/Cargo.toml` + `core/genesis-topology/Cargo.toml`
+   - Add `iai-callgrind` dev-dependency wiring from workspace.
+   - Register new `[[bench]]` targets with `harness = false`.
+3. `core/genesis-dynamics/benches/iai_hotpaths.rs`
+   - Add iai-callgrind benchmarks for synchrony order, Kuramoto step, and VFE compute hot paths.
+4. `core/genesis-topology/benches/iai_hotpaths.rs`
+   - Add iai-callgrind benchmarks for HNSW search, metric distance squared, and Rips build.
+5. `core/genesis-topology/benches/hnsw_hotpaths.rs` and `core/genesis-dynamics/benches/vfe_hotpaths.rs`
+   - Add Criterion benchmarks for requested large-scale scenarios (`enforce_density_limit` proxy path, `IncrementalD2::xor_columns`, and `compute_vfe_with_grad`).
+6. `core/genesis-topology/src/incremental_cohomology.rs` + `core/genesis-topology/src/lib.rs`
+   - Expose a benchmark helper for IncrementalD2 xor-columns path so benches can target the exact primitive without changing runtime APIs.
+7. `scripts/pgo_build.sh` + `scripts/bench_extreme.sh`
+   - Add end-to-end PGO build flow (gen -> bench runs -> llvm-profdata merge -> use).
+   - Add `--pgo` delegation from extreme benchmark script.
+8. `docs/09_PERFORMANCE_BASELINE.md`
+   - Document baseline outputs from new benchmark commands for regression tracking.
+
+### Validation
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-dynamics --bench iai_hotpaths --no-run`
+- `cargo bench -p genesis-topology --bench iai_hotpaths --no-run`
+- `cargo bench -p genesis-topology --bench hnsw_hotpaths -- --noplot`
+- `cargo bench -p genesis-dynamics --bench vfe_hotpaths -- --noplot`

@@ -22,9 +22,21 @@ criterion         = { version = "0.5", features = ["html_reports"] }
 num-complex        = "0.4"
 smallvec          = { version = "1.13", features = ["const_generics"] }
 memoffset     = "0.9"
+iai-callgrind   = "0.14"
 
 [profile.release]
 opt-level     = 3
 lto           = "fat"
 codegen-units = 1
 panic         = "abort"
+
+
+[profile.release-pgo-gen]
+inherits = "release"
+codegen-units = 1
+lto = "fat"
+
+[profile.release-pgo-use]
+inherits = "release"
+codegen-units = 1
+lto = "fat"

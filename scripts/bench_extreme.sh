@@ -4,6 +4,24 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+USE_PGO=0
+for arg in "$@"; do
+  case "$arg" in
+    --pgo) USE_PGO=1 ;;
+    *)
+      echo "unknown argument: $arg" >&2
+      echo "usage: $0 [--pgo]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "$USE_PGO" -eq 1 ]]; then
+  echo "[pgo] delegating to scripts/pgo_build.sh"
+  "$ROOT_DIR/scripts/pgo_build.sh"
+  exit 0
+fi
+
 echo "[1/3] criterion bench"
 cargo bench -p genesis-math --bench geometry -- --noplot
 
