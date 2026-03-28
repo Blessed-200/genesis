@@ -747,7 +747,7 @@ pub fn bivector_norm_sq_of_product(
             let k = i ^ j;
             let lane = BIVECTOR_LANE_MAP[k];
             if lane >= 0 {
-                bivector_buf[lane as usize] += coef_a * b.coeffs[j] * f64::from(row[j]);
+                bivector_buf[lane as usize] = coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
             }
             mask_b &= mask_b - 1;
         }
@@ -759,7 +759,7 @@ pub fn bivector_norm_sq_of_product(
     for lane in 0..6 {
         let v = bivector_buf[lane];
         if v.abs() > COGNITIVE_PLANCK_CONSTANT {
-            norm_sq += v * v * BIVECTOR_LANE_WEIGHTS[lane];
+            norm_sq = (v * v).mul_add(BIVECTOR_LANE_WEIGHTS[lane], norm_sq);
             has_signal = true;
         }
     }
@@ -825,7 +825,7 @@ pub fn bivector_norm_sq_of_product_lhs_dense(
             let k = i ^ j;
             let lane = BIVECTOR_LANE_MAP[k];
             if lane >= 0 {
-                bivector_buf[lane as usize] += coef_a * b.coeffs[j] * f64::from(row[j]);
+                bivector_buf[lane as usize] = coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
             }
             mask_b &= mask_b - 1;
         }
@@ -837,7 +837,7 @@ pub fn bivector_norm_sq_of_product_lhs_dense(
     for lane in 0..6 {
         let v = bivector_buf[lane];
         if v.abs() > COGNITIVE_PLANCK_CONSTANT {
-            norm_sq += v * v * BIVECTOR_LANE_WEIGHTS[lane];
+            norm_sq = (v * v).mul_add(BIVECTOR_LANE_WEIGHTS[lane], norm_sq);
             has_signal = true;
         }
     }

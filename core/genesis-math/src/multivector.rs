@@ -130,8 +130,7 @@ pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetad
             active_mask |= 1u32 << k;
             // CRYSTAL: FO100 — inevitable
             max_abs_coeff = max_abs_coeff.max(abs);
-            let term = (coeff * coeff).mul_add(CLIFFORD_NORM_WEIGHTS_F64[k], 0.0);
-            let y_norm = term - comp_norm;
+            let y_norm = (coeff * coeff).mul_add(CLIFFORD_NORM_WEIGHTS_F64[k], -comp_norm);
             let t_norm = clifford_norm_sq + y_norm;
             comp_norm = (t_norm - clifford_norm_sq) - y_norm;
             clifford_norm_sq = t_norm;
@@ -779,7 +778,7 @@ pub fn fast_metric_distance_sq_from_dense(
     let mut sum = 0.0f64;
     for (i, weight) in METRIC_WEIGHTS.iter().enumerate().take(TOTAL_BLADES) {
         let d = a_dense[i] - b.coeffs[i];
-        sum += d * d * *weight;
+        sum = (d * d).mul_add(*weight, sum);
     }
     sum
 }

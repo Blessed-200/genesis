@@ -83,8 +83,7 @@ pub fn compute_clifford_norm_sq(coeffs: &[f64; 16]) -> f64 {
     let mut sum = 0.0f64;
     let mut comp = 0.0f64;
     for (coeff, w) in coeffs.iter().zip(CLIFFORD_NORM_WEIGHTS_F64.iter()) {
-        let term = (coeff * coeff).mul_add(*w, 0.0);
-        let y = term - comp;
+        let y = (coeff * coeff).mul_add(*w, -comp);
         let t = sum + y;
         comp = (t - sum) - y;
         sum = t;

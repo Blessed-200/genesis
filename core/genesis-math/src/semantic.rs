@@ -204,12 +204,12 @@ pub fn commutator(a: &SparseCliffordVector, b: &SparseCliffordVector) -> SparseC
 
     let mut out = [0.0_f64; TOTAL_BLADES];
 
-    let half = 0.5;
+    let half = 0.5_f64;
     if let Some(ab) = sparse_geometric_product(a, b) {
         let mut mask = ab.active_mask;
         while mask != 0 {
             let i = mask.trailing_zeros() as usize;
-            out[i] += half * ab.coeffs[i];
+            out[i] = half.mul_add(ab.coeffs[i], out[i]);
             mask &= mask - 1;
         }
     }
@@ -218,7 +218,7 @@ pub fn commutator(a: &SparseCliffordVector, b: &SparseCliffordVector) -> SparseC
         let mut mask = ba.active_mask;
         while mask != 0 {
             let i = mask.trailing_zeros() as usize;
-            out[i] -= half * ba.coeffs[i];
+            out[i] = (-half).mul_add(ba.coeffs[i], out[i]);
             mask &= mask - 1;
         }
     }
