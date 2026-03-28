@@ -423,31 +423,34 @@ const fn edge_key(u: NodeId, v: NodeId) -> EdgeKey {
     pack_edge_key(a, b)
 }
 
-/// State incremental of H¹(M, F).
+/// Incremental state of H¹(M, F).
 ///
 /// Maintains the invariant exactly dim(ker ∂₁) − dim(im ∂₂) = 0
 /// with amortized complexity O(K·α(N) + K·L) per insertion.
 ///
 /// AX-ID: AXIOMA-007, AXIOMA-009
-/// Edge registry: sorted `Vec<(EdgeKey, u32)>` — binary search O(log E).
+/// Edge registry: sorted keys with parallel edge-id storage for O(log E) lookup.
 ///
 /// # Why not HashMap (AGENTS prohibition compliance)
 ///
-/// `edge_map` was previously `HashMap<EdgeKey, u32>`. While HNSW search is
+/// Edge lookup was previously `HashMap<EdgeKey, u32>`. While HNSW search is
 /// the canonical hot path, `add_edge` is called O(N×K) during manifold construction
 /// (K ≤ M0 = 32 per node). With N=10⁶ that is ~32M calls — too frequent for
 /// HashMap's per-call allocation and cache-unfriendly bucket traversal.
 ///
-/// Sorted `Vec` + `binary_search` gives O(log E) lookup with cache-friendly
-/// sequential layout (EdgeKey = u128, so entries are 24 bytes → ~2.7 entries/cache line).
+/// Sorted vectors + `binary_search` give O(log E) lookup with cache-friendly
+/// sequential layout. The SoA split keeps edge keys dense for binary search and
+/// stores edge ids in a parallel array at matching indices.
 /// `insert` is O(E) shift in the worst case, but HNSW insertions are mostly sequential
-/// (IDs are assigned in order) so new keys land near the end → amortised O(1) shift.
+/// (IDs are assigned in order) so new keys land near the end, yielding amortized near-O(1) shifts.
 #[derive(Clone)]
 pub struct IncrementalH1State {
     uf: PersistentUnionFind,
     d2: IncrementalD2,
-    /// Sorted (EdgeKey, edge_id) pairs. Binary search for O(log E) lookup.
-    edge_map: Vec<(EdgeKey, u32)>,
+    /// Sorted edge keys used as the binary-search index.
+    edge_keys: Vec<EdgeKey>,
+    /// Edge ids aligned with `edge_keys` by index.
+    edge_vals: Vec<u32>,
     num_edges: usize,
     ops_since_checkpoint: usize,
     inference_step: usize,
@@ -487,7 +490,8 @@ impl IncrementalH1State {
         Self {
             uf: PersistentUnionFind::new(),
             d2: IncrementalD2::new(),
-            edge_map: Vec::new(),
+            edge_keys: Vec::new(),
+            edge_vals: Vec::new(),
             num_edges: 0,
             ops_since_checkpoint: 0,
             inference_step: 0,
@@ -506,13 +510,14 @@ impl IncrementalH1State {
     pub fn add_edge(&mut self, u: NodeId, v: NodeId) -> u32 {
         self.inference_step = self.inference_step.saturating_add(1);
         let key = edge_key(u, v);
-        match self.edge_map.binary_search_by_key(&key, |&(k, _)| k) {
-            Ok(pos) => self.edge_map[pos].1, // already present
+        match self.edge_keys.binary_search(&key) {
+            Ok(pos) => self.edge_vals[pos], // already present
             Err(ins) => {
                 // Insert at sorted position — O(E) shift but sequential IDs
-                // make this near-O(1) amortised in practice.
+                // make this near-O(1) amortized in practice.
                 let edge_id = self.num_edges as u32;
-                self.edge_map.insert(ins, (key, edge_id));
+                self.edge_keys.insert(ins, key);
+                self.edge_vals.insert(ins, edge_id);
                 self.d2.register_edge(edge_id);
                 self.num_edges += 1;
                 let created_cycle = !self.uf.union(u.get() as usize, v.get() as usize);
@@ -578,9 +583,9 @@ impl IncrementalH1State {
     pub fn remove_node(&mut self, node: NodeId) {
         let removed = node.get();
         let retained_edges: Vec<(u64, u64)> = self
-            .edge_map
+            .edge_keys
             .iter()
-            .filter_map(|&(key, _)| {
+            .filter_map(|&key| {
                 let (a, b) = unpack_edge_key(key);
                 (a != removed && b != removed).then_some((a, b))
             })
@@ -595,7 +600,7 @@ impl IncrementalH1State {
             .iter()
             .any(|record| record.nodes.iter().any(|n| n.get() == removed));
 
-        if retained_edges.len() == self.edge_map.len() && !cycles_touched && !closures_touched {
+        if retained_edges.len() == self.edge_keys.len() && !cycles_touched && !closures_touched {
             return;
         }
 
@@ -618,7 +623,8 @@ impl IncrementalH1State {
 
         self.uf = rebuilt.uf;
         self.d2 = rebuilt.d2;
-        self.edge_map = rebuilt.edge_map;
+        self.edge_keys = rebuilt.edge_keys;
+        self.edge_vals = rebuilt.edge_vals;
         self.num_edges = rebuilt.num_edges;
         self.ops_since_checkpoint = rebuilt.ops_since_checkpoint;
         self.persistent_cycles = rebuilt.persistent_cycles;
@@ -628,10 +634,10 @@ impl IncrementalH1State {
 
     fn lookup_edge(&self, u: NodeId, v: NodeId) -> Option<u32> {
         let key = edge_key(u, v);
-        self.edge_map
-            .binary_search_by_key(&key, |&(k, _)| k)
+        self.edge_keys
+            .binary_search(&key)
             .ok()
-            .map(|pos| self.edge_map[pos].1)
+            .map(|pos| self.edge_vals[pos])
     }
 
     const fn run_checkpoint(&mut self) {
@@ -639,7 +645,7 @@ impl IncrementalH1State {
         self.ops_since_checkpoint = 0;
     }
 
-    /// Returns true if H¹ = 0 (invariante of cohomology satisfecho). O(1).
+    /// Returns true if H¹ = 0 (cohomology invariant satisfied). O(1).
     ///
     /// AX-ID: AXIOMA-007, AXIOMA-009
     pub const fn h1_is_zero(&self) -> bool {

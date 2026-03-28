@@ -1,3 +1,28 @@
+## 1.3 genesis-topology Phase 2 SoA layout migration for incremental edge and LSH bucket maps (2026-03-28)
+
+### Root cause
+- `IncrementalH1State` stores edge lookup metadata as AoS `Vec<(EdgeKey, u32)>`, so binary search loads padded tuple entries when it only needs `EdgeKey`.
+- `LshTable` stores bucket metadata as AoS `Vec<(u32, Vec<NodeId>)>`, so binary search loads full tuple payloads when it only needs the `u32` bucket id.
+- Both paths are lookup-heavy in topology construction/inference and pay avoidable cache bandwidth costs.
+
+### File-level actions
+1. `core/genesis-topology/src/incremental_cohomology.rs`
+   - Replace private `edge_map` AoS storage with SoA `edge_keys: Vec<EdgeKey>` + `edge_vals: Vec<u32>`.
+   - Keep canonical sorted-order invariant via `binary_search` on `edge_keys` and synchronized inserts on both arrays.
+   - Update `add_edge`, `lookup_edge`, and `remove_node` rebuild/filter paths to use parallel arrays with unchanged external behavior.
+2. `core/genesis-topology/src/lsh.rs`
+   - Replace private `buckets` AoS storage with SoA `bucket_ids: Vec<u32>` + `bucket_nodes: Vec<Vec<NodeId>>`.
+   - Keep sorted-bucket invariant via `binary_search` on `bucket_ids` and synchronized inserts.
+   - Preserve sorted per-bucket `NodeId` insertion logic and `get` semantics.
+
+### Validation
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
+### Complexity/cache target
+- Preserve asymptotic complexity while increasing key-density in binary-search cache lines by separating hot search keys from payload vectors/ids.
+
 ## 0.9 genesis-dynamics micro-optimization and branch simplification sweep (2026-03-27)
 
 ### Root cause
