@@ -170,6 +170,8 @@ pub struct QuantumKuramotoNetwork {
 
     /// Inverse index: public edge → triangles that contain it.
     edge_to_triangles: Vec<Vec<usize>>,
+    /// Reusable backing storage for triangle adjacency rebuilds.
+    triangle_scratch: Vec<Vec<usize>>,
 
     /// Index of edge reversa for keep antisimetría `A_ji = -A_ij`.
     reverse_edges: Vec<Option<usize>>,
@@ -204,6 +206,7 @@ impl QuantumKuramotoNetwork {
             dirty: false,
             triangles: Vec::new(),
             edge_to_triangles: Vec::new(),
+            triangle_scratch: Vec::new(),
             reverse_edges: Vec::new(),
             sync_cache: 0.0,
             sync_dirty: true,
@@ -908,8 +911,7 @@ impl QuantumKuramotoNetwork {
         }
         self.coupling_idx.clear();
         self.coupling_offsets.resize(self.oscillators.len(), (0, 0));
-        self.reverse_edges = vec![None; self.coupling.len()];
-        self.gauge_scratch.resize(self.coupling.len(), f64::NAN);
+        self.rebuild_coupling_scratch();
 
         for (public_idx, &(ni, nj, gamma, gauge)) in self.coupling.iter().enumerate() {
             if let (Some(ii), Some(ij)) = (self.lookup_idx(ni), self.lookup_idx(nj)) {
@@ -951,9 +953,28 @@ impl QuantumKuramotoNetwork {
         self.dirty = false;
     }
 
+    #[inline]
+    fn rebuild_coupling_scratch(&mut self) {
+        let edge_len = self.coupling.len();
+        self.reverse_edges.clear();
+        self.reverse_edges.resize(edge_len, None);
+        self.gauge_scratch.clear();
+        self.gauge_scratch.resize(edge_len, f64::NAN);
+    }
+
     fn rebuild_triangles(&mut self) {
         self.triangles.clear();
-        self.edge_to_triangles = vec![Vec::new(); self.coupling.len()];
+        std::mem::swap(&mut self.edge_to_triangles, &mut self.triangle_scratch);
+        let edge_len = self.coupling.len();
+        self.edge_to_triangles.clear();
+        if self.triangle_scratch.len() < edge_len {
+            self.triangle_scratch.resize_with(edge_len, Vec::new);
+        }
+        for bucket in self.triangle_scratch.iter_mut().take(edge_len) {
+            bucket.clear();
+        }
+        self.edge_to_triangles
+            .extend(self.triangle_scratch.drain(..edge_len));
 
         for &(src_idx_u32, mid_idx_u32, _, _, edge_ij_u32) in &self.coupling_idx {
             let src_idx = src_idx_u32 as usize;

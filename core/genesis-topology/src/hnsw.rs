@@ -13,7 +13,7 @@
 /// PROHIBITED: Delaunay triangulation. PROHIBITED: `HashMap` in hot path.
 /// Adjacency lists stored as sorted Vec<(`NodeId`, f64)> with binary search.
 use std::cmp::Ordering;
-use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use genesis_math::{
@@ -961,6 +961,7 @@ pub struct HnswLayer0Soa {
 /// AX-ID: AXIOMA-013
 pub struct LockFreeHnswIndex {
     head: AtomicPtr<HnswGraph>,
+    cas_retries: AtomicU64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -994,6 +995,11 @@ impl HnswGraph {
             #[cfg(test)]
             fail_preinsert_index_conversion: false,
         }
+    }
+
+    #[inline]
+    fn clone_with_delta(&self) -> Self {
+        self.clone()
     }
 
     fn prevalidate_internal_idx_u32(new_idx: usize) -> Result<u32, GenesisError> {
@@ -1783,6 +1789,7 @@ impl LockFreeHnswIndex {
         let snapshot = Arc::new(HnswGraph::new(ef_construction));
         Self {
             head: AtomicPtr::new(Arc::into_raw(snapshot).cast_mut()),
+            cas_retries: AtomicU64::new(0),
         }
     }
 
@@ -1821,7 +1828,7 @@ impl LockFreeHnswIndex {
         loop {
             let base = self.load_snapshot();
             let current = Arc::as_ptr(&base).cast_mut();
-            let mut updated = (*base).clone();
+            let mut updated = (*base).clone_with_delta();
             updated.insert(id, vec)?;
             let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
 
@@ -1840,6 +1847,7 @@ impl LockFreeHnswIndex {
                     return Ok(());
                 }
                 Err(_) => {
+                    self.cas_retries.fetch_add(1, AtomicOrdering::Relaxed);
                     // SAFETY: CAS failed, so `candidate` was never published.
                     unsafe {
                         drop(Arc::from_raw(candidate));
@@ -1868,6 +1876,13 @@ impl LockFreeHnswIndex {
     /// AX-ID: AXIOMA-013
     pub fn layer0_soa(&self) -> HnswLayer0Soa {
         self.load_snapshot().layer0_soa()
+    }
+
+    /// Returns the cumulative number of CAS publication retries.
+    ///
+    /// AX-ID: AXIOMA-013
+    pub fn cas_retry_count(&self) -> u64 {
+        self.cas_retries.load(AtomicOrdering::Relaxed)
     }
 }
 
@@ -1937,11 +1952,9 @@ struct NeighborIter<'a> {
     /// Deduplicated node IDs already emitted, sorted ascending for binary search.
     ///
     /// # BN-07: SmallVec eliminates heap allocation
-    /// Inline layercity of 128 covers the theoretical maximum of unique neighbours
-    /// across all HNSW layers: M0 (32) + M × MAX_LAYERS (16 × 6 = 96) = 128.
-    /// The 99.9% common case (< 64 unique neighbours) never touches the heap.
+    /// Inline capacity of 64 keeps the common-case dedup path stack-only.
     /// Graceful spill to heap for rare deep-hierarchy nodes (no panic, no truncation).
-    seen: SmallVec<[u64; 128]>,
+    seen: SmallVec<[u64; 64]>,
 }
 
 impl Iterator for NeighborIter<'_> {

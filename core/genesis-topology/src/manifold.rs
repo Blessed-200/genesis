@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use arrayvec::ArrayVec;
 use genesis_math::SparseCliffordVector;
 use smallvec::SmallVec;
 
@@ -255,24 +256,16 @@ impl ManifoldCollector {
         // union across all layers is bounded by M0 in practice (layer-0 dominates).
         // Using M0 as the static bound; debug_assert guards correctness.
         use crate::hnsw::M0;
-        let mut neighbors_buf = [NodeId::INVALID; M0];
-        let mut neighbor_count = 0usize;
-
+        let mut neighbors: ArrayVec<NodeId, M0> = ArrayVec::new();
         for neighbor in self.graph.neighbors(id) {
-            debug_assert!(
-                neighbor_count < M0,
-                "BN-02: neighbor count {} exceeded M0 = {M0} — check HNSW degree bounds",
-                neighbor_count
-            );
-            if neighbor_count < M0 {
-                neighbors_buf[neighbor_count] = neighbor;
-                neighbor_count += 1;
+            if neighbors.len() == M0 {
+                break;
             }
+            neighbors.push(neighbor);
         }
-        let neighbors = &mut neighbors_buf[..neighbor_count];
 
         // Registrar edges nuevas.
-        for &v in neighbors.iter() {
+        for &v in &neighbors {
             self.h1_state.add_edge(id, v);
         }
 
@@ -284,7 +277,7 @@ impl ManifoldCollector {
         // comprobar if v and w are conectados → triangle (id, v, w).
         // Binary search on sorted stack array replaces HashSet lookup.
         // Complexity: O(K² · log K) per insertion. Para K=32: ~5120 ops — L1.
-        for i in 0..neighbor_count {
+        for i in 0..neighbors.len() {
             let v = neighbors[i];
             for w in self.graph.neighbors(v) {
                 // Only process each triangle once: w > v, w must also be neighbour of id.
