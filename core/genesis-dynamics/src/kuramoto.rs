@@ -140,7 +140,7 @@ pub struct QuantumKuramotoNetwork {
     rng_state: u64,
 
     /// Segunda sample Box-Muller pendiente of consumir.
-    spare_gaussian: Option<f64>,
+    spare_gaussian: f64, // f64::NAN = no buffered spare; valid samples are always finite
 
     /// Scratch for phases of the paso previous (Euler-Maruyama correct).
     /// Reutilizado between `steps`. Un only alloc, resize only in `add_oscillator`.
@@ -157,6 +157,10 @@ pub struct QuantumKuramotoNetwork {
 
     /// Scratch gauge updates by edge public. Use `NaN` as a "no update" sentinel.
     gauge_scratch: Vec<f64>,
+    /// Per-oscillator `contributes_to_sync()` mirror. 1 = Active or Saturated, 0 = Pruned.
+    /// Updated at every state-mutation site. Avoids loading oscillator state in the
+    /// O(N·E) coupling inner loop.
+    contrib_buf: Vec<u8>,
 
     /// Flag: the topology changed and must be recomputed indices and triangles.
     dirty: bool,
@@ -190,12 +194,13 @@ impl QuantumKuramotoNetwork {
             gauge_learning_rate: 0.01,
             curvature_damping: 0.1,
             rng_state: 0xdead_beef_cafe_babe_u64,
-            spare_gaussian: None,
+            spare_gaussian: f64::NAN,
             phase_scratch: Vec::new(),
             coupling_offsets: Vec::new(),
             amp_scratch: Vec::new(),
             sat_scratch: Vec::new(),
             gauge_scratch: Vec::new(),
+            contrib_buf: Vec::new(),
             dirty: false,
             triangles: Vec::new(),
             edge_to_triangles: Vec::new(),
@@ -230,8 +235,10 @@ impl QuantumKuramotoNetwork {
         }
 
         self.id_to_idx[raw] = idx;
+        let contributes = u8::from(osc.state.contributes_to_sync());
         self.oscillators.push(osc);
         self.phase_scratch.push([0.0; 5]);
+        self.contrib_buf.push(contributes);
         self.coupling_offsets.push((0, 0));
         self.amp_scratch.push(1.0);
         self.sat_scratch.push(0.0);
@@ -435,7 +442,7 @@ impl QuantumKuramotoNetwork {
         let sqrt_2k_t_dt = (self.temperature * (2.0 * dt)).sqrt();
 
         for i in 0..n {
-            if !self.oscillators[i].state.contributes_to_sync() {
+            if self.contrib_buf[i] == 0 {
                 continue;
             }
             let (start, end) = self.coupling_offsets[i];
@@ -576,7 +583,9 @@ impl QuantumKuramotoNetwork {
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn next_gaussian(&mut self) -> f64 {
-        if let Some(spare) = self.spare_gaussian.take() {
+        let spare = self.spare_gaussian;
+        if !spare.is_nan() {
+            self.spare_gaussian = f64::NAN;
             return spare;
         }
 
@@ -597,7 +606,7 @@ impl QuantumKuramotoNetwork {
         let r = (u1.ln() * -2.0).sqrt();
         let theta = u2 * (2.0 * core::f64::consts::PI);
         let (sin_theta, cos_theta) = theta.sin_cos();
-        self.spare_gaussian = Some(r * sin_theta);
+        self.spare_gaussian = r * sin_theta;
         r * cos_theta
     }
 
@@ -615,7 +624,7 @@ impl QuantumKuramotoNetwork {
         phase_scratch: &[[f64; 5]],
         coupling_idx: &[(u32, u32, f64, f64, u32)],
         coupling_offsets: &[(usize, usize)],
-        oscillators: &[crate::oscillator::QuantumOscillator],
+        contrib_buf: &[u8],
         i: usize,
     ) -> [f64; 5] {
         let mut sums = [0.0f64; 5];
@@ -626,7 +635,7 @@ impl QuantumKuramotoNetwork {
             let j = j_u32 as usize;
             // loop-invariant, hoisted
             // CRYSTAL: O40 — inevitable
-            let active = oscillators[j].state.contributes_to_sync() as i32 as f64;
+            let active = contrib_buf[j] as f64;
             #[allow(clippy::cast_possible_truncation)]
             let phi_j = &phase_scratch[j];
             for (g, sum_g) in sums.iter_mut().enumerate() {
@@ -641,7 +650,7 @@ impl QuantumKuramotoNetwork {
         for i in 0..n {
             // Skip oscillators that don't contribute to dynamics (Pruned state).
             // AX-ID: AXIOMA-008 (Saturated), AXIOMA-016 (Pruned)
-            if !self.oscillators[i].state.contributes_to_sync() {
+            if self.contrib_buf[i] == 0 {
                 continue;
             }
             // FIX-G: coupling_sums extracted to shared inline function.
@@ -649,7 +658,7 @@ impl QuantumKuramotoNetwork {
                 &self.phase_scratch,
                 &self.coupling_idx,
                 &self.coupling_offsets,
-                &self.oscillators,
+                &self.contrib_buf,
                 i,
             );
             for g in 0..5 {
@@ -665,7 +674,7 @@ impl QuantumKuramotoNetwork {
         for i in 0..n {
             // Skip oscillators that don't contribute to dynamics (Pruned state).
             // AX-ID: AXIOMA-008 (Saturated), AXIOMA-016 (Pruned)
-            if !self.oscillators[i].state.contributes_to_sync() {
+            if self.contrib_buf[i] == 0 {
                 continue;
             }
             // FIX-G: coupling_sums extracted to shared inline function.
@@ -673,7 +682,7 @@ impl QuantumKuramotoNetwork {
                 &self.phase_scratch,
                 &self.coupling_idx,
                 &self.coupling_offsets,
-                &self.oscillators,
+                &self.contrib_buf,
                 i,
             );
             // FIX-D: Pre-generate all 5 Gaussian samples before the update loop.
@@ -1077,6 +1086,9 @@ impl QuantumKuramotoNetwork {
             // Mark as pruned so it is skipped in step loops.
             // Tombstone: mark as Pruned at timestamp 0 to skip in step loops.
             osc.state = crate::oscillator::OscillatorState::Pruned { at_ns: 0 };
+        }
+        if let Some(flag) = self.contrib_buf.get_mut(idx) {
+            *flag = 0u8;
         }
 
         Ok(())
@@ -1592,11 +1604,11 @@ mod tests {
         let mut net = QuantumKuramotoNetwork::new(0.1);
         let first = net.next_gaussian();
         let rng_after_first = net.rng_state;
-        assert!(net.spare_gaussian.is_some());
+        assert!(!net.spare_gaussian.is_nan());
 
         let second = net.next_gaussian();
         assert_eq!(net.rng_state, rng_after_first);
-        assert!(net.spare_gaussian.is_none());
+        assert!(net.spare_gaussian.is_nan());
 
         // Must continue delivering valid samples without degenerating.
         assert!(first.is_finite());
@@ -1752,6 +1764,20 @@ mod prerequisite_api_tests {
         net.remove_oscillator(id).unwrap();
         // After removal: amplitude_norm should return 0.0 (Pruned oscillator has zero amplitudes)
         assert_eq!(net.amplitude_norm(id), 0.0);
+    }
+
+    #[test]
+    fn add_oscillator_pruned_state_initializes_contribution_mirror() {
+        let mut net = QuantumKuramotoNetwork::new(0.01);
+        let id = node(12);
+        let mut osc = make_osc(id);
+        osc.mark_pruned(42);
+
+        net.add_oscillator(osc).unwrap();
+        net.step(0.5);
+
+        let phase_after = net.oscillators[0].phases[0];
+        assert!((phase_after - 0.0).abs() < 1e-12);
     }
 
     #[test]
