@@ -64,20 +64,25 @@ const fn seed_sign(seed: u64) -> f64 {
     1.0 - 2.0 * ((seed >> 63) as f64)
 }
 
-/// One LSH table: sorted (`bucket_id`, Vec<NodeId>) pairs, binary searched.
+/// One LSH table backed by parallel sorted arrays.
+///
+/// `bucket_ids` is the binary-search key array; `bucket_nodes` stores payloads
+/// at matching indices.
 struct LshTable {
-    buckets: Vec<(u32, Vec<NodeId>)>,
+    bucket_ids: Vec<u32>,
+    bucket_nodes: Vec<Vec<NodeId>>,
 }
 
 impl LshTable {
     const fn new() -> Self {
         Self {
-            buckets: Vec::new(),
+            bucket_ids: Vec::new(),
+            bucket_nodes: Vec::new(),
         }
     }
 
     fn pos(&self, bucket: u32) -> Result<usize, usize> {
-        self.buckets.binary_search_by_key(&bucket, |&(b, _)| b)
+        self.bucket_ids.binary_search(&bucket)
     }
 
     fn insert(&mut self, bucket: u32, id: NodeId) {
@@ -85,23 +90,26 @@ impl LshTable {
             Ok(i) => {
                 // Bucket already exists: insert `id` while preserving order by get().
                 // binary_search: O(log bucket_size) instead of O(bucket_size).
-                // Invariant of the bucket: Vec<NodeId> is always sorted by id.get().
-                let bucket_vec = &mut self.buckets[i].1;
+                // Bucket invariant: Vec<NodeId> is always sorted by id.get().
+                let bucket_vec = &mut self.bucket_nodes[i];
                 match bucket_vec.binary_search_by_key(&id.get(), |n| n.get()) {
-                    Ok(_) => {} // ya presente — no duplicar
+                    Ok(_) => {} // already present — avoid duplicates
                     Err(pos) => bucket_vec.insert(pos, id),
                 }
             }
             Err(i) => {
-                // Bucket new: insert in position ordenada of the Vec of buckets.
-                self.buckets.insert(i, (bucket, vec![id]));
+                // New bucket: insert at the sorted bucket position.
+                self.bucket_ids.insert(i, bucket);
+                self.bucket_nodes.insert(i, vec![id]);
             }
         }
+
+        debug_assert!(self.bucket_ids.len() <= (1usize << N_PROJECTIONS));
     }
 
     fn get(&self, bucket: u32) -> &[NodeId] {
         match self.pos(bucket) {
-            Ok(i) => &self.buckets[i].1,
+            Ok(i) => &self.bucket_nodes[i],
             Err(_) => &[],
         }
     }
@@ -212,8 +220,8 @@ impl CliffordHashTable {
     /// Return candidate `NodeIds` for a query (union of all matching buckets).
     ///
     /// Complexity: `O(sum(bucket_sizes) * log N_TABLES)`.
-    /// Buckets are already sorted by `NodeId::get()`, and are merged with a k-way merge
-    /// (min-heap) for eliminar duplicados without `contains` lineal.
+    /// Buckets are already sorted by `NodeId::get()`, and are merged with a
+    /// k-way merge to remove duplicates without linear `contains` scans.
     ///
     /// AX-ID: AXIOMA-013
     pub fn candidates<'a>(
