@@ -235,9 +235,10 @@ impl QuantumKuramotoNetwork {
         }
 
         self.id_to_idx[raw] = idx;
+        let contributes = u8::from(osc.state.contributes_to_sync());
         self.oscillators.push(osc);
         self.phase_scratch.push([0.0; 5]);
-        self.contrib_buf.push(1u8);
+        self.contrib_buf.push(contributes);
         self.coupling_offsets.push((0, 0));
         self.amp_scratch.push(1.0);
         self.sat_scratch.push(0.0);
@@ -1763,6 +1764,20 @@ mod prerequisite_api_tests {
         net.remove_oscillator(id).unwrap();
         // After removal: amplitude_norm should return 0.0 (Pruned oscillator has zero amplitudes)
         assert_eq!(net.amplitude_norm(id), 0.0);
+    }
+
+    #[test]
+    fn add_oscillator_pruned_state_initializes_contribution_mirror() {
+        let mut net = QuantumKuramotoNetwork::new(0.01);
+        let id = node(12);
+        let mut osc = make_osc(id);
+        osc.mark_pruned(42);
+
+        net.add_oscillator(osc).unwrap();
+        net.step(0.5);
+
+        let phase_after = net.oscillators[0].phases[0];
+        assert!((phase_after - 0.0).abs() < 1e-12);
     }
 
     #[test]
