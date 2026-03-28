@@ -78,7 +78,9 @@ pub use geodesic::fast_bivector_distance;
 pub use geodesic::{bivector_interaction, geometric_distance};
 pub use hnsw::HnswGraph;
 pub use hnsw::{HnswLayer0Soa, LockFreeHnswIndex};
-pub use incremental_cohomology::{IncrementalH1State, LockFreeIncrementalH1};
+pub use incremental_cohomology::{
+    benchmark_incremental_d2_xor_columns, IncrementalH1State, LockFreeIncrementalH1,
+};
 pub use lsh::CliffordHashTable;
 pub use manifold::{HyperbolicCoord, ManifoldCollector};
 pub use rips::RipsComplex;

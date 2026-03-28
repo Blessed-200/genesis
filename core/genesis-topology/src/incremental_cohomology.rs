@@ -819,6 +819,43 @@ impl Drop for LockFreeIncrementalH1 {
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+/// Benchmark helper for the incremental D2 XOR primitive over Z/2Z columns.
+///
+/// Generates two synthetic columns at the requested density and repeatedly
+/// applies the same XOR primitive used by `IncrementalD2` reductions.
+///
+/// AX-ID: AXIOMA-007, AXIOMA-009, H_restricción (LEY_FUNDACIONAL §3.5)
+#[must_use]
+pub fn benchmark_incremental_d2_xor_columns(
+    num_edges: usize,
+    density_permille: u16,
+    iterations: usize,
+) -> usize {
+    let bounded_density = density_permille.min(1000);
+    let mut left = SmallVec::<[u32; 8]>::new();
+    let mut right = SmallVec::<[u32; 8]>::new();
+
+    for edge in 0..num_edges {
+        if (edge * 1000) % 1000 < usize::from(bounded_density) {
+            left.push(edge as u32);
+        }
+        if ((edge * 997) + 17) % 1000 < usize::from(bounded_density) {
+            right.push(edge as u32);
+        }
+    }
+
+    let rhs = Column::Sparse(right);
+    let mut col = Column::Sparse(left);
+    for _ in 0..iterations.max(1) {
+        col = xor_columns_opt(col, &rhs, num_edges);
+    }
+
+    match col {
+        Column::Sparse(sv) => sv.len(),
+        Column::Dense(bits) => bits.iter().map(|w| w.count_ones() as usize).sum(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

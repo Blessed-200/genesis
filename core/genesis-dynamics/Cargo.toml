@@ -21,7 +21,16 @@ smallvec         = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = { workspace = true }
+iai-callgrind = { workspace = true }
 
 [[bench]]
 name    = "dynamics"
+harness = false
+
+[[bench]]
+name    = "iai_hotpaths"
+harness = false
+
+[[bench]]
+name    = "vfe_hotpaths"
 harness = false
