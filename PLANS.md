@@ -1025,3 +1025,28 @@ Remaining risk:
 - `cargo test --workspace --release`
 - `cargo clippy --workspace -- -D warnings`
 - `cargo bench -p genesis-dynamics --bench dynamics -- kuramoto --output-format bencher`
+
+## 1.0 genesis-math Phase 1 FMA micro-optimization sweep (2026-03-28)
+
+### Root cause
+- Several hot-path accumulation loops in `genesis-math` still use separate multiply/add/sub sequences that can be fused into explicit FMA forms.
+- These patterns increase instruction count and register pressure in constructor and distance/product kernels that execute per-node/per-edge in topology flows.
+
+### File-level actions
+1. `core/genesis-math/src/grade.rs`
+   - Fuse Kahan compensation term into `mul_add` in `compute_clifford_norm_sq`.
+2. `core/genesis-math/src/multivector.rs`
+   - Fuse metadata norm Kahan term into `mul_add`.
+   - Fuse weighted squared-distance accumulation into `mul_add` in dense metric loop.
+3. `core/genesis-math/src/product.rs`
+   - Fuse bivector buffer accumulation and weighted lane reduction in both sparse and lhs-dense product helpers.
+4. `core/genesis-math/src/semantic.rs`
+   - Fuse commutator half-scale accumulations into `mul_add` for both AB and BA passes.
+
+### Validation
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
+### Complexity/cache target
+- Preserve existing asymptotic complexity and data layout, while lowering arithmetic instruction count in hot loops through explicit fused operations.
