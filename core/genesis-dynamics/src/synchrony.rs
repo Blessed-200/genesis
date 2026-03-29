@@ -150,47 +150,62 @@ const fn cos_kernel(_y: f64, y2: f64) -> f64 {
 ///
 /// r ∈ [0.0, 1.0]. AX-ID: AXIOMA-006, AXIOMA-008, H_dinámica (LEY_FUNDACIONAL §4)
 pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
-    let oscs = network.phases();
-    if oscs.is_empty() {
+    let blocks = network.oscillators.blocks();
+    let n = network.node_count();
+    if n == 0 {
         return 0.0;
     }
 
     const N_GRADES: usize = 5;
     const EPS: f64 = 1e-30;
-    /// Fixed chunk size for deterministic partitioning across thread counts.
-    /// 128 oscillators × 5 grades keeps chunk-local working set in L1 cache.
-    const DETERMINISTIC_CHUNK: usize = 128;
+    /// Fixed chunk size in units of blocks (8 lanes each).
+    const DETERMINISTIC_BLOCK_CHUNK: usize = 16;
 
     /// Inner reduction over a slice with deterministic local iteration order.
     #[inline]
-    fn reduce_slice(oscs: &[crate::oscillator::QuantumOscillator]) -> [(f64, f64, f64); 5] {
+    fn reduce_blocks(
+        blocks: &[crate::oscillator::OscillatorBlock],
+        valid_lanes: usize,
+    ) -> [(f64, f64, f64); 5] {
         let mut acc = [(0.0f64, 0.0f64, 0.0f64); 5];
-        for osc in oscs {
-            let phases = &osc.phases;
-            let amplitudes = &osc.amplitudes;
-            // loop-invariant, hoisted
-            // CRYSTAL: O5 — inevitable
-            for (g, grade_acc) in acc.iter_mut().enumerate() {
-                let a = amplitudes[g];
-                #[cfg(feature = "poly_trig")]
-                {
-                    grade_acc.0 = a.mul_add(poly_cos(phases[g]), grade_acc.0);
-                    grade_acc.1 = a.mul_add(poly_sin(phases[g]), grade_acc.1);
+        let total_lanes = blocks.len() * 8;
+        let tail_cutoff = total_lanes.saturating_sub(valid_lanes);
+        for (bi, block) in blocks.iter().enumerate() {
+            let lane_limit = if bi == blocks.len().saturating_sub(1) && tail_cutoff > 0 {
+                8 - tail_cutoff
+            } else {
+                8
+            };
+            for lane in 0..lane_limit {
+                for (g, grade_acc) in acc.iter_mut().enumerate() {
+                    let a = block.amplitudes[g][lane];
+                    let phase = block.phases[g][lane];
+                    #[cfg(feature = "poly_trig")]
+                    {
+                        grade_acc.0 = a.mul_add(poly_cos(phase), grade_acc.0);
+                        grade_acc.1 = a.mul_add(poly_sin(phase), grade_acc.1);
+                    }
+                    #[cfg(not(feature = "poly_trig"))]
+                    {
+                        grade_acc.0 = a.mul_add(phase.cos(), grade_acc.0);
+                        grade_acc.1 = a.mul_add(phase.sin(), grade_acc.1);
+                    }
+                    grade_acc.2 += a;
                 }
-                #[cfg(not(feature = "poly_trig"))]
-                {
-                    grade_acc.0 = a.mul_add(phases[g].cos(), grade_acc.0);
-                    grade_acc.1 = a.mul_add(phases[g].sin(), grade_acc.1);
-                }
-                grade_acc.2 += a;
             }
         }
         acc
     }
 
-    let mut partials: Vec<_> = oscs
-        .par_chunks(DETERMINISTIC_CHUNK)
-        .map(reduce_slice)
+    let mut partials: Vec<_> = blocks
+        .par_chunks(DETERMINISTIC_BLOCK_CHUNK)
+        .enumerate()
+        .map(|(chunk_idx, block_chunk)| {
+            let lanes_before = chunk_idx * DETERMINISTIC_BLOCK_CHUNK * 8;
+            let remaining = n.saturating_sub(lanes_before);
+            let valid = remaining.min(block_chunk.len() * 8);
+            reduce_blocks(block_chunk, valid)
+        })
         .collect();
     let chunk_count = partials.len();
 

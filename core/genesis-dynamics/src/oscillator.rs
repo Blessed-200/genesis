@@ -74,6 +74,224 @@ pub struct QuantumOscillator {
     pub state: OscillatorState,
 }
 
+/// 8-lane block-SoA storage for oscillator state.
+///
+/// The internal memory layout is `[grade][lane]` for each numeric field, enabling
+/// grade-wise contiguous loads for SIMD-capable hot paths.
+///
+/// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy)]
+pub struct OscillatorBlock {
+    /// Phase values `[grade][lane]`.
+    pub phases: [[f64; 8]; 5],
+    /// Amplitude values `[grade][lane]`.
+    pub amplitudes: [[f64; 8]; 5],
+    /// Natural frequencies `[grade][lane]`.
+    pub frequencies: [[f64; 8]; 5],
+    /// Node identifiers by lane.
+    pub node_ids: [NodeId; 8],
+    /// Lifecycle state by lane.
+    pub states: [OscillatorState; 8],
+}
+
+impl Default for OscillatorBlock {
+    fn default() -> Self {
+        Self {
+            phases: [[0.0; 8]; 5],
+            amplitudes: [[0.0; 8]; 5],
+            frequencies: [[0.0; 8]; 5],
+            node_ids: [NodeId::INVALID; 8],
+            states: [OscillatorState::Pruned { at_ns: 0 }; 8],
+        }
+    }
+}
+
+/// Block-SoA slab wrapper that preserves the existing oscillator-facing API.
+///
+/// `lanes` remains as an AoS compatibility projection for public methods and
+/// tests, while `blocks` is the hot-path storage used by Kuramoto and synchrony.
+///
+/// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+#[derive(Debug, Clone, Default)]
+pub struct OscillatorSlab {
+    lanes: Vec<QuantumOscillator>,
+    blocks: Vec<OscillatorBlock>,
+}
+
+impl OscillatorSlab {
+    /// Create an empty slab.
+    #[inline]
+    pub const fn new() -> Self {
+        Self {
+            lanes: Vec::new(),
+            blocks: Vec::new(),
+        }
+    }
+
+    /// Number of oscillators stored in the slab.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.lanes.len()
+    }
+
+    /// Returns true when the slab is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.lanes.is_empty()
+    }
+
+    /// Returns an immutable AoS compatibility view.
+    #[inline]
+    pub fn as_slice(&self) -> &[QuantumOscillator] {
+        &self.lanes
+    }
+
+    /// Returns a mutable AoS compatibility view and marks all blocks stale.
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [QuantumOscillator] {
+        &mut self.lanes
+    }
+
+    /// Immutable oscillator lookup by index.
+    #[inline]
+    pub fn get(&self, idx: usize) -> Option<&QuantumOscillator> {
+        self.lanes.get(idx)
+    }
+
+    /// Mutable oscillator lookup by index.
+    #[inline]
+    pub fn get_mut(&mut self, idx: usize) -> Option<&mut QuantumOscillator> {
+        self.lanes.get_mut(idx)
+    }
+
+    /// Push one oscillator and update its destination block lane.
+    #[inline]
+    pub fn push(&mut self, osc: QuantumOscillator) {
+        self.lanes.push(osc);
+        self.rebuild_blocks();
+    }
+
+    /// Mutable iterator over compatibility lanes.
+    #[inline]
+    pub fn iter_mut(&mut self) -> core::slice::IterMut<'_, QuantumOscillator> {
+        self.lanes.iter_mut()
+    }
+
+    /// Immutable iterator over compatibility lanes.
+    #[inline]
+    pub fn iter(&self) -> core::slice::Iter<'_, QuantumOscillator> {
+        self.lanes.iter()
+    }
+
+    /// Immutable view over SoA blocks.
+    #[inline]
+    pub fn blocks(&self) -> &[OscillatorBlock] {
+        &self.blocks
+    }
+
+    /// Mutable view over SoA blocks.
+    #[inline]
+    pub fn blocks_mut(&mut self) -> &mut [OscillatorBlock] {
+        &mut self.blocks
+    }
+
+    /// Rebuild SoA blocks from AoS lanes.
+    ///
+    /// HOT PATH SUPPORT: called at insertion and after batched phase updates.
+    #[inline]
+    pub fn rebuild_blocks(&mut self) {
+        let n = self.lanes.len();
+        let block_count = (n + 7) / 8;
+        self.blocks
+            .resize_with(block_count, OscillatorBlock::default);
+        for block in &mut self.blocks {
+            *block = OscillatorBlock::default();
+        }
+        for (idx, osc) in self.lanes.iter().enumerate() {
+            let b = idx / 8;
+            let lane = idx % 8;
+            self.blocks[b].node_ids[lane] = osc.node_id;
+            self.blocks[b].states[lane] = osc.state;
+            for g in 0..5 {
+                self.blocks[b].phases[g][lane] = osc.phases[g];
+                self.blocks[b].amplitudes[g][lane] = osc.amplitudes[g];
+                self.blocks[b].frequencies[g][lane] = osc.frequencies[g];
+            }
+        }
+    }
+
+    /// Write block values back into AoS lane storage.
+    #[inline]
+    pub fn sync_lanes_from_blocks(&mut self) {
+        for idx in 0..self.lanes.len() {
+            let b = idx / 8;
+            let lane = idx % 8;
+            let block = &self.blocks[b];
+            let osc = &mut self.lanes[idx];
+            osc.node_id = block.node_ids[lane];
+            osc.state = block.states[lane];
+            for g in 0..5 {
+                osc.phases[g] = block.phases[g][lane];
+                osc.amplitudes[g] = block.amplitudes[g][lane];
+                osc.frequencies[g] = block.frequencies[g][lane];
+            }
+        }
+    }
+}
+
+impl core::ops::Index<usize> for OscillatorSlab {
+    type Output = QuantumOscillator;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.lanes[index]
+    }
+}
+
+impl core::ops::IndexMut<usize> for OscillatorSlab {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.lanes[index]
+    }
+}
+
+impl core::ops::Deref for OscillatorSlab {
+    type Target = [QuantumOscillator];
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.lanes
+    }
+}
+
+impl core::ops::DerefMut for OscillatorSlab {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.lanes
+    }
+}
+
+impl<'a> IntoIterator for &'a OscillatorSlab {
+    type Item = &'a QuantumOscillator;
+    type IntoIter = core::slice::Iter<'a, QuantumOscillator>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.lanes.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut OscillatorSlab {
+    type Item = &'a mut QuantumOscillator;
+    type IntoIter = core::slice::IterMut<'a, QuantumOscillator>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.lanes.iter_mut()
+    }
+}
+
 impl QuantumOscillator {
     #[inline]
     const fn default_state() -> OscillatorState {

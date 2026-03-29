@@ -1197,3 +1197,33 @@ Remaining risk:
 - `cargo bench -p genesis-topology --bench iai_hotpaths --no-run`
 - `cargo bench -p genesis-topology --bench hnsw_hotpaths -- --noplot`
 - `cargo bench -p genesis-dynamics --bench vfe_hotpaths -- --noplot`
+
+## 1.5 genesis-dynamics Phase 3 block-SoA migration for Kuramoto + synchrony hot paths (2026-03-29)
+
+### Root cause
+- `QuantumKuramotoNetwork` still stores oscillators in AoS `Vec<QuantumOscillator>`, so coupling and synchrony loops perform strided loads for phase/amplitude/frequency fields.
+- Kuramoto coupling and synchrony reductions iterate one oscillator at a time, preventing efficient 8-lane block traversal and cache-friendly grade-major access.
+- Existing parallel synchrony chunking is oscillator-count based, so rayon partitions may split cache lines and block-local data.
+
+### File-level actions
+1. `core/genesis-dynamics/src/oscillator.rs`
+   - Introduce `OscillatorBlock` (`#[repr(C, align(64))]`) with `[grade][lane]` arrays for phases/amplitudes/frequencies and lane metadata (`node_ids`, `states`).
+   - Introduce `OscillatorSlab` wrapper backed by `Vec<OscillatorBlock>` plus compatibility AoS view methods needed by current public API.
+   - Add synchronization helpers to keep AoS and block-SoA views coherent on insertion and updates.
+2. `core/genesis-dynamics/src/kuramoto.rs`
+   - Replace `Vec<QuantumOscillator>` storage with `OscillatorSlab` in `QuantumKuramotoNetwork`.
+   - Refactor `step()` inner loops to iterate by block and lane while preserving Euler-Maruyama semantics.
+   - Add architecture-gated SIMD intrinsics helpers (AVX2/NEON) for block coupling accumulation primitives, with scalar fallback.
+3. `core/genesis-dynamics/src/synchrony.rs`
+   - Refactor `synchrony_order_fast()` to reduce over slab blocks.
+   - Keep poly trig kernels and apply them over lane batches in block order.
+   - Align rayon partitioning to whole-block boundaries for deterministic/cache-local reduction.
+
+### Validation
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-dynamics -- kuramoto_step --output-format bencher`
+
+### Complexity/cache target
+- Preserve O(E·G + N·G) asymptotics while improving memory locality from AoS strided loads to block-SoA contiguous `[grade][lane]` traversal and reducing gather pressure in hot loops.
