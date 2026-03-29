@@ -34,3 +34,7 @@ harness = false
 [[bench]]
 name    = "hnsw_hotpaths"
 harness = false
+
+[[bench]]
+name    = "triangle_detection"
+harness = false

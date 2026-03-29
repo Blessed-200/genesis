@@ -269,10 +269,27 @@ impl ManifoldCollector {
         // O(K log K) where K ≤ MAX_UNIQUE_NEIGHBOR_BUDGET. Entirely stack-backed.
         neighbors.sort_unstable();
 
-        // Detect triangles: for each pair (v, w) of vecinos of `id`,
-        // comprobar if v and w are conectados → triangle (id, v, w).
+        // Detect triangles: for each pair (v, w) of neighbors of `id`,
+        // check if v and w are connected → triangle (id, v, w).
         // Binary search on sorted stack array replaces HashSet lookup.
-        // Complexity: O(K² · log K) per insertion. Para K=32: ~5120 ops — L1.
+        //
+        // Complexity per insertion:
+        // - Sort: O(K log K)
+        // - Triangle detection: O(K² log K) in worst case
+        // where K = MAX_UNIQUE_NEIGHBOR_BUDGET = M0 + (MAX_LAYERS - 1) × M
+        //            = 32 + 15 × 16 = 272 (derived from HNSW degree bounds).
+        //
+        // Cache behavior:
+        // - ArrayVec is stack-allocated: L1-friendly for typical K ≤ 32.
+        // - For larger K approaching MAX_UNIQUE_NEIGHBOR_BUDGET (272), stack pressure
+        //   increases to ~2KB. May degrade from L1 to L2/L3 depending on cache size,
+        //   but still avoids heap allocations and TLB misses.
+        //
+        // Allocation: Zero heap allocations due to ArrayVec.
+        //
+        // Performance validation: A Criterion microbenchmark in benches/triangle_detection.rs
+        // measures time and cache behavior across representative K values to validate
+        // that this implementation meets performance requirements.
         for i in 0..neighbors.len() {
             let v = neighbors[i];
             for w in self.graph.neighbors(v) {
