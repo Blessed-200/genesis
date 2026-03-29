@@ -81,22 +81,19 @@ impl SlabBlock {
 /// concurrent writes to the pointer can invalidate the cache line containing
 /// the counter, causing unnecessary cache coherence traffic (false sharing).
 ///
-/// This wrapper pads the `AtomicU64` to occupy a full 64-byte cache line,
+/// This wrapper uses `#[repr(C, align(64))]` to occupy a full 64-byte cache line,
 /// ensuring it does not share a cache line with adjacent fields.
 ///
 /// AX-ID: AXIOMA-013 (lock-free HNSW performance)
 #[repr(C, align(64))]
 struct CachePadded<T> {
     value: T,
-    #[allow(dead_code)]
-    _padding: [u8; 64 - std::mem::size_of::<T>()],
 }
 
 impl<T: Default> Default for CachePadded<T> {
     fn default() -> Self {
         Self {
             value: T::default(),
-            _padding: [0; 64 - std::mem::size_of::<T>()],
         }
     }
 }
@@ -105,7 +102,6 @@ impl<T> CachePadded<T> {
     fn new(value: T) -> Self {
         Self {
             value,
-            _padding: [0; 64 - std::mem::size_of::<T>()],
         }
     }
 }
@@ -3470,6 +3466,24 @@ mod tests {
             found,
             "at least one query must produce different metric-vs-l2 ordering"
         );
+    }
+
+    #[test]
+    fn cas_retry_count_returns_atomic_value() {
+        let index = LockFreeHnswIndex::new(16);
+
+        // Initially, the retry count should be 0
+        assert_eq!(index.cas_retry_count(), 0);
+
+        // Manually set the atomic counter to a known value
+        index.cas_retries.value.store(42, AtomicOrdering::Relaxed);
+
+        // Verify cas_retry_count returns the stored value
+        assert_eq!(index.cas_retry_count(), 42);
+
+        // Test with another value
+        index.cas_retries.value.store(1337, AtomicOrdering::Relaxed);
+        assert_eq!(index.cas_retry_count(), 1337);
     }
 }
 

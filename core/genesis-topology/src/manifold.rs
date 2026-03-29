@@ -256,7 +256,7 @@ impl ManifoldCollector {
         use crate::hnsw::MAX_UNIQUE_NEIGHBOR_BUDGET;
         let mut neighbors: ArrayVec<NodeId, MAX_UNIQUE_NEIGHBOR_BUDGET> = ArrayVec::new();
         for neighbor in self.graph.neighbors(id) {
-            neighbors.push(neighbor);
+            neighbors.try_push(neighbor).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })?;
         }
         debug_assert!(neighbors.len() <= MAX_UNIQUE_NEIGHBOR_BUDGET);
 
