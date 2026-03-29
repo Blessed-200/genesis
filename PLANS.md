@@ -1,3 +1,40 @@
+# PLANS
+
+## 1.4 Hot-path allocation elimination in genesis-dynamics/genesis-topology (2026-03-28)
+
+### Root cause
+
+- `QuantumKuramotoNetwork::rebuild_triangles` re-allocates nested vectors with `vec![Vec::new(); len]` on each topology rebuild.
+- `RipsComplex::build` uses `Vec<Vec<usize>>` adjacency that allocates per-node vectors and causes allocator churn in dense builds.
+- `LockFreeHnswIndex::insert` performs full snapshot clone on each CAS retry without visibility into contention rate.
+- `ManifoldCollector::insert` and HNSW neighbor iterators still leave room to tighten stack-first neighbor buffering and dedup memory behavior.
+
+### File-level actions
+
+1. `core/genesis-dynamics/src/kuramoto.rs`
+   - Add `triangle_scratch: Vec<Vec<usize>>` to `QuantumKuramotoNetwork` and pre-size/reuse nested storage.
+   - Replace rebuild allocation patterns in `rebuild_triangles` and coupling-related scratch rebuild with `clear()` + `resize_with(...)` reuse.
+2. `core/genesis-topology/src/hnsw.rs`
+   - Tighten `NeighborIter` seen-buffer inline capacity for stack-first behavior in dedup path.
+   - Add lock-free CAS retry instrumentation and introduce a `clone_with_delta` helper used by snapshot publication path.
+3. `core/genesis-topology/src/manifold.rs`
+   - Use `ArrayVec<NodeId, 32>` for insert-time neighbor buffering and keep triangle detection allocation-free.
+4. `core/genesis-topology/src/rips.rs`
+   - Replace `Vec<Vec<usize>>` adjacency with CSR-style `adjacency_offsets` + `adjacency_data`.
+   - Precompute expected edge density/capacity and reserve edge/adjacency buffers up-front.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo test --release -p genesis-topology -- invariant --nocapture`
+- `cargo test --release -p genesis-dynamics -- invariant --nocapture`
+
+### Complexity/cache target
+
+- Keep asymptotic complexity unchanged while reducing allocator traffic in repeated rebuild/insert loops and improving contiguous adjacency traversal via CSR in Rips triangle enumeration.
+
 ## 1.3 genesis-topology Phase 2 SoA layout migration for incremental edge and LSH bucket maps (2026-03-28)
 
 ### Root cause

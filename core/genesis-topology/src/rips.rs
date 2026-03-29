@@ -20,6 +20,16 @@ struct Triangle {
     w: NodeId,
 }
 
+/// Borrowed CSR adjacency view.
+///
+/// AX-ID: AXIOMA-007
+pub struct CsrAdjacency<'a> {
+    /// Flat neighbour index payload in CSR row-major order.
+    pub data: &'a [usize],
+    /// Row offsets where node `i` spans `offsets[i]..offsets[i+1]` inside `data`.
+    pub offsets: &'a [usize],
+}
+
 /// Vietoris-Rips complex built from an `HnswGraph`, capped at dimension 2.
 ///
 /// Simplices:
@@ -33,6 +43,8 @@ pub struct RipsComplex {
     dim0: Vec<[NodeId; 1]>,
     dim1: Vec<[NodeId; 2]>,
     dim2: Vec<[NodeId; 3]>,
+    adjacency_data: Vec<usize>,
+    adjacency_offsets: Vec<usize>,
 }
 
 impl RipsComplex {
@@ -55,6 +67,8 @@ impl RipsComplex {
                 dim0,
                 dim1: Vec::new(),
                 dim2: Vec::new(),
+                adjacency_data: Vec::new(),
+                adjacency_offsets: vec![0],
             };
         }
 
@@ -65,9 +79,15 @@ impl RipsComplex {
             .collect();
         id_to_idx.sort_unstable_by_key(|&(id, _)| id);
 
-        // Compact adjacency by internal node index.
-        let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); node_count];
-        let mut edges: Vec<Edge> = Vec::new();
+        let observed_degree_sum: usize =
+            node_ids.iter().map(|&id| graph.neighbors(id).count()).sum();
+        let observed_avg_degree = observed_degree_sum as f64 / node_count as f64;
+        let epsilon_scale = (epsilon / (1.0 + epsilon.abs())).clamp(0.05, 1.0);
+        let expected_avg_degree = (observed_avg_degree * epsilon_scale).ceil().max(1.0) as usize;
+        let expected_edge_count = (node_count * expected_avg_degree) / 2;
+
+        let mut edges: Vec<Edge> = Vec::with_capacity(expected_edge_count);
+        let mut accepted_edges: Vec<(usize, usize)> = Vec::with_capacity(expected_edge_count);
 
         for (u_idx, &u) in node_ids.iter().enumerate() {
             if let Some(u_vec) = graph.vector(u) {
@@ -80,17 +100,34 @@ impl RipsComplex {
                         let d = geometric_distance(u_vec, v_vec);
                         if d <= epsilon {
                             edges.push(Edge { u, v });
-                            adjacency[u_idx].push(v_idx);
-                            adjacency[v_idx].push(u_idx);
+                            accepted_edges.push((u_idx, v_idx));
                         }
                     }
                 }
             }
         }
-
-        for nb in &mut adjacency {
-            nb.sort_unstable();
-            nb.dedup();
+        let mut adjacency_offsets = vec![0usize; node_count + 1];
+        for &(u_idx, v_idx) in &accepted_edges {
+            adjacency_offsets[u_idx + 1] += 1;
+            adjacency_offsets[v_idx + 1] += 1;
+        }
+        for i in 1..=node_count {
+            adjacency_offsets[i] += adjacency_offsets[i - 1];
+        }
+        let mut adjacency_data = vec![0usize; adjacency_offsets[node_count]];
+        let mut write_heads = adjacency_offsets[..node_count].to_vec();
+        for &(u_idx, v_idx) in &accepted_edges {
+            let u_write = write_heads[u_idx];
+            adjacency_data[u_write] = v_idx;
+            write_heads[u_idx] += 1;
+            let v_write = write_heads[v_idx];
+            adjacency_data[v_write] = u_idx;
+            write_heads[v_idx] += 1;
+        }
+        for u_idx in 0..node_count {
+            let start = adjacency_offsets[u_idx];
+            let end = adjacency_offsets[u_idx + 1];
+            adjacency_data[start..end].sort_unstable();
         }
 
         edges.sort_unstable_by_key(|e| (e.u.get(), e.v.get()));
@@ -102,9 +139,14 @@ impl RipsComplex {
         // keeps memory accesses linear and branch-stable.
         let mut triangles: Vec<Triangle> = Vec::new();
 
-        for (u_idx, u_nb) in adjacency.iter().enumerate() {
+        for u_idx in 0..node_count {
+            let u_start = adjacency_offsets[u_idx];
+            let u_end = adjacency_offsets[u_idx + 1];
+            let u_nb = &adjacency_data[u_start..u_end];
             for &v_idx in u_nb.iter().filter(|&&v_idx| v_idx > u_idx) {
-                let v_nb = &adjacency[v_idx];
+                let v_start = adjacency_offsets[v_idx];
+                let v_end = adjacency_offsets[v_idx + 1];
+                let v_nb = &adjacency_data[v_start..v_end];
                 let mut left_cursor = 0usize;
                 let mut right_cursor = 0usize;
                 while left_cursor < u_nb.len() && right_cursor < v_nb.len() {
@@ -139,7 +181,13 @@ impl RipsComplex {
         triangles.dedup();
         let dim2 = triangles.iter().map(|t| [t.u, t.v, t.w]).collect();
 
-        Self { dim0, dim1, dim2 }
+        Self {
+            dim0,
+            dim1,
+            dim2,
+            adjacency_data,
+            adjacency_offsets,
+        }
     }
 
     /// Iterate simplices of a given dimension (0, 1, or 2).
@@ -158,8 +206,58 @@ impl RipsComplex {
     }
 
     /// Number of simplices of each dimension.
+    ///
+    /// ```
+    /// use genesis_math::SparseCliffordVector;
+    /// use genesis_topology::hnsw::HnswGraph;
+    /// use genesis_topology::rips::RipsComplex;
+    /// use genesis_types::NodeId;
+    ///
+    /// let mut graph = HnswGraph::new(16);
+    /// for i in 0..3_u64 {
+    ///     let v = SparseCliffordVector::from_iter((0..4).map(|b| (b, (i + b as u64) as f64)))
+    ///         .expect("finite vector");
+    ///     graph.insert(NodeId::try_new(i).expect("valid id"), &v).expect("insert");
+    /// }
+    /// let rips = RipsComplex::build(&graph, 10.0);
+    /// let (_n0, _n1, _n2) = rips.counts();
+    /// ```
+    ///
+    /// AX-ID: AXIOMA-007
     pub const fn counts(&self) -> (usize, usize, usize) {
         (self.dim0.len(), self.dim1.len(), self.dim2.len())
+    }
+
+    /// Returns the CSR adjacency backing used for edge/triangle traversal.
+    ///
+    /// Contract: `data` is the flattened adjacency payload and `offsets` is the
+    /// CSR row-offset table where node `i` maps to `data[offsets[i]..offsets[i+1]]`.
+    ///
+    /// ```
+    /// use genesis_math::SparseCliffordVector;
+    /// use genesis_topology::hnsw::HnswGraph;
+    /// use genesis_topology::rips::RipsComplex;
+    /// use genesis_types::NodeId;
+    ///
+    /// let mut graph = HnswGraph::new(16);
+    /// for i in 0..4_u64 {
+    ///     let v = SparseCliffordVector::from_iter((0..4).map(|b| (b, (i + b as u64) as f64)))
+    ///         .expect("finite vector");
+    ///     graph.insert(NodeId::try_new(i).expect("valid id"), &v).expect("insert");
+    /// }
+    /// let rips = RipsComplex::build(&graph, 10.0);
+    /// let csr = rips.adjacency_csr();
+    /// assert_eq!(csr.offsets.len(), rips.counts().0 + 1);
+    /// assert!(csr.offsets.windows(2).all(|w| w[0] <= w[1]));
+    /// assert_eq!(*csr.offsets.last().unwrap(), csr.data.len());
+    /// ```
+    ///
+    /// AX-ID: AXIOMA-007
+    pub fn adjacency_csr(&self) -> CsrAdjacency<'_> {
+        CsrAdjacency {
+            data: &self.adjacency_data,
+            offsets: &self.adjacency_offsets,
+        }
     }
 }
 
@@ -217,5 +315,21 @@ mod tests {
         assert_eq!(n0, 5, "expected 5 vertices");
         // 1 and 2-simplices depend on connectivity — just verify no panic
         println!("RipsComplex: {} verts, {} edges, {} triangles", n0, n1, n2);
+    }
+
+    #[test]
+    fn adjacency_csr_returns_data_and_offsets_in_order() {
+        let mut g = HnswGraph::new(16);
+        for i in 0..4u64 {
+            g.insert(
+                NodeId::try_new(i).expect("valid NodeId by construction"),
+                &make_vec(i),
+            )
+            .unwrap();
+        }
+        let rips = RipsComplex::build(&g, 1.0);
+        let csr = rips.adjacency_csr();
+        assert_eq!(csr.data, rips.adjacency_data.as_slice());
+        assert_eq!(csr.offsets, rips.adjacency_offsets.as_slice());
     }
 }
