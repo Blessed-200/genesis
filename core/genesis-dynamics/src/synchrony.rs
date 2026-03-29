@@ -187,8 +187,9 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
                     }
                     #[cfg(not(feature = "poly_trig"))]
                     {
-                        grade_acc.0 = a.mul_add(phase.cos(), grade_acc.0);
-                        grade_acc.1 = a.mul_add(phase.sin(), grade_acc.1);
+                        let (sin_phase, cos_phase) = phase.sin_cos();
+                        grade_acc.0 = a.mul_add(cos_phase, grade_acc.0);
+                        grade_acc.1 = a.mul_add(sin_phase, grade_acc.1);
                     }
                     grade_acc.2 += a;
                 }

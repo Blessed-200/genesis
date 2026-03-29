@@ -558,7 +558,7 @@ impl QuantumKuramotoNetwork {
                 self.oscillators[i].phases[g] = new_phase;
                 let b = i / 8;
                 let lane = i % 8;
-                self.oscillators.blocks_mut()[b].phases[g][lane] = new_phase;
+                self.oscillators.blocks_mut_in_sync()[b].phases[g][lane] = new_phase;
             }
         }
 
@@ -744,7 +744,7 @@ impl QuantumKuramotoNetwork {
                     let new_phase =
                         dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]);
                     self.oscillators[i].phases[g] = new_phase;
-                    self.oscillators.blocks_mut()[b].phases[g][lane] = new_phase;
+                    self.oscillators.blocks_mut_in_sync()[b].phases[g][lane] = new_phase;
                 }
             }
         }
@@ -782,7 +782,7 @@ impl QuantumKuramotoNetwork {
                         dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]),
                     );
                     self.oscillators[i].phases[g] = new_phase;
-                    self.oscillators.blocks_mut()[b].phases[g][lane] = new_phase;
+                    self.oscillators.blocks_mut_in_sync()[b].phases[g][lane] = new_phase;
                 }
             }
         }

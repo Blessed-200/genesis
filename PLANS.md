@@ -1248,6 +1248,6 @@ Remaining risk:
 
 ### Validation
 - `cargo fmt --all`
-- `cargo check -p genesis-dynamics`
-- `cargo test -p genesis-dynamics`
+- `cargo check --workspace`
+- `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`

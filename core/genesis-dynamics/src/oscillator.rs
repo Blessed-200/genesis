@@ -1,6 +1,6 @@
 #![allow(clippy::float_cmp, clippy::must_use_candidate)]
 
-use core::cell::Cell;
+use core::cell::{Cell, UnsafeCell};
 
 use genesis_types::NodeId;
 
@@ -120,11 +120,24 @@ impl Default for OscillatorBlock {
 /// tests, while `blocks` is the hot-path storage used by Kuramoto and synchrony.
 ///
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 pub struct OscillatorSlab {
-    lanes: Vec<QuantumOscillator>,
-    blocks: Vec<OscillatorBlock>,
-    blocks_dirty: Cell<bool>,
+    lanes: UnsafeCell<Vec<QuantumOscillator>>,
+    blocks: UnsafeCell<Vec<OscillatorBlock>>,
+    sync_state: Cell<SlabSyncState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SlabSyncState {
+    Clean,
+    LanesDirty,
+    BlocksDirty,
+}
+
+impl Default for OscillatorSlab {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OscillatorSlab {
@@ -134,9 +147,9 @@ impl OscillatorSlab {
     #[inline]
     pub const fn new() -> Self {
         Self {
-            lanes: Vec::new(),
-            blocks: Vec::new(),
-            blocks_dirty: Cell::new(false),
+            lanes: UnsafeCell::new(Vec::new()),
+            blocks: UnsafeCell::new(Vec::new()),
+            sync_state: Cell::new(SlabSyncState::Clean),
         }
     }
 
@@ -145,7 +158,7 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn len(&self) -> usize {
-        self.lanes.len()
+        self.lanes_ref().len()
     }
 
     /// Returns true when the slab is empty.
@@ -153,7 +166,7 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.lanes.is_empty()
+        self.lanes_ref().is_empty()
     }
 
     /// Returns an immutable AoS compatibility view.
@@ -161,7 +174,8 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn as_slice(&self) -> &[QuantumOscillator] {
-        &self.lanes
+        self.sync_lanes_if_dirty();
+        self.lanes_ref()
     }
 
     /// Returns a mutable AoS compatibility view and marks all blocks stale.
@@ -169,8 +183,9 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [QuantumOscillator] {
-        self.blocks_dirty.set(true);
-        &mut self.lanes
+        self.sync_lanes_if_dirty();
+        self.sync_state.set(SlabSyncState::LanesDirty);
+        self.lanes_mut()
     }
 
     /// Immutable oscillator lookup by index.
@@ -178,7 +193,8 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn get(&self, idx: usize) -> Option<&QuantumOscillator> {
-        self.lanes.get(idx)
+        self.sync_lanes_if_dirty();
+        self.lanes_ref().get(idx)
     }
 
     /// Mutable oscillator lookup by index.
@@ -186,8 +202,9 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn get_mut(&mut self, idx: usize) -> Option<&mut QuantumOscillator> {
-        self.blocks_dirty.set(true);
-        self.lanes.get_mut(idx)
+        self.sync_lanes_if_dirty();
+        self.sync_state.set(SlabSyncState::LanesDirty);
+        self.lanes_mut().get_mut(idx)
     }
 
     /// Push one oscillator and update its destination block lane.
@@ -195,21 +212,22 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn push(&mut self, osc: QuantumOscillator) {
-        let idx = self.lanes.len();
-        self.lanes.push(osc);
+        self.sync_lanes_if_dirty();
+        let idx = self.lanes_mut().len();
+        self.lanes_mut().push(osc);
         let b = idx / 8;
         let lane = idx % 8;
-        if b == self.blocks.len() {
-            self.blocks.push(OscillatorBlock::default());
+        if b == self.blocks_ref().len() {
+            self.blocks_mut_ref().push(OscillatorBlock::default());
         }
-        self.blocks[b].node_ids[lane] = osc.node_id;
-        self.blocks[b].states[lane] = osc.state;
+        self.blocks_mut_ref()[b].node_ids[lane] = osc.node_id;
+        self.blocks_mut_ref()[b].states[lane] = osc.state;
         for g in 0..5 {
-            self.blocks[b].phases[g][lane] = osc.phases[g];
-            self.blocks[b].amplitudes[g][lane] = osc.amplitudes[g];
-            self.blocks[b].frequencies[g][lane] = osc.frequencies[g];
+            self.blocks_mut_ref()[b].phases[g][lane] = osc.phases[g];
+            self.blocks_mut_ref()[b].amplitudes[g][lane] = osc.amplitudes[g];
+            self.blocks_mut_ref()[b].frequencies[g][lane] = osc.frequencies[g];
         }
-        self.blocks_dirty.set(false);
+        self.sync_state.set(SlabSyncState::Clean);
     }
 
     /// Mutable iterator over compatibility lanes.
@@ -217,8 +235,9 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn iter_mut(&mut self) -> core::slice::IterMut<'_, QuantumOscillator> {
-        self.blocks_dirty.set(true);
-        self.lanes.iter_mut()
+        self.sync_lanes_if_dirty();
+        self.sync_state.set(SlabSyncState::LanesDirty);
+        self.lanes_mut().iter_mut()
     }
 
     /// Immutable iterator over compatibility lanes.
@@ -226,20 +245,31 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn iter(&self) -> core::slice::Iter<'_, QuantumOscillator> {
-        self.lanes.iter()
+        self.sync_lanes_if_dirty();
+        self.lanes_ref().iter()
     }
 
     #[inline]
     fn sync_blocks_if_dirty(&self) {
-        if self.blocks_dirty.get() {
-            // SAFETY: `OscillatorSlab` is accessed through `&self` in single-threaded
-            // deterministic dynamics paths. This cast is used only to refresh the
-            // internal SoA cache from the authoritative AoS lanes when marked dirty.
-            // No references into `self.blocks` are held across this call site.
+        if self.sync_state.get() == SlabSyncState::LanesDirty {
+            // SAFETY: interior mutability is provided by `UnsafeCell`; we only refresh
+            // blocks from lanes and do not hand out aliased mutable references here.
             unsafe {
-                let slab_ptr = self as *const Self as *mut Self;
-                (*slab_ptr).rebuild_blocks();
+                self.rebuild_blocks_from_cells();
             }
+            self.sync_state.set(SlabSyncState::Clean);
+        }
+    }
+
+    #[inline]
+    fn sync_lanes_if_dirty(&self) {
+        if self.sync_state.get() == SlabSyncState::BlocksDirty {
+            // SAFETY: interior mutability is provided by `UnsafeCell`; we only refresh
+            // lanes from blocks and do not hand out aliased mutable references here.
+            unsafe {
+                self.sync_lanes_from_blocks_cells();
+            }
+            self.sync_state.set(SlabSyncState::Clean);
         }
     }
 
@@ -249,7 +279,7 @@ impl OscillatorSlab {
     #[inline]
     pub fn blocks(&self) -> &[OscillatorBlock] {
         self.sync_blocks_if_dirty();
-        &self.blocks
+        self.blocks_ref()
     }
 
     /// Mutable view over SoA blocks.
@@ -257,8 +287,18 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn blocks_mut(&mut self) -> &mut [OscillatorBlock] {
-        self.blocks_dirty.set(true);
-        &mut self.blocks
+        self.sync_blocks_if_dirty();
+        self.sync_state.set(SlabSyncState::BlocksDirty);
+        self.blocks_mut_ref()
+    }
+
+    /// Mutable view over SoA blocks when caller keeps AoS lanes mirrored manually.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+    #[inline]
+    pub fn blocks_mut_in_sync(&mut self) -> &mut [OscillatorBlock] {
+        self.sync_blocks_if_dirty();
+        self.blocks_mut_ref()
     }
 
     /// Rebuild SoA blocks from AoS lanes.
@@ -268,33 +308,39 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn rebuild_blocks(&mut self) {
-        let n = self.lanes.len();
-        let block_count = (n + 7) / 8;
-        let old_len = self.blocks.len();
-        if block_count <= old_len {
-            for block in &mut self.blocks[..block_count] {
-                *block = OscillatorBlock::default();
+        self.sync_lanes_if_dirty();
+        // SAFETY: `&mut self` guarantees exclusive access; references derived from
+        // `UnsafeCell` do not alias mutable/immutable borrows outside this scope.
+        unsafe {
+            let lanes = &*self.lanes.get();
+            let blocks = &mut *self.blocks.get();
+            let n = lanes.len();
+            let block_count = (n + 7) / 8;
+            let old_len = blocks.len();
+            if block_count <= old_len {
+                for block in &mut blocks[..block_count] {
+                    *block = OscillatorBlock::default();
+                }
+                blocks.truncate(block_count);
+            } else {
+                for block in &mut blocks[..old_len] {
+                    *block = OscillatorBlock::default();
+                }
+                blocks.resize_with(block_count, OscillatorBlock::default);
             }
-            self.blocks.truncate(block_count);
-        } else {
-            for block in &mut self.blocks[..old_len] {
-                *block = OscillatorBlock::default();
+            for (idx, osc) in lanes.iter().enumerate() {
+                let b = idx / 8;
+                let lane = idx % 8;
+                blocks[b].node_ids[lane] = osc.node_id;
+                blocks[b].states[lane] = osc.state;
+                for g in 0..5 {
+                    blocks[b].phases[g][lane] = osc.phases[g];
+                    blocks[b].amplitudes[g][lane] = osc.amplitudes[g];
+                    blocks[b].frequencies[g][lane] = osc.frequencies[g];
+                }
             }
-            self.blocks
-                .resize_with(block_count, OscillatorBlock::default);
         }
-        for (idx, osc) in self.lanes.iter().enumerate() {
-            let b = idx / 8;
-            let lane = idx % 8;
-            self.blocks[b].node_ids[lane] = osc.node_id;
-            self.blocks[b].states[lane] = osc.state;
-            for g in 0..5 {
-                self.blocks[b].phases[g][lane] = osc.phases[g];
-                self.blocks[b].amplitudes[g][lane] = osc.amplitudes[g];
-                self.blocks[b].frequencies[g][lane] = osc.frequencies[g];
-            }
-        }
-        self.blocks_dirty.set(false);
+        self.sync_state.set(SlabSyncState::Clean);
     }
 
     /// Write block values back into AoS lane storage.
@@ -302,11 +348,90 @@ impl OscillatorSlab {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn sync_lanes_from_blocks(&mut self) {
-        for idx in 0..self.lanes.len() {
+        self.sync_blocks_if_dirty();
+        // SAFETY: `&mut self` guarantees exclusive access; references derived from
+        // `UnsafeCell` do not alias mutable/immutable borrows outside this scope.
+        unsafe {
+            let lanes = &mut *self.lanes.get();
+            let blocks = &*self.blocks.get();
+            for idx in 0..lanes.len() {
+                let b = idx / 8;
+                let lane = idx % 8;
+                let block = &blocks[b];
+                let osc = &mut lanes[idx];
+                osc.node_id = block.node_ids[lane];
+                osc.state = block.states[lane];
+                for g in 0..5 {
+                    osc.phases[g] = block.phases[g][lane];
+                    osc.amplitudes[g] = block.amplitudes[g][lane];
+                    osc.frequencies[g] = block.frequencies[g][lane];
+                }
+            }
+        }
+        self.sync_state.set(SlabSyncState::Clean);
+    }
+
+    #[inline]
+    fn lanes_ref(&self) -> &Vec<QuantumOscillator> {
+        // SAFETY: shared access through `UnsafeCell` is read-only here.
+        unsafe { &*self.lanes.get() }
+    }
+
+    #[inline]
+    fn lanes_mut(&mut self) -> &mut Vec<QuantumOscillator> {
+        // SAFETY: `&mut self` guarantees unique access to the slab instance.
+        unsafe { &mut *self.lanes.get() }
+    }
+
+    #[inline]
+    fn blocks_ref(&self) -> &Vec<OscillatorBlock> {
+        // SAFETY: shared access through `UnsafeCell` is read-only here.
+        unsafe { &*self.blocks.get() }
+    }
+
+    #[inline]
+    fn blocks_mut_ref(&mut self) -> &mut Vec<OscillatorBlock> {
+        // SAFETY: `&mut self` guarantees unique access to the slab instance.
+        unsafe { &mut *self.blocks.get() }
+    }
+
+    unsafe fn rebuild_blocks_from_cells(&self) {
+        let lanes = &*self.lanes.get();
+        let blocks = &mut *self.blocks.get();
+        let block_count = (lanes.len() + 7) / 8;
+        let old_len = blocks.len();
+        if block_count <= old_len {
+            for block in &mut blocks[..block_count] {
+                *block = OscillatorBlock::default();
+            }
+            blocks.truncate(block_count);
+        } else {
+            for block in &mut blocks[..old_len] {
+                *block = OscillatorBlock::default();
+            }
+            blocks.resize_with(block_count, OscillatorBlock::default);
+        }
+        for (idx, osc) in lanes.iter().enumerate() {
             let b = idx / 8;
             let lane = idx % 8;
-            let block = &self.blocks[b];
-            let osc = &mut self.lanes[idx];
+            blocks[b].node_ids[lane] = osc.node_id;
+            blocks[b].states[lane] = osc.state;
+            for g in 0..5 {
+                blocks[b].phases[g][lane] = osc.phases[g];
+                blocks[b].amplitudes[g][lane] = osc.amplitudes[g];
+                blocks[b].frequencies[g][lane] = osc.frequencies[g];
+            }
+        }
+    }
+
+    unsafe fn sync_lanes_from_blocks_cells(&self) {
+        let lanes = &mut *self.lanes.get();
+        let blocks = &*self.blocks.get();
+        for idx in 0..lanes.len() {
+            let b = idx / 8;
+            let lane = idx % 8;
+            let block = &blocks[b];
+            let osc = &mut lanes[idx];
             osc.node_id = block.node_ids[lane];
             osc.state = block.states[lane];
             for g in 0..5 {
@@ -315,7 +440,6 @@ impl OscillatorSlab {
                 osc.frequencies[g] = block.frequencies[g][lane];
             }
         }
-        self.blocks_dirty.set(false);
     }
 }
 
@@ -324,15 +448,17 @@ impl core::ops::Index<usize> for OscillatorSlab {
 
     #[inline]
     fn index(&self, index: usize) -> &Self::Output {
-        &self.lanes[index]
+        self.sync_lanes_if_dirty();
+        &self.lanes_ref()[index]
     }
 }
 
 impl core::ops::IndexMut<usize> for OscillatorSlab {
     #[inline]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        self.blocks_dirty.set(true);
-        &mut self.lanes[index]
+        self.sync_lanes_if_dirty();
+        self.sync_state.set(SlabSyncState::LanesDirty);
+        &mut self.lanes_mut()[index]
     }
 }
 
@@ -341,15 +467,17 @@ impl core::ops::Deref for OscillatorSlab {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.lanes
+        self.sync_lanes_if_dirty();
+        self.lanes_ref()
     }
 }
 
 impl core::ops::DerefMut for OscillatorSlab {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.blocks_dirty.set(true);
-        &mut self.lanes
+        self.sync_lanes_if_dirty();
+        self.sync_state.set(SlabSyncState::LanesDirty);
+        self.lanes_mut()
     }
 }
 
@@ -359,7 +487,8 @@ impl<'a> IntoIterator for &'a OscillatorSlab {
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.lanes.iter()
+        self.sync_lanes_if_dirty();
+        self.lanes_ref().iter()
     }
 }
 
@@ -369,7 +498,9 @@ impl<'a> IntoIterator for &'a mut OscillatorSlab {
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
-        self.lanes.iter_mut()
+        self.sync_lanes_if_dirty();
+        self.sync_state.set(SlabSyncState::LanesDirty);
+        self.lanes_mut().iter_mut()
     }
 }
 
