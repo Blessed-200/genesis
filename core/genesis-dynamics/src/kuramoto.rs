@@ -96,7 +96,11 @@ fn wrap_phase_diff(d: f64) -> f64 {
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
 #[inline(always)]
 fn accumulate_grades_simd(sums: &mut [f64; 5], gamma: f64, contrib: &[f64; 5]) {
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    ))]
     unsafe {
         use core::arch::x86_64::*;
         // SAFETY: the `target_feature = "avx2"` cfg guarantees AVX2/FMA intrinsics
@@ -549,18 +553,23 @@ impl QuantumKuramotoNetwork {
                 } else {
                     0.0
                 };
-                self.oscillators[i].phases[g] =
+                let new_phase =
                     dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]) + eta;
+                self.oscillators[i].phases[g] = new_phase;
+                let b = i / 8;
+                let lane = i % 8;
+                self.oscillators.blocks_mut()[b].phases[g][lane] = new_phase;
             }
         }
 
         self.update_gauge_fields();
         self.apply_homeostatic_feedback();
-        self.oscillators.rebuild_blocks();
         self.sync_dirty = true;
     }
 
     /// Number of nodes registrados.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn node_count(&self) -> usize {
         self.oscillators.len()

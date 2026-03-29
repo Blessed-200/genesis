@@ -1,5 +1,7 @@
 #![allow(clippy::float_cmp, clippy::must_use_candidate)]
 
+use core::cell::Cell;
+
 use genesis_types::NodeId;
 
 /// Oscilador cuántico por nodo con amplitudes complejas por grado de Clifford.
@@ -122,55 +124,75 @@ impl Default for OscillatorBlock {
 pub struct OscillatorSlab {
     lanes: Vec<QuantumOscillator>,
     blocks: Vec<OscillatorBlock>,
+    blocks_dirty: Cell<bool>,
 }
 
 impl OscillatorSlab {
     /// Create an empty slab.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub const fn new() -> Self {
         Self {
             lanes: Vec::new(),
             blocks: Vec::new(),
+            blocks_dirty: Cell::new(false),
         }
     }
 
     /// Number of oscillators stored in the slab.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn len(&self) -> usize {
         self.lanes.len()
     }
 
     /// Returns true when the slab is empty.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.lanes.is_empty()
     }
 
     /// Returns an immutable AoS compatibility view.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn as_slice(&self) -> &[QuantumOscillator] {
         &self.lanes
     }
 
     /// Returns a mutable AoS compatibility view and marks all blocks stale.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [QuantumOscillator] {
+        self.blocks_dirty.set(true);
         &mut self.lanes
     }
 
     /// Immutable oscillator lookup by index.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn get(&self, idx: usize) -> Option<&QuantumOscillator> {
         self.lanes.get(idx)
     }
 
     /// Mutable oscillator lookup by index.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn get_mut(&mut self, idx: usize) -> Option<&mut QuantumOscillator> {
+        self.blocks_dirty.set(true);
         self.lanes.get_mut(idx)
     }
 
     /// Push one oscillator and update its destination block lane.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn push(&mut self, osc: QuantumOscillator) {
         let idx = self.lanes.len();
@@ -187,35 +209,63 @@ impl OscillatorSlab {
             self.blocks[b].amplitudes[g][lane] = osc.amplitudes[g];
             self.blocks[b].frequencies[g][lane] = osc.frequencies[g];
         }
+        self.blocks_dirty.set(false);
     }
 
     /// Mutable iterator over compatibility lanes.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn iter_mut(&mut self) -> core::slice::IterMut<'_, QuantumOscillator> {
+        self.blocks_dirty.set(true);
         self.lanes.iter_mut()
     }
 
     /// Immutable iterator over compatibility lanes.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn iter(&self) -> core::slice::Iter<'_, QuantumOscillator> {
         self.lanes.iter()
     }
 
+    #[inline]
+    fn sync_blocks_if_dirty(&self) {
+        if self.blocks_dirty.get() {
+            // SAFETY: `OscillatorSlab` is accessed through `&self` in single-threaded
+            // deterministic dynamics paths. This cast is used only to refresh the
+            // internal SoA cache from the authoritative AoS lanes when marked dirty.
+            // No references into `self.blocks` are held across this call site.
+            unsafe {
+                let slab_ptr = self as *const Self as *mut Self;
+                (*slab_ptr).rebuild_blocks();
+            }
+        }
+    }
+
     /// Immutable view over SoA blocks.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn blocks(&self) -> &[OscillatorBlock] {
+        self.sync_blocks_if_dirty();
         &self.blocks
     }
 
     /// Mutable view over SoA blocks.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn blocks_mut(&mut self) -> &mut [OscillatorBlock] {
+        self.blocks_dirty.set(true);
         &mut self.blocks
     }
 
     /// Rebuild SoA blocks from AoS lanes.
     ///
     /// HOT PATH SUPPORT: called at insertion and after batched phase updates.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn rebuild_blocks(&mut self) {
         let n = self.lanes.len();
@@ -244,9 +294,12 @@ impl OscillatorSlab {
                 self.blocks[b].frequencies[g][lane] = osc.frequencies[g];
             }
         }
+        self.blocks_dirty.set(false);
     }
 
     /// Write block values back into AoS lane storage.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn sync_lanes_from_blocks(&mut self) {
         for idx in 0..self.lanes.len() {
@@ -262,6 +315,7 @@ impl OscillatorSlab {
                 osc.frequencies[g] = block.frequencies[g][lane];
             }
         }
+        self.blocks_dirty.set(false);
     }
 }
 
@@ -277,6 +331,7 @@ impl core::ops::Index<usize> for OscillatorSlab {
 impl core::ops::IndexMut<usize> for OscillatorSlab {
     #[inline]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.blocks_dirty.set(true);
         &mut self.lanes[index]
     }
 }
@@ -293,6 +348,7 @@ impl core::ops::Deref for OscillatorSlab {
 impl core::ops::DerefMut for OscillatorSlab {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
+        self.blocks_dirty.set(true);
         &mut self.lanes
     }
 }
@@ -712,5 +768,69 @@ impl OscillatorState {
     #[inline]
     pub const fn contributes_to_sync(self) -> bool {
         !matches!(self, Self::Pruned { .. })
+    }
+}
+
+#[cfg(test)]
+mod slab_tests {
+    use super::*;
+
+    fn make_osc(id: u64, phase_base: f64) -> QuantumOscillator {
+        let node = NodeId::try_new(id).expect("valid NodeId");
+        QuantumOscillator::with_phases(
+            node,
+            [
+                phase_base,
+                phase_base + 0.1,
+                phase_base + 0.2,
+                phase_base + 0.3,
+                phase_base + 0.4,
+            ],
+            [1.0, 1.1, 1.2, 1.3, 1.4],
+        )
+    }
+
+    #[test]
+    fn slab_push_updates_block_lane_incrementally() {
+        let mut slab = OscillatorSlab::new();
+        slab.push(make_osc(1, 0.5));
+        assert_eq!(slab.blocks().len(), 1);
+        assert!((slab.blocks()[0].phases[0][0] - 0.5).abs() < 1e-12);
+        assert_eq!(slab.blocks()[0].node_ids[0].get(), 1);
+    }
+
+    #[test]
+    fn slab_rebuild_blocks_matches_lane_storage() {
+        let mut slab = OscillatorSlab::new();
+        for i in 0..10u64 {
+            slab.push(make_osc(i, i as f64 * 0.01));
+        }
+        slab[3].phases[2] = 42.0;
+        slab.rebuild_blocks();
+        assert!((slab.blocks()[0].phases[2][3] - 42.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn slab_sync_lanes_from_blocks_propagates_block_changes() {
+        let mut slab = OscillatorSlab::new();
+        slab.push(make_osc(7, 0.2));
+        slab.blocks_mut()[0].phases[4][0] = 9.0;
+        slab.sync_lanes_from_blocks();
+        assert!((slab[0].phases[4] - 9.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn slab_tail_lane_behavior_partial_block() {
+        let mut slab = OscillatorSlab::new();
+        for i in 0..9u64 {
+            slab.push(make_osc(i, i as f64));
+        }
+        assert_eq!(slab.blocks().len(), 2);
+        assert_eq!(slab.blocks()[1].node_ids[0].get(), 8);
+        assert_eq!(slab.blocks()[1].node_ids[1], NodeId::INVALID);
+        assert!(matches!(
+            slab.blocks()[1].states[1],
+            OscillatorState::Pruned { .. }
+        ));
     }
 }

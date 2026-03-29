@@ -1227,3 +1227,27 @@ Remaining risk:
 
 ### Complexity/cache target
 - Preserve O(E·G + N·G) asymptotics while improving memory locality from AoS strided loads to block-SoA contiguous `[grade][lane]` traversal and reducing gather pressure in hot loops.
+
+## 1.6 genesis-dynamics SoA consistency and hot-path cleanup follow-up (2026-03-29)
+
+### Root cause
+- `OscillatorSlab` mutable AoS accessors can diverge from block-SoA storage without a dirty/sync contract.
+- `synchrony_order_fast` always allocates/parallelizes and does not filter pruned lanes in block reduction.
+- Kuramoto docs/feature guards still require minor correctness/doc compliance updates (AX-ID and AVX2+FMA gating).
+
+### File-level actions
+1. `core/genesis-dynamics/src/oscillator.rs`
+   - Add `blocks_dirty` tracking, lazy block sync in `blocks()`, dirty marking in mutable accessors, and consistency tests.
+   - Add AX-ID Rustdoc annotations for `OscillatorSlab` public API.
+2. `core/genesis-dynamics/src/synchrony.rs`
+   - Add small-N serial non-allocating reduction path and keep parallel collect path for large N.
+   - Skip non-contributing lanes based on `OscillatorState::contributes_to_sync()`.
+3. `core/genesis-dynamics/src/kuramoto.rs` and `core/genesis-dynamics/src/lib.rs`
+   - Add missing AX-ID docs (`node_count`) and tighten SIMD cfg to `avx2+fma`.
+   - Make SIMD docs copy-pastable and align wording.
+
+### Validation
+- `cargo fmt --all`
+- `cargo check -p genesis-dynamics`
+- `cargo test -p genesis-dynamics`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
