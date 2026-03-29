@@ -96,6 +96,11 @@ pub struct OscillatorBlock {
 }
 
 impl Default for OscillatorBlock {
+    /// Default block values represent empty/pruned lanes, not active oscillators.
+    ///
+    /// `amplitudes` are intentionally zeroed so unused lanes do not contribute to
+    /// synchrony reductions. Active oscillators are created with
+    /// [`QuantumOscillator::new`], which initializes amplitudes to `[1.0; 5]`.
     fn default() -> Self {
         Self {
             phases: [[0.0; 8]; 5],
@@ -168,8 +173,20 @@ impl OscillatorSlab {
     /// Push one oscillator and update its destination block lane.
     #[inline]
     pub fn push(&mut self, osc: QuantumOscillator) {
+        let idx = self.lanes.len();
         self.lanes.push(osc);
-        self.rebuild_blocks();
+        let b = idx / 8;
+        let lane = idx % 8;
+        if b == self.blocks.len() {
+            self.blocks.push(OscillatorBlock::default());
+        }
+        self.blocks[b].node_ids[lane] = osc.node_id;
+        self.blocks[b].states[lane] = osc.state;
+        for g in 0..5 {
+            self.blocks[b].phases[g][lane] = osc.phases[g];
+            self.blocks[b].amplitudes[g][lane] = osc.amplitudes[g];
+            self.blocks[b].frequencies[g][lane] = osc.frequencies[g];
+        }
     }
 
     /// Mutable iterator over compatibility lanes.
@@ -203,10 +220,18 @@ impl OscillatorSlab {
     pub fn rebuild_blocks(&mut self) {
         let n = self.lanes.len();
         let block_count = (n + 7) / 8;
-        self.blocks
-            .resize_with(block_count, OscillatorBlock::default);
-        for block in &mut self.blocks {
-            *block = OscillatorBlock::default();
+        let old_len = self.blocks.len();
+        if block_count <= old_len {
+            for block in &mut self.blocks[..block_count] {
+                *block = OscillatorBlock::default();
+            }
+            self.blocks.truncate(block_count);
+        } else {
+            for block in &mut self.blocks[..old_len] {
+                *block = OscillatorBlock::default();
+            }
+            self.blocks
+                .resize_with(block_count, OscillatorBlock::default);
         }
         for (idx, osc) in self.lanes.iter().enumerate() {
             let b = idx / 8;

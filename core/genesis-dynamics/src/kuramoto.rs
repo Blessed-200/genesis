@@ -86,11 +86,24 @@ fn wrap_phase_diff(d: f64) -> f64 {
     wrap_phase(d)
 }
 
+/// SIMD-accelerated 5-grade accumulation primitive for Kuramoto coupling sums.
+///
+/// Uses compile-time feature gating:
+/// - AVX2 path: enabled only when built with `-C target-feature=+avx2`.
+/// - NEON path: enabled only when built with `-C target-feature=+neon` (aarch64).
+/// - Scalar fallback: default portable build path when SIMD flags are absent.
+///
+/// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
 #[inline(always)]
 fn accumulate_grades_simd(sums: &mut [f64; 5], gamma: f64, contrib: &[f64; 5]) {
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     unsafe {
         use core::arch::x86_64::*;
+        // SAFETY: the `target_feature = "avx2"` cfg guarantees AVX2/FMA intrinsics
+        // are available. `_mm256_loadu_pd`/`_mm256_storeu_pd` operate on the first
+        // 4 f64 elements of fixed-size `[f64; 5]` slices, so reads/writes are in-bounds
+        // and use unaligned accesses by contract. The local registers do not alias
+        // invalid memory, and grade 4 is handled separately as scalar.
         let g = _mm256_set1_pd(gamma);
         let cur = _mm256_loadu_pd(sums.as_ptr());
         let src = _mm256_loadu_pd(contrib.as_ptr());
@@ -103,6 +116,12 @@ fn accumulate_grades_simd(sums: &mut [f64; 5], gamma: f64, contrib: &[f64; 5]) {
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     unsafe {
         use core::arch::aarch64::*;
+        // SAFETY: the `target_feature = "neon"` cfg guarantees NEON intrinsics
+        // (`vld1q_f64`, `vfmaq_f64`, `vst1q_f64`) are available. Loads/stores are
+        // performed over indices `[0..2)` and `[2..4)` within fixed `[f64; 5]`
+        // slices, so they are in-bounds; the fifth lane stays scalar. No aliasing
+        // violations are introduced because accesses are through exclusive `&mut sums`
+        // and read-only `contrib`.
         let g = vdupq_n_f64(gamma);
         let s0 = vld1q_f64(sums.as_ptr());
         let c0 = vld1q_f64(contrib.as_ptr());
@@ -614,7 +633,6 @@ impl QuantumKuramotoNetwork {
         } else {
             self.step_inner_deterministic(dt);
         }
-        self.oscillators.rebuild_blocks();
 
         self.update_gauge_fields();
         self.apply_homeostatic_feedback();
@@ -700,6 +718,11 @@ impl QuantumKuramotoNetwork {
                 if self.contrib_buf[i] == 0 {
                     continue;
                 }
+                // TODO(SoA-phase2): `compute_coupling_sums`, phase writes, and frequency
+                // reads still traverse the AoS compatibility view (`self.oscillators[i]`).
+                // Next step should migrate coupling computation to direct block/SoA inputs
+                // (`phase_scratch`/`blocks`) for lane-wise vectorized updates without
+                // changing current numerical behavior.
                 let coupling_sums = Self::compute_coupling_sums(
                     &self.phase_scratch,
                     &self.coupling_idx,
@@ -709,8 +732,10 @@ impl QuantumKuramotoNetwork {
                 );
                 for g in 0..5 {
                     let omega = self.oscillators[i].frequencies[g];
-                    self.oscillators[i].phases[g] =
+                    let new_phase =
                         dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]);
+                    self.oscillators[i].phases[g] = new_phase;
+                    self.oscillators.blocks_mut()[b].phases[g][lane] = new_phase;
                 }
             }
         }
@@ -743,10 +768,12 @@ impl QuantumKuramotoNetwork {
                 ];
                 for g in 0..5 {
                     let omega = self.oscillators[i].frequencies[g];
-                    self.oscillators[i].phases[g] = sqrt_2k_t_dt.mul_add(
+                    let new_phase = sqrt_2k_t_dt.mul_add(
                         noise_buf[g],
                         dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]),
                     );
+                    self.oscillators[i].phases[g] = new_phase;
+                    self.oscillators.blocks_mut()[b].phases[g][lane] = new_phase;
                 }
             }
         }

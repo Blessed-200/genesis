@@ -168,14 +168,10 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
         valid_lanes: usize,
     ) -> [(f64, f64, f64); 5] {
         let mut acc = [(0.0f64, 0.0f64, 0.0f64); 5];
-        let total_lanes = blocks.len() * 8;
-        let tail_cutoff = total_lanes.saturating_sub(valid_lanes);
         for (bi, block) in blocks.iter().enumerate() {
-            let lane_limit = if bi == blocks.len().saturating_sub(1) && tail_cutoff > 0 {
-                8 - tail_cutoff
-            } else {
-                8
-            };
+            let block_start = bi * 8;
+            let remaining = valid_lanes.saturating_sub(block_start);
+            let lane_limit = remaining.min(8);
             for lane in 0..lane_limit {
                 for (g, grade_acc) in acc.iter_mut().enumerate() {
                     let a = block.amplitudes[g][lane];
