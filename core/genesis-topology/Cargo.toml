@@ -12,6 +12,7 @@ genesis-types = { workspace = true }
 genesis-math  = { workspace = true }
 fixedbitset   = "0.5"
 smallvec      = { workspace = true }
+arrayvec      = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

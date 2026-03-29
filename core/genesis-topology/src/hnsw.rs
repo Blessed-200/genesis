@@ -13,7 +13,7 @@
 /// PROHIBITED: Delaunay triangulation. PROHIBITED: `HashMap` in hot path.
 /// Adjacency lists stored as sorted Vec<(`NodeId`, f64)> with binary search.
 use std::cmp::Ordering;
-use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use genesis_math::{
@@ -482,6 +482,7 @@ pub(crate) const M: usize = 16;
 /// Maximum connections at layer 0 (M0 = 2*M).
 /// `pub(crate)` for manifold.rs stack-allocated neighbour buffers (BN-02).
 pub(crate) const M0: usize = M * 2;
+pub(crate) const MAX_UNIQUE_NEIGHBOR_BUDGET: usize = M0 + (MAX_LAYERS - 1) * M;
 
 /// Per-node adjacency storage for one HNSW layer set.
 ///
@@ -961,6 +962,7 @@ pub struct HnswLayer0Soa {
 /// AX-ID: AXIOMA-013
 pub struct LockFreeHnswIndex {
     head: AtomicPtr<HnswGraph>,
+    cas_retries: AtomicU64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -994,6 +996,11 @@ impl HnswGraph {
             #[cfg(test)]
             fail_preinsert_index_conversion: false,
         }
+    }
+
+    #[inline]
+    fn clone_with_delta(&self) -> Self {
+        self.clone()
     }
 
     fn prevalidate_internal_idx_u32(new_idx: usize) -> Result<u32, GenesisError> {
@@ -1783,6 +1790,7 @@ impl LockFreeHnswIndex {
         let snapshot = Arc::new(HnswGraph::new(ef_construction));
         Self {
             head: AtomicPtr::new(Arc::into_raw(snapshot).cast_mut()),
+            cas_retries: AtomicU64::new(0),
         }
     }
 
@@ -1821,7 +1829,7 @@ impl LockFreeHnswIndex {
         loop {
             let base = self.load_snapshot();
             let current = Arc::as_ptr(&base).cast_mut();
-            let mut updated = (*base).clone();
+            let mut updated = (*base).clone_with_delta();
             updated.insert(id, vec)?;
             let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
 
@@ -1840,6 +1848,7 @@ impl LockFreeHnswIndex {
                     return Ok(());
                 }
                 Err(_) => {
+                    self.cas_retries.fetch_add(1, AtomicOrdering::Relaxed);
                     // SAFETY: CAS failed, so `candidate` was never published.
                     unsafe {
                         drop(Arc::from_raw(candidate));
@@ -1868,6 +1877,13 @@ impl LockFreeHnswIndex {
     /// AX-ID: AXIOMA-013
     pub fn layer0_soa(&self) -> HnswLayer0Soa {
         self.load_snapshot().layer0_soa()
+    }
+
+    /// Returns the cumulative number of CAS publication retries.
+    ///
+    /// AX-ID: AXIOMA-013
+    pub fn cas_retry_count(&self) -> u64 {
+        self.cas_retries.load(AtomicOrdering::Relaxed)
     }
 }
 
@@ -1937,11 +1953,9 @@ struct NeighborIter<'a> {
     /// Deduplicated node IDs already emitted, sorted ascending for binary search.
     ///
     /// # BN-07: SmallVec eliminates heap allocation
-    /// Inline layercity of 128 covers the theoretical maximum of unique neighbours
-    /// across all HNSW layers: M0 (32) + M × MAX_LAYERS (16 × 6 = 96) = 128.
-    /// The 99.9% common case (< 64 unique neighbours) never touches the heap.
+    /// Inline capacity tracks the legal multi-layer neighbour budget.
     /// Graceful spill to heap for rare deep-hierarchy nodes (no panic, no truncation).
-    seen: SmallVec<[u64; 128]>,
+    seen: SmallVec<[u64; MAX_UNIQUE_NEIGHBOR_BUDGET]>,
 }
 
 impl Iterator for NeighborIter<'_> {
@@ -2049,6 +2063,17 @@ mod tests {
         });
         SparseCliffordVector::from_dense(&dense)
             .expect("deterministic random vector must be finite")
+    }
+
+    #[test]
+    fn lock_free_index_cas_retry_counter_initializes_and_increments() {
+        let index = LockFreeHnswIndex::new(16);
+        assert_eq!(index.cas_retry_count(), 0);
+
+        index
+            .cas_retries
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(index.cas_retry_count(), 1);
     }
 
     #[test]

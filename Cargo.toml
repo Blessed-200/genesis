@@ -21,6 +21,7 @@ tempfile          = "=3.13.0"
 criterion         = { version = "0.5", features = ["html_reports"] }
 num-complex        = "0.4"
 smallvec          = { version = "1.13", features = ["const_generics"] }
+arrayvec          = "0.7"
 memoffset     = "0.9"
 iai-callgrind   = "0.14"
 

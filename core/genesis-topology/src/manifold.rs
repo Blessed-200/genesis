@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use arrayvec::ArrayVec;
 use genesis_math::SparseCliffordVector;
 use smallvec::SmallVec;
 
@@ -249,42 +250,30 @@ impl ManifoldCollector {
         // Actualizar state incremental of H¹.
         self.h1_state.add_node();
 
-        // BN-02: Stack-allocated neighbour buffer — max M0 neighbours at layer 0.
-        // M0 = 32 is the HNSW compile-time degree bound for layer 0.
-        // Upper layers contribute at most M = 16 neighbours each, but the unique
-        // union across all layers is bounded by M0 in practice (layer-0 dominates).
-        // Using M0 as the static bound; debug_assert guards correctness.
-        use crate::hnsw::M0;
-        let mut neighbors_buf = [NodeId::INVALID; M0];
-        let mut neighbor_count = 0usize;
-
+        // BN-02: Stack-allocated neighbour buffer for full multi-layer unique union.
+        // Capacity is derived from HNSW legal degree bounds:
+        // M0 + (MAX_LAYERS - 1) * M.
+        use crate::hnsw::MAX_UNIQUE_NEIGHBOR_BUDGET;
+        let mut neighbors: ArrayVec<NodeId, MAX_UNIQUE_NEIGHBOR_BUDGET> = ArrayVec::new();
         for neighbor in self.graph.neighbors(id) {
-            debug_assert!(
-                neighbor_count < M0,
-                "BN-02: neighbor count {} exceeded M0 = {M0} — check HNSW degree bounds",
-                neighbor_count
-            );
-            if neighbor_count < M0 {
-                neighbors_buf[neighbor_count] = neighbor;
-                neighbor_count += 1;
-            }
+            debug_assert!(neighbors.len() < MAX_UNIQUE_NEIGHBOR_BUDGET);
+            neighbors.push(neighbor);
         }
-        let neighbors = &mut neighbors_buf[..neighbor_count];
 
         // Registrar edges nuevas.
-        for &v in neighbors.iter() {
+        for &v in &neighbors {
             self.h1_state.add_edge(id, v);
         }
 
         // Sort for binary-search based triangle detection — replaces HashSet.
-        // O(K log K) where K ≤ M0 = 32. Entirely in L1 cache.
+        // O(K log K) where K ≤ MAX_UNIQUE_NEIGHBOR_BUDGET. Entirely stack-backed.
         neighbors.sort_unstable();
 
         // Detect triangles: for each pair (v, w) of vecinos of `id`,
         // comprobar if v and w are conectados → triangle (id, v, w).
         // Binary search on sorted stack array replaces HashSet lookup.
         // Complexity: O(K² · log K) per insertion. Para K=32: ~5120 ops — L1.
-        for i in 0..neighbor_count {
+        for i in 0..neighbors.len() {
             let v = neighbors[i];
             for w in self.graph.neighbors(v) {
                 // Only process each triangle once: w > v, w must also be neighbour of id.
