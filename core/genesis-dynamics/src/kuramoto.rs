@@ -183,9 +183,23 @@ pub struct QuantumKuramotoNetwork {
 }
 
 impl QuantumKuramotoNetwork {
-    /// Creates a new Kuramoto network with the given noise temperature `kT`.
+    /// Create a new QuantumKuramotoNetwork initialized for simulation with the given noise temperature.
     ///
-    /// Higher `temperature` → stronger stochastic exploration (AXIOMA-006).
+    /// The network is empty (no oscillators or couplings) and uses default hyperparameters:
+    /// `gauge_learning_rate = 0.01` and `curvature_damping = 0.1`. The `sync_dirty` cache flag is set so
+    /// synchronization statistics will be computed on first request.
+    ///
+    /// # Parameters
+    ///
+    /// - `temperature`: thermal noise strength (kT). Larger values increase stochastic exploration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let net = QuantumKuramotoNetwork::new(0.05);
+    /// assert_eq!(net.node_count(), 0);
+    /// ```
+    pub const fn new(temperature: f64) -> Self {
     pub const fn new(temperature: f64) -> Self {
         Self {
             oscillators: Vec::new(),
@@ -904,7 +918,25 @@ impl QuantumKuramotoNetwork {
         }
     }
 
-    /// Reconstruye `coupling_idx` sorted by source oscilador index and materializa offsets.
+    /// Rebuilds the network's internal edge-index structures and per-node offsets when the network is marked dirty.
+    ///
+    /// This updates the contiguous, internal representation of public couplings so that iteration by source node
+    /// is efficient and consistent with the current set of registered oscillators. After this call:
+    /// - `coupling_idx` is populated and sorted by source oscillator index,
+    /// - `coupling_offsets` is sized to the current node count and points into `coupling_idx` for each source node,
+    /// - reverse-edge links are resolved where the inverse edge exists,
+    /// - triangle adjacency is rebuilt,
+    /// and the `dirty` flag is cleared.
+    ///
+    /// If the network is not dirty this is a no-op.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut net = QuantumKuramotoNetwork::new(0.0);
+    /// // calling rebuild_if_dirty is safe even when the network is not dirty
+    /// net.rebuild_if_dirty();
+    /// ```
     fn rebuild_if_dirty(&mut self) {
         if !self.dirty {
             return;
@@ -953,6 +985,21 @@ impl QuantumKuramotoNetwork {
         self.dirty = false;
     }
 
+    /// Reset and size per-edge scratch buffers to match the current public coupling list.
+    ///
+    /// This clears `reverse_edges` and `gauge_scratch`, then resizes both to `self.coupling.len()`,
+    /// filling `reverse_edges` with `None` and `gauge_scratch` with `NaN`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let mut net = QuantumKuramotoNetwork::new(0.0);
+    /// // assume coupling was populated elsewhere; rebuild_coupling_scratch() will
+    /// // make internal scratch vectors match the number of public coupling entries
+    /// net.rebuild_coupling_scratch();
+    /// assert_eq!(net.reverse_edges.len(), net.coupling.len());
+    /// assert!(net.gauge_scratch.iter().all(|v| v.is_nan()));
+    /// ```
     #[inline]
     fn rebuild_coupling_scratch(&mut self) {
         let edge_len = self.coupling.len();
@@ -962,6 +1009,24 @@ impl QuantumKuramotoNetwork {
         self.gauge_scratch.resize(edge_len, f64::NAN);
     }
 
+    /// Rebuilds the directed triangle list and per-edge triangle adjacency from the current coupling data.
+    ///
+    /// This repopulates `self.triangles` with triples of edge indices `(e_ij, e_jk, e_ki)` representing
+    /// directed 3-cycles (src -> mid -> dst -> src) and fills `self.edge_to_triangles` with the list of
+    /// triangle indices that include each edge. The method reuses the preallocated `triangle_scratch` to
+    /// avoid allocations and iterates `coupling_idx` and `coupling_offsets` to discover valid triangles
+    /// among registered oscillators.
+    ///
+    /// Assumes `coupling_idx`, `coupling_offsets`, and `oscillators` reflect the current graph state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut net = QuantumKuramotoNetwork::new(0.0);
+    /// // with an empty network there are no triangles
+    /// net.rebuild_triangles();
+    /// assert_eq!(net.triangle_count(), 0);
+    /// ```
     fn rebuild_triangles(&mut self) {
         self.triangles.clear();
         std::mem::swap(&mut self.edge_to_triangles, &mut self.triangle_scratch);

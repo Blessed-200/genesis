@@ -232,18 +232,29 @@ impl ManifoldCollector {
         }
     }
 
-    /// Insert a vector into the manifold.
+    /// Inserts a node vector into the manifold, updates incremental H¹ state, and registers new edges and triangles.
+    ///
+    /// This adds `id`/`vec` to the underlying HNSW graph, increments the incremental H¹ node count, adds edges
+    /// between `id` and its collected neighbors (up to the HNSW layer-0 bound), and detects any triangles formed
+    /// between `id` and pairs of its neighbors (calling the incremental H¹ triangle updater for each found).
+    ///
+    /// Allocation contract: after BN-02 this function performs no heap allocations for neighbor collection;
+    /// neighbors are collected into a fixed-capacity stack-backed buffer bounded by the compile-time HNSW
+    /// degree constant `M0` (32). Triangle detection uses an in-place sort and binary search on that buffer.
     ///
     /// # Errors
-    /// Propagates `GenesisError` from `HnswGraph::insert` if insertion fails.
     ///
-    /// # Allocation contract
+    /// Propagates `GenesisError` returned by `HnswGraph::insert` if the underlying graph insertion fails.
     ///
-    /// Zero heap allocations after BN-02. All neighbour buffers are stack-allocated
-    /// using the compile-time HNSW degree bound `M0 = 32`. Triangle detection uses
-    /// binary search on a sorted stack array instead of `HashSet`.
+    /// # Examples
     ///
-    /// AX-ID: AXIOMA-013
+    /// ```
+    /// # use crate::{ManifoldCollector, NodeId, SparseCliffordVector};
+    /// # fn example(mut mc: ManifoldCollector, id: NodeId, vec: SparseCliffordVector) -> Result<(), crate::GenesisError> {
+    /// mc.insert(id, &vec)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn insert(&mut self, id: NodeId, vec: &SparseCliffordVector) -> Result<(), GenesisError> {
         self.graph.insert(id, vec)?;
 

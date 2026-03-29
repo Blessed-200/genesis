@@ -38,14 +38,21 @@ pub struct RipsComplex {
 }
 
 impl RipsComplex {
-    /// Build the Rips complex from the HNSW graph.
+    /// Constructs a Vietoris–Rips complex (dimensions 0–2) from an HNSW graph using a distance threshold.
     ///
-    /// Only edges already present in the graph (at layer 0) are considered,
-    /// which gives the graph-induced Rips complex. This is correct for our
-    /// topological purposes because the HNSW graph already captures the
-    /// neighbourhood structure at the given scale.
+    /// Only layer‑0 adjacency from `graph` is considered: an undirected edge between two nodes is included
+    /// when both nodes expose vectors and their geometric distance is less than or equal to `epsilon`.
+    /// Nodes without vectors and neighbors that cannot be mapped into the current node set are skipped.
     ///
-    /// AX-ID: AXIOMA-007
+    /// # Examples
+    ///
+    /// ```
+    /// let mut g = HnswGraph::new(16);
+    /// // insert nodes into `g`...
+    /// let rips = RipsComplex::build(&g, 1.0);
+    /// assert_eq!(rips.counts().0, g.nodes().count());
+    /// let (_adj, _offsets) = rips.adjacency_csr();
+    /// ```
     #[allow(clippy::similar_names)]
     pub fn build(graph: &HnswGraph, epsilon: f64) -> Self {
         let node_ids: Vec<NodeId> = graph.nodes().collect();
@@ -195,14 +202,59 @@ impl RipsComplex {
         }
     }
 
-    /// Number of simplices of each dimension.
+    /// Returns the number of simplices stored in each dimension (0, 1, 2).
+    ///
+    /// # Returns
+    ///
+    /// A tuple `(num_dim0, num_dim1, num_dim2)` giving counts of vertices, edges, and triangles respectively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let counts = rips.counts();
+    /// assert_eq!(counts.0, rips.dim0.len());
+    /// assert_eq!(counts.1, rips.dim1.len());
+    /// assert_eq!(counts.2, rips.dim2.len());
+    /// ```
     pub const fn counts(&self) -> (usize, usize, usize) {
         (self.dim0.len(), self.dim1.len(), self.dim2.len())
     }
 
-    /// Returns the CSR adjacency backing used for edge/triangle traversal.
+    /// Accesses the CSR (compressed sparse row) adjacency arrays used for neighbor traversal.
+    
     ///
-    /// AX-ID: AXIOMA-007
+    
+    /// The first slice is a flat list of neighbor node indices (`adjacency_data`).
+    
+    /// The second slice contains start offsets per node (`adjacency_offsets`), with length `node_count + 1`.
+    
+    ///
+    
+    /// # Examples
+    
+    ///
+    
+    /// ```
+    
+    /// let (data, offsets) = rips.adjacency_csr();
+    
+    /// let node_count = offsets.len().saturating_sub(1);
+    
+    /// for i in 0..node_count {
+    
+    ///     let start = offsets[i];
+    
+    ///     let end = offsets[i + 1];
+    
+    ///     let neighbors = &data[start..end];
+    
+    ///     // `neighbors` contains the sorted neighbor indices for node `i`
+    
+    ///     let _ = neighbors;
+    
+    /// }
+    
+    /// ```
     pub fn adjacency_csr(&self) -> (&[usize], &[usize]) {
         (&self.adjacency_data, &self.adjacency_offsets)
     }

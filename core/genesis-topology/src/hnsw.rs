@@ -973,9 +973,18 @@ enum GraphState {
 }
 
 impl HnswGraph {
-    /// Create a new empty HNSW graph.
+    /// Creates a new, empty HNSW graph configured for construction.
     ///
-    /// AX-ID: AXIOMA-013
+    /// The `ef_construction` parameter sets the beam width used during node insertion
+    /// to guide candidate selection and neighbor pruning in construction.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let g = HnswGraph::new(200);
+    /// // Newly created graph contains no nodes and has the given ef_construction.
+    /// assert_eq!(g.node_count(), 0);
+    /// ```
     pub fn new(ef_construction: usize) -> Self {
         Self {
             nodes: Vec::with_capacity(INITIAL_NODE_CAPACITY),
@@ -997,11 +1006,36 @@ impl HnswGraph {
         }
     }
 
-    #[inline]
+    /// Create an owned clone of the graph intended for producing an updated snapshot.
+    ///
+    /// This method produces a fresh, independently owned copy suitable for applying
+    /// modifications before publishing a new snapshot.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let g = HnswGraph::new(16);
+    /// let mut updated = g.clone_with_delta();
+    /// // apply changes to `updated` ...
+    /// ```
     fn clone_with_delta(&self) -> Self {
         self.clone()
     }
 
+    /// Validate that a dense internal node index fits in a `u32` and return the converted value.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GenesisError::InvariantViolation { axiom_id: 13 }` if `new_idx` cannot be represented as a `u32`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use crate::GenesisError;
+    /// // Assuming the function is available in the current scope:
+    /// let ok = prevalidate_internal_idx_u32(42).unwrap();
+    /// assert_eq!(ok, 42u32);
+    /// ```
     fn prevalidate_internal_idx_u32(new_idx: usize) -> Result<u32, GenesisError> {
         u32::try_from(new_idx).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })
     }
@@ -1782,9 +1816,17 @@ impl HnswGraph {
 }
 
 impl LockFreeHnswIndex {
-    /// Create a lock-free snapshot index with an empty HNSW graph.
+    /// Creates a lock-free snapshot index backed by a new, empty HNSW graph configured with `ef_construction`.
     ///
-    /// AX-ID: AXIOMA-013
+    /// The index publishes an initial Arc-owned snapshot and initializes the internal CAS-retry counter to 0.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let idx = LockFreeHnswIndex::new(16);
+    /// assert_eq!(idx.node_count(), 0);
+    /// assert_eq!(idx.cas_retry_count(), 0);
+    /// ```
     pub fn new(ef_construction: usize) -> Self {
         let snapshot = Arc::new(HnswGraph::new(ef_construction));
         Self {
@@ -1821,9 +1863,32 @@ impl LockFreeHnswIndex {
         }
     }
 
-    /// Insert a node into the latest snapshot via append-only CAS publication.
+    /// Publish a new node into the current snapshot using copy-on-write and compare-and-swap.
+    ///
+    /// This method clones the active graph snapshot, applies the insertion to the clone,
+    /// and attempts to atomically publish the updated snapshot. On contention it retries
+    /// until the update is published.
     ///
     /// AX-ID: AXIOMA-013
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if the node was successfully inserted and the updated snapshot published;
+    /// `Err(GenesisError)` if the insertion fails due to graph invariants or invalid input
+    /// (for example, attempting to insert an invalid `NodeId` or inserting while the
+    /// graph is in a compacted state).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # use crate::{LockFreeHnswIndex, NodeId, SparseCliffordVector};
+    /// // Assume `index` is a LockFreeHnswIndex instance and `vec` is prepared.
+    /// // let index = LockFreeHnswIndex::new(ef_construction);
+    /// // let id = NodeId::new(0);
+    /// // let vec = SparseCliffordVector::default();
+    /// // index.insert(id, &vec).unwrap();
+    /// ```
     pub fn insert(&self, id: NodeId, vec: &SparseCliffordVector) -> Result<(), GenesisError> {
         loop {
             let base = self.load_snapshot();
@@ -1871,16 +1936,31 @@ impl LockFreeHnswIndex {
         self.load_snapshot().node_count()
     }
 
-    /// Build a contiguous SoA layer-0 snapshot from the latest published graph.
+    /// Produces a read-only, contiguous slab (SoA) snapshot of layer‑0 data from the latest published graph.
     ///
-    /// AX-ID: AXIOMA-013
+    /// The returned snapshot contains the flattened slab coefficient array, node→slab mapping, node id list,
+    /// and compact neighbor arrays with per-node offsets, suitable for fast, lock‑free read access by callers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let soa = graph.layer0_soa();
+    /// // `soa` now holds a contiguous view of layer‑0 coefficients and adjacency for the current snapshot.
+    /// ```
     pub fn layer0_soa(&self) -> HnswLayer0Soa {
         self.load_snapshot().layer0_soa()
     }
 
-    /// Returns the cumulative number of CAS publication retries.
+    /// Cumulative count of failed CAS (compare-and-swap) publication attempts.
     ///
-    /// AX-ID: AXIOMA-013
+    /// This returns the total number of times a CAS in `insert` retried due to contention.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let idx = LockFreeHnswIndex::new(16);
+    /// assert_eq!(idx.cas_retry_count(), 0);
+    /// ```
     pub fn cas_retry_count(&self) -> u64 {
         self.cas_retries.load(AtomicOrdering::Relaxed)
     }
