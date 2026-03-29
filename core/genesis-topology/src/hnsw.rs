@@ -1989,9 +1989,10 @@ fn radix_sort_node_ids(index: &mut Vec<(NodeId, usize)>) {
 
 /// Iterator over deduplicated neighbors of a node across all layers.
 ///
-/// Usa un bitmap of 64 bits in stack for nodes with ID < 64 (typical case
-/// in small-to-medium graphs). For IDs ≥ 64, it uses a sorted Vec<u64>
-/// with binary search: O(log seen) instead of O(seen) lineal.
+/// Uses a SmallVec with inline capacity equal to `MAX_UNIQUE_NEIGHBOR_BUDGET`
+/// (M0 + (MAX_LAYERS - 1) * M). This ensures zero heap allocation for all
+/// valid HNSW graph configurations, as the maximum unique neighbor count
+/// across all layers cannot exceed this compile-time bound.
 ///
 /// AX-ID: AXIOMA-013
 struct NeighborIter<'a> {
@@ -2037,6 +2038,12 @@ impl Iterator for NeighborIter<'_> {
             match self.seen.binary_search(&raw) {
                 Ok(_) => continue,
                 Err(pos) => {
+                    debug_assert!(
+                        self.seen.len() < MAX_UNIQUE_NEIGHBOR_BUDGET,
+                        "SmallVec should never spill: seen={}, budget={}",
+                        self.seen.len(),
+                        MAX_UNIQUE_NEIGHBOR_BUDGET
+                    );
                     self.seen.insert(pos, raw);
                     return Some(nid);
                 }
@@ -3557,6 +3564,146 @@ mod scaling_tests {
         assert!(
             ratio > 0.1,
             "ratio={ratio:.2} suspiciously small — benchmark noise"
+        );
+    }
+
+    /// Verify that NeighborIter's SmallVec never spills to heap in worst-case scenarios.
+    ///
+    /// This test constructs a maximally-connected node (all layers present, each layer
+    /// at capacity) and ensures the deduplicated neighbor budget stays within
+    /// MAX_UNIQUE_NEIGHBOR_BUDGET. This prevents CI drift if M, M0, or MAX_LAYERS change.
+    ///
+    /// AX-ID: AXIOMA-013
+    #[test]
+    fn neighbor_iter_smallvec_never_spills() {
+        let mut graph = HnswGraph::new(16);
+
+        // Insert enough nodes to fill all layers at maximum capacity.
+        // We need:
+        // - M0 neighbors at layer 0 (32)
+        // - M neighbors at each upper layer (16 per layer)
+        // - MAX_LAYERS layers (16)
+        // Total unique neighbors needed: M0 + (MAX_LAYERS - 1) * M = 32 + 15*16 = 272
+        let num_neighbors = M0 + (MAX_LAYERS - 1) * M;
+
+        // Create a central node with max layers
+        let central_id = NodeId::try_new(0).unwrap();
+        let central_vec = make_vec(0.0);
+        graph.insert(central_id, &central_vec).unwrap();
+
+        // Force the central node to have max_layer = MAX_LAYERS - 1
+        let central_idx = 0;
+        graph.nodes[central_idx].max_layer = MAX_LAYERS - 1;
+
+        // Allocate upper layers storage
+        let upper_layers = vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1];
+        graph.nodes[central_idx].adj.upper = Some(upper_layers.into_boxed_slice());
+
+        // Insert neighbor nodes
+        for i in 1..=num_neighbors {
+            let neighbor_id = NodeId::try_new(i as u64).unwrap();
+            let neighbor_vec = make_vec(i as f64 * 0.01);
+            graph.insert(neighbor_id, &neighbor_vec).unwrap();
+        }
+
+        // Manually populate adjacency lists to create worst-case scenario
+        // Layer 0: M0 neighbors
+        for i in 1..=M0 {
+            let neighbor_idx = i as u32;
+            let packed = NodeAdj::pack_layer0(neighbor_idx, 0);
+            graph.nodes[central_idx].adj.layer0.push(packed);
+        }
+
+        // Upper layers: M neighbors each
+        if let Some(ref mut upper) = graph.nodes[central_idx].adj.upper {
+            for layer_idx in 0..(MAX_LAYERS - 1) {
+                for i in 0..M {
+                    // Use unique neighbor IDs across layers to maximize deduplication work
+                    let neighbor_offset = M0 + layer_idx * M + i;
+                    if neighbor_offset < num_neighbors {
+                        let neighbor_idx = (neighbor_offset + 1) as u32;
+                        upper[layer_idx].push(neighbor_idx);
+                    }
+                }
+            }
+        }
+
+        // Create a NeighborIter and exhaust it, tracking the maximum seen.len()
+        let iter = NeighborIter {
+            graph: &graph,
+            node_idx: Some(central_idx),
+            layer_pos: 0,
+            edge_pos: 0,
+            seen: SmallVec::new(),
+        };
+
+        let mut max_seen_len = 0;
+        let neighbors: Vec<_> = iter.inspect(|_| {
+            // Access the iterator's internal state via a fresh iteration
+            // (We can't access `iter.seen` directly during iteration)
+        }).collect();
+
+        // Re-create the iterator to check final state
+        let mut iter = NeighborIter {
+            graph: &graph,
+            node_idx: Some(central_idx),
+            layer_pos: 0,
+            edge_pos: 0,
+            seen: SmallVec::new(),
+        };
+
+        // Exhaust iterator while tracking max seen length
+        while let Some(_) = iter.next() {
+            if iter.seen.len() > max_seen_len {
+                max_seen_len = iter.seen.len();
+            }
+        }
+
+        // Final check after iteration completes
+        let final_seen_len = iter.seen.len();
+        if final_seen_len > max_seen_len {
+            max_seen_len = final_seen_len;
+        }
+
+        // Assert we never exceeded the budget
+        assert!(
+            max_seen_len <= MAX_UNIQUE_NEIGHBOR_BUDGET,
+            "SmallVec spilled! max_seen_len={}, budget={}. \
+             Check M={}, M0={}, MAX_LAYERS={}",
+            max_seen_len,
+            MAX_UNIQUE_NEIGHBOR_BUDGET,
+            M,
+            M0,
+            MAX_LAYERS
+        );
+
+        // Also verify we actually tested a meaningful case
+        assert!(
+            neighbors.len() > 0,
+            "Test is trivial: no neighbors were emitted"
+        );
+
+        // Verify the SmallVec never allocated on the heap by checking spilled() method
+        // (SmallVec's capacity will be > inline_size if it spilled)
+        let iter_final = NeighborIter {
+            graph: &graph,
+            node_idx: Some(central_idx),
+            layer_pos: 0,
+            edge_pos: 0,
+            seen: SmallVec::new(),
+        };
+
+        // Run through once more and verify spilled status
+        let mut iter_check = iter_final;
+        let _: Vec<_> = iter_check.by_ref().collect();
+
+        assert!(
+            !iter_check.seen.spilled(),
+            "SmallVec heap-allocated! This violates the zero-allocation guarantee. \
+             seen.len()={}, seen.capacity()={}, inline_capacity={}",
+            iter_check.seen.len(),
+            iter_check.seen.capacity(),
+            MAX_UNIQUE_NEIGHBOR_BUDGET
         );
     }
 }
