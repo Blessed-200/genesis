@@ -1612,7 +1612,7 @@ impl HnswGraph {
             node_idx,
             layer_pos: 0,
             edge_pos: 0,
-            seen: SmallVec::new(), // BN-07: inline stack, no heap allocation for ≤128 IDs
+            seen: SmallVec::new(), // BN-07: inline budget matches MAX_UNIQUE_NEIGHBOR_BUDGET; spill indicates per-layer caps hit or constant drift
         }
     }
 
@@ -2003,7 +2003,8 @@ struct NeighborIter<'a> {
     ///
     /// # BN-07: SmallVec eliminates heap allocation
     /// Inline capacity tracks the legal multi-layer neighbour budget.
-    /// Graceful spill to heap for rare deep-hierarchy nodes (no panic, no truncation).
+    /// Any heap spill indicates either per-layer caps being hit, or the constants
+    /// MAX_UNIQUE_NEIGHBOR_BUDGET/M0/M/MAX_LAYERS have drifted from the intended bound.
     seen: SmallVec<[u64; MAX_UNIQUE_NEIGHBOR_BUDGET]>,
 }
 
