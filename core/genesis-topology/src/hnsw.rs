@@ -999,6 +999,15 @@ impl HnswGraph {
     }
 
     #[inline]
+    /// Stub for future delta-snapshot cloning in the lock-free CAS publication path.
+    ///
+    /// This currently delegates to full `clone()` intentionally to preserve
+    /// snapshot semantics and compatibility with the existing CAS loop while the
+    /// delta-sharing design is still being validated.
+    ///
+    /// Planned optimization: replace this with a structural delta clone that
+    /// reuses unchanged storage across snapshots to reduce allocation/copy cost.
+    /// Update this documentation when delta cloning is implemented.
     fn clone_with_delta(&self) -> Self {
         self.clone()
     }
@@ -2066,17 +2075,6 @@ mod tests {
     }
 
     #[test]
-    fn lock_free_index_cas_retry_counter_initializes_and_increments() {
-        let index = LockFreeHnswIndex::new(16);
-        assert_eq!(index.cas_retry_count(), 0);
-
-        index
-            .cas_retries
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        assert_eq!(index.cas_retry_count(), 1);
-    }
-
-    #[test]
     fn slab_distance_matches_scalar_all_counts() {
         let mut seed = 0x1234_5678_9ABC_DEF0;
         let query = random_vec(&mut seed);
@@ -2333,6 +2331,10 @@ mod tests {
             }
         });
 
+        assert!(
+            index.cas_retry_count() > 0,
+            "multiwriter insert workload should observe at least one CAS retry"
+        );
         assert_eq!(index.node_count(), 32);
         let query = make_vec(0.25);
         let result = index.search_nearest(&query, 4);

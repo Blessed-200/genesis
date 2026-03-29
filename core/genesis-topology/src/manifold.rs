@@ -256,9 +256,9 @@ impl ManifoldCollector {
         use crate::hnsw::MAX_UNIQUE_NEIGHBOR_BUDGET;
         let mut neighbors: ArrayVec<NodeId, MAX_UNIQUE_NEIGHBOR_BUDGET> = ArrayVec::new();
         for neighbor in self.graph.neighbors(id) {
-            debug_assert!(neighbors.len() < MAX_UNIQUE_NEIGHBOR_BUDGET);
             neighbors.push(neighbor);
         }
+        debug_assert!(neighbors.len() <= MAX_UNIQUE_NEIGHBOR_BUDGET);
 
         // Registrar edges nuevas.
         for &v in &neighbors {
