@@ -215,6 +215,7 @@ impl OscillatorSlab {
         self.sync_lanes_if_dirty();
         let idx = self.lanes_mut().len();
         self.lanes_mut().push(osc);
+        self.sync_state.set(SlabSyncState::LanesDirty);
         let b = idx / 8;
         let lane = idx % 8;
         if b == self.blocks_ref().len() {
@@ -227,6 +228,7 @@ impl OscillatorSlab {
             self.blocks_mut_ref()[b].amplitudes[g][lane] = osc.amplitudes[g];
             self.blocks_mut_ref()[b].frequencies[g][lane] = osc.frequencies[g];
         }
+        self.sync_blocks_if_dirty();
         self.sync_state.set(SlabSyncState::Clean);
     }
 
@@ -294,11 +296,32 @@ impl OscillatorSlab {
 
     /// Mutable view over SoA blocks when caller keeps AoS lanes mirrored manually.
     ///
+    /// Invariant: every write through this view must be mirrored into the AoS lane
+    /// storage before leaving the caller, otherwise lanes and blocks diverge.
+    ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
-    pub fn blocks_mut_in_sync(&mut self) -> &mut [OscillatorBlock] {
+    pub(crate) fn blocks_mut_in_sync(&mut self) -> &mut [OscillatorBlock] {
         self.sync_blocks_if_dirty();
         self.blocks_mut_ref()
+    }
+
+    /// Mirrors one phase value into AoS lane storage and SoA block storage.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+    #[inline]
+    pub(crate) fn set_phase_mirrored(&mut self, idx: usize, g: usize, phase: f64) {
+        self.sync_lanes_if_dirty();
+        self.sync_blocks_if_dirty();
+        // SAFETY: `&mut self` guarantees exclusive access; indices are provided by
+        // Kuramoto hot paths and validated by loop bounds there.
+        unsafe {
+            (&mut *self.lanes.get())[idx].phases[g] = phase;
+            let b = idx / 8;
+            let lane = idx % 8;
+            (&mut *self.blocks.get())[b].phases[g][lane] = phase;
+        }
+        self.sync_state.set(SlabSyncState::Clean);
     }
 
     /// Rebuild SoA blocks from AoS lanes.

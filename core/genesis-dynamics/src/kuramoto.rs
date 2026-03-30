@@ -470,13 +470,22 @@ impl QuantumKuramotoNetwork {
         };
 
         self.rebuild_if_dirty();
-        let n = self.oscillators.len();
-        if n == 0 || vecs.len() != n {
+        let n_slots = self.oscillators.len();
+        let live_n = self.node_count();
+        if live_n == 0 || vecs.len() != live_n {
             return;
+        }
+        let mut live_pos = vec![usize::MAX; n_slots];
+        let mut live_cursor = 0usize;
+        for (idx, &c) in self.contrib_buf.iter().enumerate() {
+            if c != 0 {
+                live_pos[idx] = live_cursor;
+                live_cursor += 1;
+            }
         }
 
         // Snapshot phases before update (simultaneous semantics — Euler-Maruyama).
-        for i in 0..n {
+        for i in 0..n_slots {
             self.phase_scratch[i] = self.oscillators[i].phases;
         }
 
@@ -487,12 +496,12 @@ impl QuantumKuramotoNetwork {
                 .iter()
                 .map(super::oscillator::QuantumOscillator::amplitude_norm)
                 .sum();
-            let mean = s / n as f64;
+            let mean = s / live_n as f64;
             (mean * mean).max(f64::MIN_POSITIVE)
         };
 
-        self.amp_scratch.resize(n, 0.0);
-        self.sat_scratch.resize(n, 0.0);
+        self.amp_scratch.resize(n_slots, 0.0);
+        self.sat_scratch.resize(n_slots, 0.0);
         for (i, osc) in self.oscillators.iter().enumerate() {
             let amp = osc.amplitude_norm();
             self.amp_scratch[i] = amp;
@@ -504,7 +513,7 @@ impl QuantumKuramotoNetwork {
         // CRYSTAL: O17 — inevitable
         let sqrt_2k_t_dt = (self.temperature * (2.0 * dt)).sqrt();
 
-        for i in 0..n {
+        for i in 0..n_slots {
             if self.contrib_buf[i] == 0 {
                 continue;
             }
@@ -525,7 +534,12 @@ impl QuantumKuramotoNetwork {
                 // Bivector frustration: dot product of grade-2 components.
                 // Positive → aligned orientation → attractive coupling.
                 // Negative → opposed orientation → repulsive coupling.
-                let dot_biv = vecs[i].dot_bivectors(&vecs[j]);
+                if self.contrib_buf[j] == 0 {
+                    continue;
+                }
+                let vi = live_pos[i];
+                let vj = live_pos[j];
+                let dot_biv = vecs[vi].dot_bivectors(&vecs[vj]);
 
                 // Amplitude modulation: high-certainty pairs contribute more.
                 let amp_factor = (amp_i * amp_j) / avg_amp_sq;
@@ -555,10 +569,7 @@ impl QuantumKuramotoNetwork {
                 };
                 let new_phase =
                     dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]) + eta;
-                self.oscillators[i].phases[g] = new_phase;
-                let b = i / 8;
-                let lane = i % 8;
-                self.oscillators.blocks_mut_in_sync()[b].phases[g][lane] = new_phase;
+                self.oscillators.set_phase_mirrored(i, g, new_phase);
             }
         }
 
@@ -572,7 +583,7 @@ impl QuantumKuramotoNetwork {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn node_count(&self) -> usize {
-        self.oscillators.len()
+        self.contrib_buf.iter().filter(|&&c| c != 0).count()
     }
 
     /// Access inmutable a all the oscillators.
@@ -743,8 +754,7 @@ impl QuantumKuramotoNetwork {
                     let omega = self.oscillators[i].frequencies[g];
                     let new_phase =
                         dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]);
-                    self.oscillators[i].phases[g] = new_phase;
-                    self.oscillators.blocks_mut_in_sync()[b].phases[g][lane] = new_phase;
+                    self.oscillators.set_phase_mirrored(i, g, new_phase);
                 }
             }
         }
@@ -781,8 +791,7 @@ impl QuantumKuramotoNetwork {
                         noise_buf[g],
                         dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]),
                     );
-                    self.oscillators[i].phases[g] = new_phase;
-                    self.oscillators.blocks_mut_in_sync()[b].phases[g][lane] = new_phase;
+                    self.oscillators.set_phase_mirrored(i, g, new_phase);
                 }
             }
         }
@@ -820,6 +829,9 @@ impl QuantumKuramotoNetwork {
                 self.oscillators
                     .iter()
                     .fold((0.0f64, 0.0f64, 0.0f64), |(sc, ss, sa), osc| {
+                        if !osc.state.contributes_to_sync() {
+                            return (sc, ss, sa);
+                        }
                         let a = osc.amplitudes[g];
                         let (sin, cos) = osc.phases[g].sin_cos();
                         (a.mul_add(cos, sc), a.mul_add(sin, ss), sa + a)
