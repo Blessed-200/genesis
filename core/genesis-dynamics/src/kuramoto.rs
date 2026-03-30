@@ -219,6 +219,8 @@ pub struct QuantumKuramotoNetwork {
     /// Updated at every state-mutation site. Avoids loading oscillator state in the
     /// O(N·E) coupling inner loop.
     contrib_buf: Vec<u8>,
+    live_count: usize,
+    live_pos_scratch: Vec<usize>,
 
     /// Flag: the topology changed and must be recomputed indices and triangles.
     dirty: bool,
@@ -263,6 +265,8 @@ impl QuantumKuramotoNetwork {
             sat_scratch: Vec::new(),
             gauge_scratch: Vec::new(),
             contrib_buf: Vec::new(),
+            live_count: 0,
+            live_pos_scratch: Vec::new(),
             dirty: false,
             triangles: Vec::new(),
             edge_to_triangles: Vec::new(),
@@ -302,6 +306,7 @@ impl QuantumKuramotoNetwork {
         self.oscillators.push(osc);
         self.phase_scratch.push([0.0; 5]);
         self.contrib_buf.push(contributes);
+        self.live_count += usize::from(contributes != 0);
         self.coupling_offsets.push((0, 0));
         self.amp_scratch.push(1.0);
         self.sat_scratch.push(0.0);
@@ -475,11 +480,12 @@ impl QuantumKuramotoNetwork {
         if live_n == 0 || vecs.len() != live_n {
             return;
         }
-        let mut live_pos = vec![usize::MAX; n_slots];
+        self.live_pos_scratch.resize(n_slots, usize::MAX);
+        self.live_pos_scratch.fill(usize::MAX);
         let mut live_cursor = 0usize;
         for (idx, &c) in self.contrib_buf.iter().enumerate() {
             if c != 0 {
-                live_pos[idx] = live_cursor;
+                self.live_pos_scratch[idx] = live_cursor;
                 live_cursor += 1;
             }
         }
@@ -537,8 +543,8 @@ impl QuantumKuramotoNetwork {
                 if self.contrib_buf[j] == 0 {
                     continue;
                 }
-                let vi = live_pos[i];
-                let vj = live_pos[j];
+                let vi = self.live_pos_scratch[i];
+                let vj = self.live_pos_scratch[j];
                 let dot_biv = vecs[vi].dot_bivectors(&vecs[vj]);
 
                 // Amplitude modulation: high-certainty pairs contribute more.
@@ -583,7 +589,7 @@ impl QuantumKuramotoNetwork {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
     pub fn node_count(&self) -> usize {
-        self.contrib_buf.iter().filter(|&&c| c != 0).count()
+        self.live_count
     }
 
     /// Access inmutable a all the oscillators.
@@ -1208,6 +1214,7 @@ impl QuantumKuramotoNetwork {
             osc.state = crate::oscillator::OscillatorState::Pruned { at_ns: 0 };
         }
         if let Some(flag) = self.contrib_buf.get_mut(idx) {
+            self.live_count -= usize::from(*flag != 0);
             *flag = 0u8;
         }
         self.oscillators.rebuild_blocks();

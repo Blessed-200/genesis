@@ -125,6 +125,8 @@ pub struct OscillatorSlab {
     lanes: UnsafeCell<Vec<QuantumOscillator>>,
     blocks: UnsafeCell<Vec<OscillatorBlock>>,
     sync_state: Cell<SlabSyncState>,
+    #[cfg(test)]
+    rebuild_count: Cell<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +152,8 @@ impl OscillatorSlab {
             lanes: UnsafeCell::new(Vec::new()),
             blocks: UnsafeCell::new(Vec::new()),
             sync_state: Cell::new(SlabSyncState::Clean),
+            #[cfg(test)]
+            rebuild_count: Cell::new(0),
         }
     }
 
@@ -213,9 +217,9 @@ impl OscillatorSlab {
     #[inline]
     pub fn push(&mut self, osc: QuantumOscillator) {
         self.sync_lanes_if_dirty();
+        self.sync_blocks_if_dirty();
         let idx = self.lanes_mut().len();
         self.lanes_mut().push(osc);
-        self.sync_state.set(SlabSyncState::LanesDirty);
         let b = idx / 8;
         let lane = idx % 8;
         if b == self.blocks_ref().len() {
@@ -228,7 +232,6 @@ impl OscillatorSlab {
             self.blocks_mut_ref()[b].amplitudes[g][lane] = osc.amplitudes[g];
             self.blocks_mut_ref()[b].frequencies[g][lane] = osc.frequencies[g];
         }
-        self.sync_blocks_if_dirty();
         self.sync_state.set(SlabSyncState::Clean);
     }
 
@@ -332,6 +335,8 @@ impl OscillatorSlab {
     #[inline]
     pub fn rebuild_blocks(&mut self) {
         self.sync_lanes_if_dirty();
+        #[cfg(test)]
+        self.rebuild_count.set(self.rebuild_count.get() + 1);
         // SAFETY: `&mut self` guarantees exclusive access; references derived from
         // `UnsafeCell` do not alias mutable/immutable borrows outside this scope.
         unsafe {
@@ -419,6 +424,8 @@ impl OscillatorSlab {
     }
 
     unsafe fn rebuild_blocks_from_cells(&self) {
+        #[cfg(test)]
+        self.rebuild_count.set(self.rebuild_count.get() + 1);
         let lanes = &*self.lanes.get();
         let blocks = &mut *self.blocks.get();
         let block_count = (lanes.len() + 7) / 8;
@@ -463,6 +470,11 @@ impl OscillatorSlab {
                 osc.frequencies[g] = block.frequencies[g][lane];
             }
         }
+    }
+
+    #[cfg(test)]
+    fn rebuild_count_for_test(&self) -> usize {
+        self.rebuild_count.get()
     }
 }
 
@@ -986,5 +998,25 @@ mod slab_tests {
             slab.blocks()[1].states[1],
             OscillatorState::Pruned { .. }
         ));
+    }
+
+    #[test]
+    fn slab_push_does_not_trigger_full_rebuild() {
+        let mut slab = OscillatorSlab::new();
+        assert_eq!(slab.rebuild_count_for_test(), 0);
+        slab.push(make_osc(0, 0.0));
+        assert_eq!(
+            slab.rebuild_count_for_test(),
+            0,
+            "incremental push must patch target lane without full rebuild"
+        );
+
+        slab[0].phases[0] = 3.0;
+        let before = slab.rebuild_count_for_test();
+        let _ = slab.blocks();
+        assert!(
+            slab.rebuild_count_for_test() > before,
+            "dirty lane sync through blocks() must trigger a rebuild"
+        );
     }
 }
