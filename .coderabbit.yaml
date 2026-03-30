@@ -1,0 +1,175 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "en-US"
+
+early_access: false
+
+tone_instructions: >
+  Use a rigorous, technical, and professional tone. Avoid conversational filler,
+  motivational language, and low-signal suggestions. Reviews must be concise,
+  precise, and evidence-backed.
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  review_status: true
+  review_details: true
+  commit_status: true
+  fail_commit_status: true
+  enable_prompt_for_ai_agents: true
+  collapse_walkthrough: false
+  poem: false
+  path_filters:
+    - "**/*.rs"
+    - "**/*.toml"
+    - "**/*.md"
+    - "**/*.yaml"
+    - "**/*.yml"
+    - "!**/forensic_reports/**"
+    - "!files/**"
+    - "!target/**"
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+      - "master"
+
+  tools:
+    clippy:
+      enabled: true
+    ruff:
+      enabled: false
+    markdownlint:
+      enabled: true
+
+  instructions: |
+    Repository objective: world-class cognitive architecture with mathematically
+    correct, performance-first Rust implementation and zero tolerance for
+    architectural regression.
+
+    Reviewer behavior contract:
+    - Raise only real, actionable findings tied to code semantics, invariants,
+      performance, memory behavior, or documented contracts.
+    - Avoid speculative style comments unless they prevent future defects.
+    - Treat hot-path regressions and invariant violations as blocking.
+    - If CI fails on crates/files outside the diff scope, classify as baseline-preexisting or external/tooling and report explicitly instead of misattributing to the current PR.
+
+    Canonical invariants (never suggest violating):
+    1) Grade-weighted Clifford metric is mandatory; never replace with uniform L2.
+    2) BLAKE3 is the proof hash contract in genesis-types; do not suggest SHA-2.
+    3) NodeId validity contract is raw <= NodeId::MAX_VALID; u64::MAX is sentinel.
+    4) Belief/VFE full gradient is 16D in active implementation contracts.
+    5) HyperbolicCoord defaults to None until explicitly set by topology evolution.
+
+    Mathematical and systems correctness checks:
+    - Validate AX-ID references against AXIOMA-001 through AXIOMA-019.
+    - Roadmap references to future axioms are not violations by themselves.
+    - Validate phase wrapping boundaries and deterministic canonicalization rules.
+    - The wrapped == PI branch in wrap_phase is intentional boundary canonicalization; do not flag without a numerical counterexample showing a reachable input where the branch fires incorrectly.
+    - Validate cohomology gate consistency (H¹ invariants) for topology mutations.
+    - Validate monotonic ordering assumptions in topology-critical comparisons.
+
+    Performance policy (blocking in hot paths):
+    - No HashMap/BTreeMap in hot loops.
+    - No hidden heap allocation in per-edge/per-node kernels.
+    - No trait-object dispatch in hot paths.
+    - No unnecessary sqrt in comparison-only distance paths.
+    - No lossy f64->f32 cast in ordering-critical topology logic.
+    - Benchmark threshold failures must include suspected root-cause class (algorithmic, cache/layout, allocation, branching/vectorization) with evidence.
+
+    Documentation policy:
+    - Technical English only (no mixed-language comments).
+    - Blocking: new comments/docstrings that mix Spanish and English inside the same technical block.
+    - Nit (non-blocking): legacy mixed-language comments not touched by the PR.
+    - Blocking: missing AX-ID reference in public API docs.
+    - Nit (non-blocking): AX-ID references without backtick wrapping.
+    - Public APIs should include precise rustdoc with AX-ID anchor.
+    - Comments must explain invariants, not narrate obvious syntax.
+
+    Safety policy:
+    - Every unsafe block must include a nearby SAFETY explanation with explicit
+      invariants (bounds, aliasing, alignment/lifetime).
+
+  path_instructions:
+    - path: "shared/genesis-types/**/*.rs"
+      instructions: |
+        Primitive contract layer shared by all crates.
+        Focus on:
+        - NodeId valid range is `0..=NodeId::MAX_VALID` (`0..=u64::MAX - 1`)
+        - Sentinel contract: `NodeId::INVALID = u64::MAX` is forbidden as a live node id
+        - Constructor contract: `NodeId::try_new(raw)` returns `Ok` for any `raw <= MAX_VALID`, including `0`
+        - Proof chain integrity and BLAKE3-only hashing contract
+        - ABI/layout-sensitive signal structs and versioned wire stability
+        - No panic-based control flow in non-test code where `GenesisError` is required
+
+    - path: "core/genesis-math/**/*.rs"
+      instructions: |
+        Clifford algebra and metric kernels.
+        Focus on:
+        - Sign and grade-table consistency
+        - METRIC_WEIGHTS grade-differentiated semantics
+        - Stable numeric accumulation in norm/distance kernels
+        - Hot-loop memory access pattern and vectorization viability
+
+    - path: "core/genesis-topology/**/*.rs"
+      instructions: |
+        Topology/search core (HNSW + cohomology).
+        Focus on:
+        - search/prune determinism and ordering stability
+        - lock-free correctness and epoch/visited invariants
+        - adjacency ordering contracts and cache-local data traversal
+        - preservation of H¹ consistency constraints on graph mutations
+
+    - path: "core/genesis-dynamics/**/*.rs"
+      instructions: |
+        Kuramoto + VFE dynamics and synchrony observables.
+        Focus on:
+        - per-edge integration costs and allocation-free inner loops
+        - phase wrapping and gauge update correctness
+        - synchrony and VFE numerical stability contracts
+        - Verify that `synchrony_order_fast` is numerically identical to `compute_synchrony_order_internal` for identical inputs
+        - deterministic behavior guarantees where tests/docs claim determinism
+
+    - path: "**/benches/**/*.rs"
+      instructions: |
+        Benchmark harness validation only.
+        Focus on measurement quality:
+        - setup excluded from timed iteration
+        - guardrails consistent with documented baseline and variance margins
+        - no benchmark anti-patterns that invalidate claims
+
+    - path: "**/tests/**/*.rs"
+      instructions: |
+        Tests are judged for correctness and coverage, not micro-optimization.
+        Focus on:
+        - explicit invariant checks
+        - robust floating-point assertions
+        - meaningful edge cases (NaN, Inf, boundary values)
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  learnings:
+    scope: "local"
+  issues:
+    scope: "local"
+  code_guidelines:
+    enabled: true
+    scope: "global"
+    filePatterns:
+      - "AGENTS.md"
+      - "docs/00_AXIOMAS.md"
+      - "docs/01_LEY_FUNDACIONAL.md"
+      - "docs/02_ENGINEERING_BLUEPRINT_V2.md"
+      - "contratos_genesis.md"
+
+tools:
+  markdownlint:
+    enabled: true
+  languagetool:
+    enabled: true

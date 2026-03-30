@@ -1,5 +1,71 @@
 # PLANS
 
+## 1.6 Repository professionalization phase (2026-03-30)
+
+### Root cause
+
+- CI policy is split across duplicated workflows, creating redundant checks and inconsistent diagnostics.
+- Governance exists but lacks explicit out-of-scope failure triage and tri-agent handoff protocol.
+- Artifact lifecycle is undefined, so stale files accumulate and reduce repository legibility.
+- Ownership/escalation responsibilities for architecture-critical domains are not formally documented.
+
+### File-level actions
+
+1. `.github/workflows/Rust.yml`
+   - Consolidate quality gates into one deterministic pipeline.
+   - Add benchmark forensic outputs and artifact upload.
+2. `.github/workflows/genesis_elite_forge.yaml`
+   - Remove duplicate pipeline after consolidation.
+3. `.coderabbit.yaml`
+   - Harden enterprise review controls (`commit_status`, fail behavior, AI-agent prompt support, noise filters).
+   - Add explicit failure-attribution and benchmark-forensics expectations.
+4. `docs/AI_ENGINEERING_OPERATING_SYSTEM.md`
+   - Add out-of-scope failure triage and mandatory PR failure-attribution block.
+5. `docs/ENGINEERING_OWNERSHIP_MATRIX.md`
+   - Define mandatory reviewers and escalation SLA per critical subsystem.
+6. `docs/STALE_ARTIFACT_POLICY.md`
+   - Define classification/removal process for stale files.
+7. `docs/TRI_AGENT_HANDOFF_PROTOCOL.md`
+   - Define Codex–CodeRabbit–Lead handoff and finding-state model.
+
+### Validation
+
+- `ruby -e "require 'yaml'; YAML.load_file('.coderabbit.yaml'); puts 'ok'"`
+- `rg -n \"classification|Failure Attribution|benchmark|guardrail|owner|escalation|deferred\" docs .coderabbit.yaml .github/workflows/Rust.yml`
+- `git diff -- . ':(exclude)Cargo.lock'`
+
+### Quality target
+
+- One production-quality CI gate, explicit attribution for non-scope failures, traceable benchmark diagnosis, and governance docs sufficient for enterprise code review operations.
+
+## 1.5 AI review + agent governance hardening (2026-03-30)
+
+### Root cause
+
+- Repository-level AI governance is fragmented across prompts, comments, and historical notes, which creates drift between implementation reality and review automation rules.
+- Existing CodeRabbit guidance (shared out-of-band) contains stale invariants (AXIOMA range limits, NodeId assumptions, synchrony branching assumptions) that can produce false positives and distract from high-severity findings.
+- Codex and CodeRabbit are not yet integrated under one explicit enterprise operating protocol with measurable quality gates.
+
+### File-level actions
+
+1. `.coderabbit.yaml`
+   - Create a strict, schema-compliant CodeRabbit policy tuned to GÉNESIS invariants and current implementation contracts.
+   - Replace stale or mathematically incorrect review guidance with verified constraints tied to active crates and hot paths.
+   - Enable high-signal review behavior (assertive profile, review details, failing commit status when unreviewable, deterministic path instructions).
+2. `docs/AI_ENGINEERING_OPERATING_SYSTEM.md`
+   - Define an enterprise-grade operating model for Codex + CodeRabbit + human lead review.
+   - Standardize quality gates, escalation policy, learning hygiene, and anti-regression practices for mathematical/performance-critical changes.
+
+### Validation
+
+- `python -c "import yaml, pathlib; yaml.safe_load(pathlib.Path('.coderabbit.yaml').read_text()); print('ok')"`
+- `rg -n "AXIOMA-001 through AXIOMA-019|NodeId::MAX_VALID|BLAKE3|synchrony_order_fast|HNSW|hot path" .coderabbit.yaml docs/AI_ENGINEERING_OPERATING_SYSTEM.md`
+- `git diff -- . ':(exclude)Cargo.lock'`
+
+### Complexity/quality target
+
+- Increase review precision (fewer false positives) while raising severity on architectural/performance regressions, with no relaxation of mathematical invariants or hot-path constraints.
+
 ## 1.4 Hot-path allocation elimination in genesis-dynamics/genesis-topology (2026-03-28)
 
 ### Root cause

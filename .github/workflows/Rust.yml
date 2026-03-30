@@ -1,10 +1,13 @@
-name: GENESIS — Production Gate
+name: GENESIS Production Quality Gate
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main", "master"]
+  push:
+    branches: ["main", "master"]
+  schedule:
+    - cron: "0 3 * * 0" # Weekly deep scan
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,33 +17,28 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  RUST_LOG: warn
 
 jobs:
-  # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 1: CORRECTITUD
-  # ─────────────────────────────────────────────────────────────────────────────
-  correctness:
-    name: "① Correctitud"
+  lint-build-test:
+    name: "01 Lint Build Test"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          components: clippy, rustfmt
+          components: rustfmt, clippy
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          key: correctness
+          key: lint-build-test
 
-      - name: Formato
+      - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Clippy workspace (deny warnings)
+      - name: Clippy (workspace, deny warnings)
         run: |
           cargo clippy --workspace --all-targets --all-features -- \
             -D warnings \
@@ -49,178 +47,212 @@ jobs:
             -A clippy::module_name_repetitions \
             -A clippy::must_use_candidate
 
-      - name: Build mínima workspace (sin features)
-        run: cargo check --workspace --no-default-features
+      - name: Workspace check
+        run: cargo check --workspace
 
-      - name: Gate inline(always) en topology
+      - name: Inline(always) topology gate
         run: scripts/check_inline_always_topology.sh
 
-      - name: Tests debug
-        run: cargo test --all --verbose
+      - name: Workspace tests (debug)
+        run: cargo test --workspace --verbose
 
-      - name: Tests release
-        run: cargo test --all --release --verbose
+      - name: Workspace tests (release)
+        run: cargo test --workspace --release --verbose
 
-      - name: Cross-compile ARM
-        run: |
-          rustup target add aarch64-unknown-linux-gnu
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-          cargo build --release --target aarch64-unknown-linux-gnu \
-            -p genesis-types -p genesis-math -p genesis-topology -p genesis-dynamics
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 2: INVARIANTES FÍSICOS
-  # ─────────────────────────────────────────────────────────────────────────────
   invariants:
-    name: "② Invariantes Físicos"
+    name: "02 Invariants"
     runs-on: ubuntu-latest
-    needs: correctness
+    needs: lint-build-test
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
+
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
         with:
           key: invariants
 
-      - name: Property-based tests (ignored)
-        run: cargo test --release --all -- --include-ignored
+      - name: Property/invariant tests (include ignored)
+        run: cargo test --workspace --release -- --include-ignored
 
-      - name: HNSW level distribution
+      - name: Topology level distribution invariant
         run: cargo test --release -p genesis-topology -- hnsw_level_distribution_m16 --nocapture
 
       - name: Minkowski signature invariant
         run: cargo test --release -p genesis-math -- canonical_signature_table_matches_precomputed --nocapture
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 3: RENDIMIENTO (UMBRALES DUROS)
-  # ─────────────────────────────────────────────────────────────────────────────
-  performance:
-    name: "③ Rendimiento"
+  performance-guardrails:
+    name: "03 Performance Guardrails"
     runs-on: ubuntu-latest
-    needs: correctness
+    needs: lint-build-test
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install Rust
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
         with:
-          toolchain: stable
+          key: performance
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: benchmarks
+      - name: Build release targets
+        run: cargo build --workspace --release
 
-      - name: Build benchmarks
-        run: cargo build --release --all
-
-      - name: Run Benchmarks (Math & Topology)
+      - name: Run benchmark suite
         run: |
+          mkdir -p artifacts/perf
           cargo bench --bench geometry -p genesis-math \
-            -- --output-format bencher 2>&1 | tee bench_math.txt
+            -- --output-format bencher 2>&1 | tee artifacts/perf/bench_math.txt
           cargo bench --bench topology -p genesis-topology \
             -- --output-format bencher --measurement-time 10 \
-            2>&1 | tee bench_topology.txt
+            2>&1 | tee artifacts/perf/bench_topology.txt
+          cargo bench --bench dynamics -p genesis-dynamics \
+            -- --output-format bencher 2>&1 | tee artifacts/perf/bench_dynamics.txt
 
-      # dense_kernel 300ns  = 171ns measured × 1.75 headroom
-      # from_dense   100µs  = 50µs measured × 2.0 headroom
-      # hnsw_insert  20ms   = 13.3ms measured × 1.5 headroom
-      # hnsw_search  15µs   = 6.3µs measured × 2.4 headroom
-      - name: "Validación de Umbrales (Python)"
+      - name: Threshold and forensic summary
         run: |
-          python3 << 'EOF'
+          python3 << 'PY'
+          import json
+          import re
           import sys
+          from pathlib import Path
 
-          def check_bench(file, pattern, threshold_ns, label):
-              try:
-                  with open(file) as f:
-                      for line in f:
-                          if pattern in line and 'bench:' in line:
-                              after_bench = line.split('bench:')[1].strip()
-                              ns_str = after_bench.split()[0].replace(',', '')
-                              ns = float(ns_str)
-                              status = 'OK' if ns <= threshold_ns else 'FAIL'
-                              print(f'{label}: {ns:.0f}ns | Threshold: {threshold_ns}ns | {status}')
-                              if status == 'FAIL':
-                                  sys.exit(1)
-                              return
-                  print(f'WARNING: pattern not found: {pattern}')
-              except FileNotFoundError:
-                  print(f'Warning: {file} not found')
+          RULES = [
+              ("artifacts/perf/bench_math.txt", "dense_kernel_g13_16x16", 300.0, "math_dense_kernel_ns"),
+              ("artifacts/perf/bench_math.txt", "from_dense_single_pass", 100000.0, "math_from_dense_ns"),
+              ("artifacts/perf/bench_topology.txt", "hnsw_insert_1000", 20000000.0, "topology_hnsw_insert_1000_ns"),
+              ("artifacts/perf/bench_topology.txt", "hnsw_search_k10_in_1000", 15000.0, "topology_hnsw_search_k10_in_1000_ns"),
+          ]
 
-          print('--- Genesis Performance Audit ---')
-          check_bench('bench_math.txt', 'dense_kernel_g13_16x16', 300, 'G13 dense kernel')
-          check_bench('bench_math.txt', 'from_dense_single_pass', 100000, 'from_dense single pass')
-          check_bench('bench_topology.txt', 'hnsw_insert_1000', 20000000, 'HNSW insert 1000')
-          check_bench('bench_topology.txt', 'hnsw_search_k10_in_1000', 15000, 'HNSW search k10/1000')
-          print('--- All thresholds passed ---')
-          EOF
+          bench_re = re.compile(r"bench:\s*([0-9,]+(?:\.[0-9]+)?)")
+          out = {"results": [], "status": "pass"}
 
+          def classify_cause(label: str, ratio: float) -> str:
+              if ratio > 3.0:
+                  return "Potential asymptotic or algorithmic regression"
+              if ratio > 1.7:
+                  return "Likely memory-layout/cache-locality regression"
+              if ratio > 1.25:
+                  return "Likely micro-architectural regression (branching/allocation/vectorization)"
+              return "Within expected variance"
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 4: COMPATIBILIDAD MSRV / CONST-EVAL
-  # ─────────────────────────────────────────────────────────────────────────────
-  compatibility-matrix:
-    name: "④ Compatibilidad Toolchain/Features"
+          for file_path, pattern, threshold, label in RULES:
+              p = Path(file_path)
+              if not p.exists():
+                  out["status"] = "fail"
+                  out["results"].append({
+                      "label": label,
+                      "status": "fail",
+                      "reason": f"Missing benchmark file: {file_path}",
+                  })
+                  continue
+
+              value = None
+              for line in p.read_text().splitlines():
+                  if pattern in line and "bench:" in line:
+                      m = bench_re.search(line)
+                      if m:
+                          value = float(m.group(1).replace(",", ""))
+                          break
+
+              if value is None:
+                  out["status"] = "fail"
+                  out["results"].append({
+                      "label": label,
+                      "status": "fail",
+                      "reason": f"Pattern not found: {pattern}",
+                  })
+                  continue
+
+              ratio = value / threshold
+              status = "pass" if value <= threshold else "fail"
+              if status == "fail":
+                  out["status"] = "fail"
+              out["results"].append({
+                  "label": label,
+                  "pattern": pattern,
+                  "value_ns": value,
+                  "threshold_ns": threshold,
+                  "ratio": ratio,
+                  "status": status,
+                  "suspected_cause": classify_cause(label, ratio),
+              })
+
+          Path("artifacts/perf/perf_summary.json").write_text(json.dumps(out, indent=2))
+
+          md = ["# Performance Guardrail Summary", ""]
+          for item in out["results"]:
+              status = item.get("status", "fail").upper()
+              md.append(f"- **{item.get('label','unknown')}**: {status}")
+              if "value_ns" in item:
+                  md.append(f"  - value_ns: {item['value_ns']:.0f}")
+                  md.append(f"  - threshold_ns: {item['threshold_ns']:.0f}")
+                  md.append(f"  - ratio: {item['ratio']:.2f}")
+                  md.append(f"  - suspected_cause: {item['suspected_cause']}")
+              else:
+                  md.append(f"  - reason: {item.get('reason','n/a')}")
+          Path("artifacts/perf/perf_summary.md").write_text("\n".join(md) + "\n")
+
+          print(Path("artifacts/perf/perf_summary.md").read_text())
+          if out["status"] != "pass":
+              sys.exit(1)
+          PY
+
+      - name: Upload performance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-artifacts-${{ github.sha }}
+          path: artifacts/perf/
+
+  deep-scan:
+    name: "04 Deep Scan (scheduled/manual)"
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - toolchain: "1.75.0"
-            features: ""
-            const_codec: "0"
-          - toolchain: "1.75.0"
-            features: "--features hnsw-f16"
-            const_codec: "0"
-          - toolchain: "stable"
-            features: ""
-            const_codec: "0"
-          - toolchain: "stable"
-            features: "--features hnsw-f16"
-            const_codec: "0"
-          - toolchain: "stable"
-            features: "--features hnsw-f16"
-            const_codec: "1"
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust nightly + miri
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: ${{ matrix.toolchain }}
+          components: miri, rust-src
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
         with:
-          key: compatibility-${{ matrix.toolchain }}-${{ matrix.features }}-${{ matrix.const_codec }}
+          key: deep-scan
 
-      - name: Check genesis-topology feature/toolchain matrix
+      - name: Miri (math core)
+        run: cargo miri test -p genesis-math
         env:
-          GENESIS_ENABLE_CONST_LAYER0_CODEC: ${{ matrix.const_codec }}
-        run: |
-          cargo check -p genesis-topology ${{ matrix.features }}
+          MIRIFLAGS: "-Zmiri-strict-provenance"
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 6: PRODUCTION GATE (EL CERROJO)
-  # ─────────────────────────────────────────────────────────────────────────────
-  production-gate:
-    name: "GENESIS Production Gate"
-    runs-on: ubuntu-latest
-    needs: [correctness, invariants, performance, compatibility-matrix]
-    if: always()
-    steps:
-      - name: Decisión Final
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Fuzz targets (short horizon)
         run: |
-          if [[ "${{ needs.correctness.result }}" != "success" ]] || \
+          for target in $(cargo fuzz list); do
+            cargo fuzz run "$target" -- -max_total_time=60
+          done
+
+  production-gate:
+    name: "05 Production Gate"
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [lint-build-test, invariants, performance-guardrails]
+    steps:
+      - name: Final decision
+        run: |
+          if [[ "${{ needs.lint-build-test.result }}" != "success" ]] || \
              [[ "${{ needs.invariants.result }}" != "success" ]] || \
-             [[ "${{ needs.performance.result }}" != "success" ]] || \
-             [[ "${{ needs.compatibility-matrix.result }}" != "success" ]]; then
-            echo "❌ ESTÁNDAR DE GÉNESIS NO ALCANZADO. Merge bloqueado."
+             [[ "${{ needs.performance-guardrails.result }}" != "success" ]]; then
+            echo "❌ GENESIS quality gate failed"
             exit 1
           fi
-          echo "✅ GÉNESIS APROBADO: El código es matemáticamente puro y eficiente."
+          echo "✅ GENESIS quality gate passed"

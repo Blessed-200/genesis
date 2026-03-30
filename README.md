@@ -79,6 +79,10 @@ genesis/
 │   ├── 04_IMPLEMENTATION_ROADMAP.md   # Phase-by-phase plan
 │   ├── 05_GENESIS_PROOF_SPEC.md   # Proof system specification
 │   ├── 06_CLOUD_PLATFORM_ARCHITECTURE.md  # Production deployment
+│   ├── AI_ENGINEERING_OPERATING_SYSTEM.md # AI execution/review governance
+│   ├── ENGINEERING_OWNERSHIP_MATRIX.md    # Owners, mandatory reviewers, escalation
+│   ├── TRI_AGENT_HANDOFF_PROTOCOL.md      # Codex + CodeRabbit + lead handoff
+│   ├── STALE_ARTIFACT_POLICY.md           # Stale file classification/removal policy
 │   └── ANALISIS_FORENSE_EXTENSIONES.md    # Cognitive extensions record
 │
 ├── shared/
@@ -90,6 +94,8 @@ genesis/
 │   └── genesis-dynamics/          # CRATE-003: Kuramoto, VFE, attractors
 │
 ├── Cargo.toml                     # Workspace manifest
+├── .coderabbit.yaml               # Enterprise AI review policy
+├── PLANS.md                       # Mandatory execution plans for complex changes
 ├── AGENTS.md                      # Guidance for AI coding agents
 └── contratos_genesis.md           # Full API contracts reference
 ```
