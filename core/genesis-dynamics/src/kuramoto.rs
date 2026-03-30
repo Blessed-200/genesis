@@ -1,6 +1,6 @@
 use genesis_types::{GenesisError, NodeId};
 
-use crate::oscillator::QuantumOscillator;
+use crate::oscillator::{OscillatorSlab, QuantumOscillator};
 
 const INV_2POW53: f64 = 1.0 / ((1u64 << 53) as f64);
 
@@ -86,6 +86,64 @@ fn wrap_phase_diff(d: f64) -> f64 {
     wrap_phase(d)
 }
 
+/// SIMD-accelerated 5-grade accumulation primitive for Kuramoto coupling sums.
+///
+/// Uses compile-time feature gating:
+/// - AVX2 path: enabled only when built with `-C target-feature=+avx2`.
+/// - NEON path: enabled only when built with `-C target-feature=+neon` (aarch64).
+/// - Scalar fallback: default portable build path when SIMD flags are absent.
+///
+/// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+#[inline(always)]
+fn accumulate_grades_simd(sums: &mut [f64; 5], gamma: f64, contrib: &[f64; 5]) {
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    ))]
+    unsafe {
+        use core::arch::x86_64::*;
+        // SAFETY: the `target_feature = "avx2"` cfg guarantees AVX2/FMA intrinsics
+        // are available. `_mm256_loadu_pd`/`_mm256_storeu_pd` operate on the first
+        // 4 f64 elements of fixed-size `[f64; 5]` slices, so reads/writes are in-bounds
+        // and use unaligned accesses by contract. The local registers do not alias
+        // invalid memory, and grade 4 is handled separately as scalar.
+        let g = _mm256_set1_pd(gamma);
+        let cur = _mm256_loadu_pd(sums.as_ptr());
+        let src = _mm256_loadu_pd(contrib.as_ptr());
+        let out = _mm256_fmadd_pd(g, src, cur);
+        _mm256_storeu_pd(sums.as_mut_ptr(), out);
+        sums[4] = gamma.mul_add(contrib[4], sums[4]);
+        return;
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    unsafe {
+        use core::arch::aarch64::*;
+        // SAFETY: the `target_feature = "neon"` cfg guarantees NEON intrinsics
+        // (`vld1q_f64`, `vfmaq_f64`, `vst1q_f64`) are available. Loads/stores are
+        // performed over indices `[0..2)` and `[2..4)` within fixed `[f64; 5]`
+        // slices, so they are in-bounds; the fifth lane stays scalar. No aliasing
+        // violations are introduced because accesses are through exclusive `&mut sums`
+        // and read-only `contrib`.
+        let g = vdupq_n_f64(gamma);
+        let s0 = vld1q_f64(sums.as_ptr());
+        let c0 = vld1q_f64(contrib.as_ptr());
+        let o0 = vfmaq_f64(s0, c0, g);
+        vst1q_f64(sums.as_mut_ptr(), o0);
+        let s1 = vld1q_f64(sums.as_ptr().add(2));
+        let c1 = vld1q_f64(contrib.as_ptr().add(2));
+        let o1 = vfmaq_f64(s1, c1, g);
+        vst1q_f64(sums.as_mut_ptr().add(2), o1);
+        sums[4] = gamma.mul_add(contrib[4], sums[4]);
+        return;
+    }
+
+    for g in 0..5 {
+        sums[g] = gamma.mul_add(contrib[g], sums[g]);
+    }
+}
+
 // ── QuantumKuramotoNetwork ────────────────────────────────────────────────────
 
 /// Network of oscillators of Kuramoto quantum.
@@ -99,7 +157,7 @@ fn wrap_phase_diff(d: f64) -> f64 {
 ///
 /// AX-ID: AXIOMA-006, `H_dinámica` (`LEY_FUNDACIONAL` §3.2)
 pub struct QuantumKuramotoNetwork {
-    pub(crate) oscillators: Vec<QuantumOscillator>,
+    pub(crate) oscillators: OscillatorSlab,
 
     /// Coupling public (`NodeId`-based) — source of truth for serialization.
     /// Forbidden `HashMap` — `Vec` sparse.
@@ -161,6 +219,8 @@ pub struct QuantumKuramotoNetwork {
     /// Updated at every state-mutation site. Avoids loading oscillator state in the
     /// O(N·E) coupling inner loop.
     contrib_buf: Vec<u8>,
+    live_count: usize,
+    live_pos_scratch: Vec<usize>,
 
     /// Flag: the topology changed and must be recomputed indices and triangles.
     dirty: bool,
@@ -190,7 +250,7 @@ impl QuantumKuramotoNetwork {
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     pub const fn new(temperature: f64) -> Self {
         Self {
-            oscillators: Vec::new(),
+            oscillators: OscillatorSlab::new(),
             coupling: Vec::new(),
             coupling_idx: Vec::new(),
             id_to_idx: Vec::new(),
@@ -205,6 +265,8 @@ impl QuantumKuramotoNetwork {
             sat_scratch: Vec::new(),
             gauge_scratch: Vec::new(),
             contrib_buf: Vec::new(),
+            live_count: 0,
+            live_pos_scratch: Vec::new(),
             dirty: false,
             triangles: Vec::new(),
             edge_to_triangles: Vec::new(),
@@ -244,6 +306,7 @@ impl QuantumKuramotoNetwork {
         self.oscillators.push(osc);
         self.phase_scratch.push([0.0; 5]);
         self.contrib_buf.push(contributes);
+        self.live_count += usize::from(contributes != 0);
         self.coupling_offsets.push((0, 0));
         self.amp_scratch.push(1.0);
         self.sat_scratch.push(0.0);
@@ -412,13 +475,23 @@ impl QuantumKuramotoNetwork {
         };
 
         self.rebuild_if_dirty();
-        let n = self.oscillators.len();
-        if n == 0 || vecs.len() != n {
+        let n_slots = self.oscillators.len();
+        let live_n = self.node_count();
+        if live_n == 0 || vecs.len() != live_n {
             return;
+        }
+        self.live_pos_scratch.resize(n_slots, usize::MAX);
+        self.live_pos_scratch.fill(usize::MAX);
+        let mut live_cursor = 0usize;
+        for (idx, &c) in self.contrib_buf.iter().enumerate() {
+            if c != 0 {
+                self.live_pos_scratch[idx] = live_cursor;
+                live_cursor += 1;
+            }
         }
 
         // Snapshot phases before update (simultaneous semantics — Euler-Maruyama).
-        for i in 0..n {
+        for i in 0..n_slots {
             self.phase_scratch[i] = self.oscillators[i].phases;
         }
 
@@ -429,12 +502,12 @@ impl QuantumKuramotoNetwork {
                 .iter()
                 .map(super::oscillator::QuantumOscillator::amplitude_norm)
                 .sum();
-            let mean = s / n as f64;
+            let mean = s / live_n as f64;
             (mean * mean).max(f64::MIN_POSITIVE)
         };
 
-        self.amp_scratch.resize(n, 0.0);
-        self.sat_scratch.resize(n, 0.0);
+        self.amp_scratch.resize(n_slots, 0.0);
+        self.sat_scratch.resize(n_slots, 0.0);
         for (i, osc) in self.oscillators.iter().enumerate() {
             let amp = osc.amplitude_norm();
             self.amp_scratch[i] = amp;
@@ -446,7 +519,7 @@ impl QuantumKuramotoNetwork {
         // CRYSTAL: O17 — inevitable
         let sqrt_2k_t_dt = (self.temperature * (2.0 * dt)).sqrt();
 
-        for i in 0..n {
+        for i in 0..n_slots {
             if self.contrib_buf[i] == 0 {
                 continue;
             }
@@ -467,7 +540,12 @@ impl QuantumKuramotoNetwork {
                 // Bivector frustration: dot product of grade-2 components.
                 // Positive → aligned orientation → attractive coupling.
                 // Negative → opposed orientation → repulsive coupling.
-                let dot_biv = vecs[i].dot_bivectors(&vecs[j]);
+                if self.contrib_buf[j] == 0 {
+                    continue;
+                }
+                let vi = self.live_pos_scratch[i];
+                let vj = self.live_pos_scratch[j];
+                let dot_biv = vecs[vi].dot_bivectors(&vecs[vj]);
 
                 // Amplitude modulation: high-certainty pairs contribute more.
                 let amp_factor = (amp_i * amp_j) / avg_amp_sq;
@@ -495,8 +573,9 @@ impl QuantumKuramotoNetwork {
                 } else {
                     0.0
                 };
-                self.oscillators[i].phases[g] =
+                let new_phase =
                     dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]) + eta;
+                self.oscillators.set_phase_mirrored(i, g, new_phase);
             }
         }
 
@@ -506,9 +585,11 @@ impl QuantumKuramotoNetwork {
     }
 
     /// Number of nodes registrados.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
-    pub const fn node_count(&self) -> usize {
-        self.oscillators.len()
+    pub fn node_count(&self) -> usize {
+        self.live_count
     }
 
     /// Access inmutable a all the oscillators.
@@ -643,70 +724,81 @@ impl QuantumKuramotoNetwork {
             let active = contrib_buf[j] as f64;
             #[allow(clippy::cast_possible_truncation)]
             let phi_j = &phase_scratch[j];
-            for (g, sum_g) in sums.iter_mut().enumerate() {
-                *sum_g = gamma.mul_add(active * (phi_j[g] - phi_i[g] + gauge).sin(), *sum_g);
+            let mut contrib = [0.0f64; 5];
+            for g in 0..5 {
+                contrib[g] = active * (phi_j[g] - phi_i[g] + gauge).sin();
             }
+            accumulate_grades_simd(&mut sums, gamma, &contrib);
         }
         sums
     }
 
     fn step_inner_deterministic(&mut self, dt: f64) {
         let n = self.oscillators.len();
-        for i in 0..n {
-            // Skip oscillators that don't contribute to dynamics (Pruned state).
-            // AX-ID: AXIOMA-008 (Saturated), AXIOMA-016 (Pruned)
-            if self.contrib_buf[i] == 0 {
-                continue;
-            }
-            // FIX-G: coupling_sums extracted to shared inline function.
-            let coupling_sums = Self::compute_coupling_sums(
-                &self.phase_scratch,
-                &self.coupling_idx,
-                &self.coupling_offsets,
-                &self.contrib_buf,
-                i,
-            );
-            for g in 0..5 {
-                let omega = self.oscillators[i].frequencies[g];
-                self.oscillators[i].phases[g] =
-                    dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]);
+        let block_count = (n + 7) / 8;
+        for b in 0..block_count {
+            let base = b * 8;
+            let limit = (n - base).min(8);
+            for lane in 0..limit {
+                let i = base + lane;
+                if self.contrib_buf[i] == 0 {
+                    continue;
+                }
+                // TODO(SoA-phase2): `compute_coupling_sums`, phase writes, and frequency
+                // reads still traverse the AoS compatibility view (`self.oscillators[i]`).
+                // Next step should migrate coupling computation to direct block/SoA inputs
+                // (`phase_scratch`/`blocks`) for lane-wise vectorized updates without
+                // changing current numerical behavior.
+                let coupling_sums = Self::compute_coupling_sums(
+                    &self.phase_scratch,
+                    &self.coupling_idx,
+                    &self.coupling_offsets,
+                    &self.contrib_buf,
+                    i,
+                );
+                for g in 0..5 {
+                    let omega = self.oscillators[i].frequencies[g];
+                    let new_phase =
+                        dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]);
+                    self.oscillators.set_phase_mirrored(i, g, new_phase);
+                }
             }
         }
     }
 
     fn step_inner_noisy(&mut self, dt: f64, sqrt_2k_t_dt: f64) {
         let n = self.oscillators.len();
-        for i in 0..n {
-            // Skip oscillators that don't contribute to dynamics (Pruned state).
-            // AX-ID: AXIOMA-008 (Saturated), AXIOMA-016 (Pruned)
-            if self.contrib_buf[i] == 0 {
-                continue;
-            }
-            // FIX-G: coupling_sums extracted to shared inline function.
-            let coupling_sums = Self::compute_coupling_sums(
-                &self.phase_scratch,
-                &self.coupling_idx,
-                &self.coupling_offsets,
-                &self.contrib_buf,
-                i,
-            );
-            // FIX-D: Pre-generate all 5 Gaussian samples before the update loop.
-            // This reduces calls to next_gaussian() from 5/node to ceil(5/2)=3/node
-            // (Box-Muller spare sample), and makes the branch predictor pattern
-            // for self access more predictable.
-            let noise_buf = [
-                self.next_gaussian(),
-                self.next_gaussian(),
-                self.next_gaussian(),
-                self.next_gaussian(),
-                self.next_gaussian(),
-            ];
-            for g in 0..5 {
-                let omega = self.oscillators[i].frequencies[g];
-                self.oscillators[i].phases[g] = sqrt_2k_t_dt.mul_add(
-                    noise_buf[g],
-                    dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]),
+        let block_count = (n + 7) / 8;
+        for b in 0..block_count {
+            let base = b * 8;
+            let limit = (n - base).min(8);
+            for lane in 0..limit {
+                let i = base + lane;
+                if self.contrib_buf[i] == 0 {
+                    continue;
+                }
+                let coupling_sums = Self::compute_coupling_sums(
+                    &self.phase_scratch,
+                    &self.coupling_idx,
+                    &self.coupling_offsets,
+                    &self.contrib_buf,
+                    i,
                 );
+                let noise_buf = [
+                    self.next_gaussian(),
+                    self.next_gaussian(),
+                    self.next_gaussian(),
+                    self.next_gaussian(),
+                    self.next_gaussian(),
+                ];
+                for g in 0..5 {
+                    let omega = self.oscillators[i].frequencies[g];
+                    let new_phase = sqrt_2k_t_dt.mul_add(
+                        noise_buf[g],
+                        dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]),
+                    );
+                    self.oscillators.set_phase_mirrored(i, g, new_phase);
+                }
             }
         }
     }
@@ -743,6 +835,9 @@ impl QuantumKuramotoNetwork {
                 self.oscillators
                     .iter()
                     .fold((0.0f64, 0.0f64, 0.0f64), |(sc, ss, sa), osc| {
+                        if !osc.state.contributes_to_sync() {
+                            return (sc, ss, sa);
+                        }
                         let a = osc.amplitudes[g];
                         let (sin, cos) = osc.phases[g].sin_cos();
                         (a.mul_add(cos, sc), a.mul_add(sin, ss), sa + a)
@@ -1065,6 +1160,7 @@ impl QuantumKuramotoNetwork {
         if let Some(i) = idx {
             if let Some(osc) = self.oscillators.get_mut(i) {
                 osc.amplitudes = [amplitude.clamp(0.0, 1.0); 5];
+                self.oscillators.rebuild_blocks();
                 self.sync_dirty = true;
             }
         }
@@ -1118,8 +1214,10 @@ impl QuantumKuramotoNetwork {
             osc.state = crate::oscillator::OscillatorState::Pruned { at_ns: 0 };
         }
         if let Some(flag) = self.contrib_buf.get_mut(idx) {
+            self.live_count -= usize::from(*flag != 0);
             *flag = 0u8;
         }
+        self.oscillators.rebuild_blocks();
 
         Ok(())
     }

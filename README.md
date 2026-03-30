@@ -115,6 +115,22 @@ cargo bench -p genesis-types
 cargo bench -p genesis-dynamics
 ```
 
+**SIMD build options for `genesis-dynamics` hot paths (optional):**
+
+```bash
+# Portable default (scalar fallback in SIMD-gated kernels)
+cargo build -p genesis-dynamics --release
+
+# x86_64 AVX2/FMA build (enables AVX2-gated Kuramoto accumulation paths)
+RUSTFLAGS="-C target-feature=+avx2,+fma" cargo build -p genesis-dynamics --release
+
+# aarch64 NEON build (enables NEON-gated Kuramoto accumulation paths)
+RUSTFLAGS="-C target-feature=+neon" cargo build -p genesis-dynamics --release
+```
+
+The portable build remains the default for maximum compatibility. Target-feature
+builds can improve throughput in Kuramoto/synchrony hot loops on supported CPUs.
+
 **Expected output:**
 ```
 test result: ok. 119 passed; 0 failed   (genesis-types)

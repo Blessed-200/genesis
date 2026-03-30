@@ -11,6 +11,15 @@
 //! - `attractor`: `AttractorLandscape` — descenso por gradiente en `E(x)`
 //! - `criticality`: `CriticalityMonitor` — SOC `P(S) ∝ S^{-τ}` (AXIOMA-005)
 //!
+//! ## SIMD compilation options
+//! Some Kuramoto hot-path primitives use compile-time SIMD feature gating:
+//! AVX2 on x86_64 and NEON on aarch64. Without explicit target features,
+//! the crate uses the portable scalar fallback.
+//!
+//! - Portable default: `cargo build -p genesis-dynamics --release`
+//! - AVX2/FMA (x86_64): `RUSTFLAGS="-C target-feature=+avx2,+fma" cargo build -p genesis-dynamics --release`
+//! - NEON (aarch64): `RUSTFLAGS="-C target-feature=+neon" cargo build -p genesis-dynamics --release`
+//!
 //! AX-ID: AXIOMA-003, AXIOMA-004, AXIOMA-005, AXIOMA-006,
 //!        `H_dinámica`, `H_información` (`LEY_FUNDACIONAL` §3.2, §3.3)
 //! # Compiler directives — lint policy
