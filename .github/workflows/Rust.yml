@@ -237,9 +237,20 @@ jobs:
 
       - name: Fuzz targets (short horizon)
         run: |
-          for target in $(cargo fuzz list); do
+          if ! targets=$(cargo fuzz list); then
+            echo "error: cargo fuzz list failed"
+            exit 1
+          fi
+
+          if [[ -z "${targets//[[:space:]]/}" ]]; then
+            echo "error: cargo fuzz list returned no targets"
+            exit 1
+          fi
+
+          while IFS= read -r target; do
+            [[ -z "$target" ]] && continue
             cargo fuzz run "$target" -- -max_total_time=60
-          done
+          done <<< "$targets"
 
   production-gate:
     name: "05 Production Gate"
