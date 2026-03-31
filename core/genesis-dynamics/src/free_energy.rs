@@ -1,7 +1,19 @@
+//! Variational Free Energy minimization with compensated summation in hot reductions.
+//!
+//! The implementation uses compensated accumulators for cancellation-prone scalar reductions
+//! so 16-blade inference remains numerically stable under large dynamic ranges.
+//! `VFEMinimizer` tracks compensation significance to surface precision-sensitive regimes.
+//!
+//! AX-ID: AXIOMA-003, AXIOMA-008, H_información (LEY_FUNDACIONAL §3.3)
+
 #![allow(clippy::float_cmp)]
+
+use core::cell::Cell;
 
 use genesis_math::SparseCliffordVector;
 use genesis_types::{GenesisError, NodeId};
+
+use crate::kahan::KahanAccumulator;
 
 /// Signatura Minkowski (+,−,−,−) for G(1,3).
 /// Index 0 = temporal (positivo), indices 1..3 = spatial (negativos).
@@ -220,6 +232,8 @@ pub struct VFEMinimizer {
     /// `NodeId` → index in `beliefs` using pages sparse on-demand.
     /// `u32::MAX` = no registered.
     id_to_idx: PagedIndex,
+    /// Ratio |compensation| / max(|sum|, 1) measured during the last 16-blade VFE reduction.
+    precision_compensation_ratio: Cell<f64>,
 }
 
 const PAGE_BITS: u32 = 12;
@@ -274,6 +288,7 @@ impl VFEMinimizer {
             beliefs: Vec::new(),
             fisher: Vec::new(),
             id_to_idx: PagedIndex { pages: Vec::new() },
+            precision_compensation_ratio: Cell::new(0.0),
         }
     }
 
@@ -413,8 +428,7 @@ impl VFEMinimizer {
         let precision_full = &belief.precision_full;
         // loop-invariant, hoisted
         // CRYSTAL: O31 — inevitable
-        let mut vfe = 0.0f64;
-        let mut comp = 0.0f64;
+        let mut vfe_acc = KahanAccumulator::new();
         let mut grad = [0.0f64; 16];
 
         // FIX-3: Apply VFE_BLADE_WEIGHTS for gradient/loss consistency with internal_drive.
@@ -426,13 +440,21 @@ impl VFEMinimizer {
             let prec = precision_full[i];
             let w = VFE_BLADE_WEIGHTS[i];
             let weighted_precision = w * prec;
-            let y = delta.mul_add(delta * weighted_precision, -comp);
-            let t = vfe + y;
-            comp = (t - vfe) - y;
-            vfe = t;
+            vfe_acc.add(delta * delta * weighted_precision);
             grad[i] = delta * (2.0 * weighted_precision);
         }
+        let vfe = vfe_acc.total();
+        self.precision_compensation_ratio
+            .set(vfe_acc.compensation_abs() / vfe.abs().max(1.0));
         (vfe, grad)
+    }
+
+    /// Reports the compensation significance of the last 16-blade VFE reduction.
+    ///
+    /// AX-ID: AXIOMA-003, H_información (LEY_FUNDACIONAL §3.3)
+    #[inline]
+    pub fn precision_compensation_ratio(&self) -> f64 {
+        self.precision_compensation_ratio.get()
     }
 
     /// Gradiente of grade 1 only — access conveniente for callers

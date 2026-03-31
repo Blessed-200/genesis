@@ -3,6 +3,7 @@
 use genesis_types::NodeId;
 use rayon::prelude::*;
 
+use crate::kahan::KahanAccumulator;
 use crate::kuramoto::QuantumKuramotoNetwork;
 
 /// Numerically-stable sine approximation for Kuramoto phases (BN-poly).
@@ -168,7 +169,11 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
         blocks: &[crate::oscillator::OscillatorBlock],
         valid_lanes: usize,
     ) -> [(f64, f64, f64); 5] {
-        let mut acc = [(0.0f64, 0.0f64, 0.0f64); 5];
+        let mut acc = [(
+            KahanAccumulator::new(),
+            KahanAccumulator::new(),
+            KahanAccumulator::new(),
+        ); 5];
         for (bi, block) in blocks.iter().enumerate() {
             let block_start = bi * 8;
             let remaining = valid_lanes.saturating_sub(block_start);
@@ -182,20 +187,20 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
                     let phase = block.phases[g][lane];
                     #[cfg(feature = "poly_trig")]
                     {
-                        grade_acc.0 = a.mul_add(poly_cos(phase), grade_acc.0);
-                        grade_acc.1 = a.mul_add(poly_sin(phase), grade_acc.1);
+                        grade_acc.0.add(a * poly_cos(phase));
+                        grade_acc.1.add(a * poly_sin(phase));
                     }
                     #[cfg(not(feature = "poly_trig"))]
                     {
                         let (sin_phase, cos_phase) = phase.sin_cos();
-                        grade_acc.0 = a.mul_add(cos_phase, grade_acc.0);
-                        grade_acc.1 = a.mul_add(sin_phase, grade_acc.1);
+                        grade_acc.0.add(a * cos_phase);
+                        grade_acc.1.add(a * sin_phase);
                     }
-                    grade_acc.2 += a;
+                    grade_acc.2.add(a);
                 }
             }
         }
-        acc
+        core::array::from_fn(|g| (acc[g].0.total(), acc[g].1.total(), acc[g].2.total()))
     }
 
     let mut grade_totals = [(0.0f64, 0.0f64, 0.0f64); N_GRADES];
