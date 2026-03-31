@@ -160,7 +160,6 @@ knowledge_base:
     scope: "local"
   code_guidelines:
     enabled: true
-    scope: "global"
     filePatterns:
       - "AGENTS.md"
       - "docs/00_AXIOMAS.md"
@@ -169,7 +168,5 @@ knowledge_base:
       - "contratos_genesis.md"
 
 tools:
-  markdownlint:
-    enabled: true
   languagetool:
     enabled: true
