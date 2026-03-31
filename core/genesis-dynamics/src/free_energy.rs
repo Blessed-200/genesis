@@ -496,15 +496,11 @@ impl VFEMinimizer {
             let trace = sanitize_trace(self.fisher[idx].trace);
             // F interna 16D: Tr(𝒢) · Σ_i w_i · μ_i² (target = 0)
             let error_sq: f64 = {
-                let mut sum = 0.0f64;
-                let mut comp = 0.0f64;
+                let mut acc = KahanAccumulator::new();
                 for (i, &m) in belief.mean_full.iter().enumerate() {
-                    let y = m.mul_add(m * VFE_BLADE_WEIGHTS[i], -comp);
-                    let t = sum + y;
-                    comp = (t - sum) - y;
-                    sum = t;
+                    acc.add(m * m * VFE_BLADE_WEIGHTS[i]);
                 }
-                sum
+                acc.total()
             };
             let vfe = trace * error_sq;
             if vfe > max_vfe {

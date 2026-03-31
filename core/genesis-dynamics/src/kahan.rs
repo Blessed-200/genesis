@@ -1,21 +1,21 @@
 //! Compensated floating-point accumulation primitives used by dynamics hot paths.
 //!
-//! This module provides a compact `KahanAccumulator<f64>` that keeps both the running
+//! This module provides a compact `KahanAccumulator` that keeps both the running
 //! sum and the compensation term, reducing cancellation error in long reduction chains.
 //! `merge` is provided for deterministic partial reduction composition in rayon paths.
 //!
 //! AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
 
-/// Kahan compensated accumulator specialized through `f64` impls.
+/// Kahan compensated accumulator for `f64` reductions.
 ///
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
 #[derive(Clone, Copy, Debug, Default)]
-pub struct KahanAccumulator<T> {
-    sum: T,
-    compensation: T,
+pub struct KahanAccumulator {
+    sum: f64,
+    compensation: f64,
 }
 
-impl KahanAccumulator<f64> {
+impl KahanAccumulator {
     /// Creates a zero-initialized accumulator.
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
