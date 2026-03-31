@@ -283,6 +283,8 @@ impl VFEMinimizer {
     }
 
     /// Creates an empty VFE minimiser with no registered nodes.
+    ///
+    /// AX-ID: AXIOMA-003, H_información (LEY_FUNDACIONAL §3.3)
     pub fn new() -> Self {
         Self {
             beliefs: Vec::new(),
@@ -435,6 +437,7 @@ impl VFEMinimizer {
         // Previously VFE_BLADE_WEIGHTS was only applied in internal_drive, making the gradient
         // direction inconsistent with the loss landscape (different metric in loss vs gradient).
         // Now both use the same weighted metric: F_i = w_i · Π_i · δ_i²
+        // HOT PATH: O(N), called per iteration of VFE minimization
         for i in 0..16 {
             let delta = mean_full[i] - target[i];
             let prec = precision_full[i];
