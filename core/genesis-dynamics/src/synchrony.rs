@@ -3,6 +3,7 @@
 use genesis_types::NodeId;
 use rayon::prelude::*;
 
+use crate::kahan::KahanAccumulator;
 use crate::kuramoto::QuantumKuramotoNetwork;
 
 /// Numerically-stable sine approximation for Kuramoto phases (BN-poly).
@@ -167,8 +168,12 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
     fn reduce_blocks(
         blocks: &[crate::oscillator::OscillatorBlock],
         valid_lanes: usize,
-    ) -> [(f64, f64, f64); 5] {
-        let mut acc = [(0.0f64, 0.0f64, 0.0f64); 5];
+    ) -> [(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5] {
+        let mut acc = [(
+            KahanAccumulator::new(),
+            KahanAccumulator::new(),
+            KahanAccumulator::new(),
+        ); 5];
         for (bi, block) in blocks.iter().enumerate() {
             let block_start = bi * 8;
             let remaining = valid_lanes.saturating_sub(block_start);
@@ -182,23 +187,27 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
                     let phase = block.phases[g][lane];
                     #[cfg(feature = "poly_trig")]
                     {
-                        grade_acc.0 = a.mul_add(poly_cos(phase), grade_acc.0);
-                        grade_acc.1 = a.mul_add(poly_sin(phase), grade_acc.1);
+                        grade_acc.0.add(a * poly_cos(phase));
+                        grade_acc.1.add(a * poly_sin(phase));
                     }
                     #[cfg(not(feature = "poly_trig"))]
                     {
                         let (sin_phase, cos_phase) = phase.sin_cos();
-                        grade_acc.0 = a.mul_add(cos_phase, grade_acc.0);
-                        grade_acc.1 = a.mul_add(sin_phase, grade_acc.1);
+                        grade_acc.0.add(a * cos_phase);
+                        grade_acc.1.add(a * sin_phase);
                     }
-                    grade_acc.2 += a;
+                    grade_acc.2.add(a);
                 }
             }
         }
         acc
     }
 
-    let mut grade_totals = [(0.0f64, 0.0f64, 0.0f64); N_GRADES];
+    let mut grade_totals = [(
+        KahanAccumulator::new(),
+        KahanAccumulator::new(),
+        KahanAccumulator::new(),
+    ); N_GRADES];
     if n < RAYON_THRESHOLD {
         let mut lanes_before = 0usize;
         for block_chunk in blocks.chunks(DETERMINISTIC_BLOCK_CHUNK) {
@@ -206,9 +215,9 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
             let valid = remaining.min(block_chunk.len() * 8);
             let partial = reduce_blocks(block_chunk, valid);
             for (dst, src) in grade_totals.iter_mut().zip(partial.iter()) {
-                dst.0 += src.0;
-                dst.1 += src.1;
-                dst.2 += src.2;
+                dst.0.merge(src.0);
+                dst.1.merge(src.1);
+                dst.2.merge(src.2);
             }
             lanes_before += DETERMINISTIC_BLOCK_CHUNK * 8;
         }
@@ -231,9 +240,9 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
             while base + stride < chunk_count {
                 let (head, tail) = partials.split_at_mut(base + stride);
                 for (left, right) in head[base].iter_mut().zip(tail[0].iter()) {
-                    left.0 += right.0;
-                    left.1 += right.1;
-                    left.2 += right.2;
+                    left.0.merge(right.0);
+                    left.1.merge(right.1);
+                    left.2.merge(right.2);
                 }
                 base += step;
             }
@@ -246,7 +255,12 @@ pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
 
     let r_total: f64 = grade_totals
         .iter()
-        .map(|(sc, ss, sa)| (sc.mul_add(*sc, ss * ss)).sqrt() / (sa + EPS))
+        .map(|(sc, ss, sa)| {
+            let sc = sc.total();
+            let ss = ss.total();
+            let sa = sa.total();
+            (sc.mul_add(sc, ss * ss)).sqrt() / (sa + EPS)
+        })
         .sum();
     #[allow(clippy::cast_precision_loss)]
     {

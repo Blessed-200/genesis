@@ -1,5 +1,34 @@
 # PLANS
 
+## 1.7 Compensated and pairwise summation hardening (2026-03-31)
+
+### Root cause
+
+- Accumulator-heavy reductions in synchrony and VFE paths can lose low-order bits under cancellation-heavy workloads.
+- Lanczos dot/norm reductions in topology currently use linear folds, which amplify rounding error for long vectors.
+- Parallel chunk reductions need an explicit merge contract to preserve compensation quality across rayon partials.
+
+### File-level actions
+
+1. `core/genesis-dynamics/src/kahan.rs`
+   - Add `KahanAccumulator<f64>` with compensated add and `merge` for deterministic partial combination.
+2. `core/genesis-dynamics/src/synchrony.rs`
+   - Replace tuple scalar accumulation in `reduce_blocks` with `KahanAccumulator` for real/imag/amplitude channels.
+3. `core/genesis-dynamics/src/free_energy.rs`
+   - Add module-level numerical-stability docs.
+   - Apply per-blade Kahan accumulators in `compute_vfe_with_grad`.
+   - Add `VFEMinimizer` precision-tracking field capturing compensation significance.
+4. `core/genesis-topology/src/manifold.rs`
+   - Replace naive reductions in `dot` and `vec_norm` with thresholded recursive pairwise summation (`N >= 64`) and 8-lane base chunks.
+
+### Validation
+
+- `cargo test --release -p genesis-dynamics -- invariant --nocapture`
+- `cargo test --release -p genesis-topology -- invariant --nocapture`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
 ## 1.6 Repository professionalization phase (2026-03-30)
 
 ### Root cause

@@ -1,7 +1,19 @@
+//! Variational Free Energy minimization with compensated summation in hot reductions.
+//!
+//! The implementation uses compensated accumulators for cancellation-prone scalar reductions
+//! so 16-blade inference remains numerically stable under large dynamic ranges.
+//! `VFEMinimizer` tracks compensation significance to surface precision-sensitive regimes.
+//!
+//! AX-ID: AXIOMA-003, AXIOMA-008, H_información (LEY_FUNDACIONAL §3.3)
+
 #![allow(clippy::float_cmp)]
+
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use genesis_math::SparseCliffordVector;
 use genesis_types::{GenesisError, NodeId};
+
+use crate::kahan::KahanAccumulator;
 
 /// Signatura Minkowski (+,−,−,−) for G(1,3).
 /// Index 0 = temporal (positivo), indices 1..3 = spatial (negativos).
@@ -220,6 +232,8 @@ pub struct VFEMinimizer {
     /// `NodeId` → index in `beliefs` using pages sparse on-demand.
     /// `u32::MAX` = no registered.
     id_to_idx: PagedIndex,
+    /// Ratio |compensation| / max(|sum|, 1) measured during the last 16-blade VFE reduction.
+    precision_compensation_ratio_bits: AtomicU64,
 }
 
 const PAGE_BITS: u32 = 12;
@@ -269,11 +283,14 @@ impl VFEMinimizer {
     }
 
     /// Creates an empty VFE minimiser with no registered nodes.
+    ///
+    /// AX-ID: AXIOMA-003, H_información (LEY_FUNDACIONAL §3.3)
     pub fn new() -> Self {
         Self {
             beliefs: Vec::new(),
             fisher: Vec::new(),
             id_to_idx: PagedIndex { pages: Vec::new() },
+            precision_compensation_ratio_bits: AtomicU64::new(0.0f64.to_bits()),
         }
     }
 
@@ -361,18 +378,13 @@ impl VFEMinimizer {
         let target = obs.copied().unwrap_or_default();
         // VFE over the 4 blades of grade 1 — Kahan summation.
         // Applies VFE_BLADE_WEIGHTS for consistency with compute_vfe_with_grad (FIX-3).
-        let mut sum = 0.0f64;
-        let mut comp = 0.0f64;
+        let mut acc = KahanAccumulator::new();
         for (k, &blade_idx) in GRADE1_BLADE_INDICES.iter().enumerate() {
             let delta = mean_full[blade_idx] - target[k];
-            let w = VFE_BLADE_WEIGHTS[blade_idx];
-            let weighted_precision = w * precision_full[blade_idx];
-            let y = delta.mul_add(delta * weighted_precision, -comp);
-            let t = sum + y;
-            comp = (t - sum) - y;
-            sum = t;
+            let term = VFE_BLADE_WEIGHTS[blade_idx] * precision_full[blade_idx] * delta * delta;
+            acc.add(term);
         }
-        sum
+        acc.sum()
     }
 
     /// VFE full over the 16 blades of G(1,3) and gradiente `[f64; 16]`.
@@ -413,26 +425,39 @@ impl VFEMinimizer {
         let precision_full = &belief.precision_full;
         // loop-invariant, hoisted
         // CRYSTAL: O31 — inevitable
-        let mut vfe = 0.0f64;
-        let mut comp = 0.0f64;
+        let mut vfe_acc = KahanAccumulator::new();
         let mut grad = [0.0f64; 16];
 
         // FIX-3: Apply VFE_BLADE_WEIGHTS for gradient/loss consistency with internal_drive.
         // Previously VFE_BLADE_WEIGHTS was only applied in internal_drive, making the gradient
         // direction inconsistent with the loss landscape (different metric in loss vs gradient).
         // Now both use the same weighted metric: F_i = w_i · Π_i · δ_i²
+        // HOT PATH: O(N), called per iteration of VFE minimization
         for i in 0..16 {
             let delta = mean_full[i] - target[i];
             let prec = precision_full[i];
             let w = VFE_BLADE_WEIGHTS[i];
             let weighted_precision = w * prec;
-            let y = delta.mul_add(delta * weighted_precision, -comp);
-            let t = vfe + y;
-            comp = (t - vfe) - y;
-            vfe = t;
+            vfe_acc.add(delta * delta * weighted_precision);
             grad[i] = delta * (2.0 * weighted_precision);
         }
+        let vfe = vfe_acc.total();
+        self.precision_compensation_ratio_bits.store(
+            (vfe_acc.compensation_abs() / vfe.abs().max(1.0)).to_bits(),
+            Ordering::Relaxed,
+        );
         (vfe, grad)
+    }
+
+    /// Reports the compensation significance of the last 16-blade VFE reduction.
+    ///
+    /// AX-ID: AXIOMA-003, H_información (LEY_FUNDACIONAL §3.3)
+    #[inline]
+    pub fn precision_compensation_ratio(&self) -> f64 {
+        f64::from_bits(
+            self.precision_compensation_ratio_bits
+                .load(Ordering::Relaxed),
+        )
     }
 
     /// Gradiente of grade 1 only — access conveniente for callers
@@ -471,15 +496,11 @@ impl VFEMinimizer {
             let trace = sanitize_trace(self.fisher[idx].trace);
             // F interna 16D: Tr(𝒢) · Σ_i w_i · μ_i² (target = 0)
             let error_sq: f64 = {
-                let mut sum = 0.0f64;
-                let mut comp = 0.0f64;
+                let mut acc = KahanAccumulator::new();
                 for (i, &m) in belief.mean_full.iter().enumerate() {
-                    let y = m.mul_add(m * VFE_BLADE_WEIGHTS[i], -comp);
-                    let t = sum + y;
-                    comp = (t - sum) - y;
-                    sum = t;
+                    acc.add(m * m * VFE_BLADE_WEIGHTS[i]);
                 }
-                sum
+                acc.total()
             };
             let vfe = trace * error_sq;
             if vfe > max_vfe {
@@ -1142,6 +1163,26 @@ mod tests {
                 GRADE1_BLADE_INDICES[k]
             );
         }
+    }
+
+    #[test]
+    fn test_precision_compensation_ratio_non_negative() {
+        let id = NodeId::try_new(7).expect("NodeId válido");
+        let mut vfe = VFEMinimizer::new();
+        vfe.add_node(id, [0.25, -0.5, 0.75, -1.0]);
+        let obs = SparseCliffordVector::from_iter([(1usize, -0.25), (2, 0.4), (4, -0.2), (8, 0.1)])
+            .expect("obs válida");
+
+        let (_value, _grad) = vfe.compute_vfe_with_grad(id, Some(&obs));
+        let ratio = vfe.precision_compensation_ratio();
+        assert!(
+            ratio.is_finite(),
+            "precision_compensation_ratio debe ser finito"
+        );
+        assert!(
+            ratio >= 0.0,
+            "precision_compensation_ratio debe ser no negativo, got {ratio}"
+        );
     }
 
     /// Verifies that update_full updates all the 16 blades active in obs.

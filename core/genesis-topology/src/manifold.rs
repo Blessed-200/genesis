@@ -256,7 +256,9 @@ impl ManifoldCollector {
         use crate::hnsw::MAX_UNIQUE_NEIGHBOR_BUDGET;
         let mut neighbors: ArrayVec<NodeId, MAX_UNIQUE_NEIGHBOR_BUDGET> = ArrayVec::new();
         for neighbor in self.graph.neighbors(id) {
-            neighbors.try_push(neighbor).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })?;
+            neighbors
+                .try_push(neighbor)
+                .map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })?;
         }
         debug_assert!(neighbors.len() <= MAX_UNIQUE_NEIGHBOR_BUDGET);
 
@@ -805,13 +807,76 @@ fn power_refine_shifted_eigenvalue(
 }
 
 fn vec_norm(v: &[f64]) -> f64 {
-    v.iter().fold(0.0, |acc, x| x.mul_add(*x, acc)).sqrt()
+    pairwise_sum_sq(v).sqrt()
 }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
-    a.iter()
-        .zip(b.iter())
-        .fold(0.0, |acc, (x, y)| x.mul_add(*y, acc))
+    pairwise_sum_dot(a, b)
+}
+
+const PAIRWISE_THRESHOLD: usize = 64;
+const PAIRWISE_BASE_CHUNK: usize = 8;
+
+#[inline]
+fn naive_chunked_sum_sq(v: &[f64]) -> f64 {
+    let mut acc = 0.0;
+    let mut i = 0usize;
+    let n = v.len();
+    while i + PAIRWISE_BASE_CHUNK <= n {
+        acc = v[i].mul_add(v[i], acc);
+        acc = v[i + 1].mul_add(v[i + 1], acc);
+        acc = v[i + 2].mul_add(v[i + 2], acc);
+        acc = v[i + 3].mul_add(v[i + 3], acc);
+        acc = v[i + 4].mul_add(v[i + 4], acc);
+        acc = v[i + 5].mul_add(v[i + 5], acc);
+        acc = v[i + 6].mul_add(v[i + 6], acc);
+        acc = v[i + 7].mul_add(v[i + 7], acc);
+        i += PAIRWISE_BASE_CHUNK;
+    }
+    while i < n {
+        acc = v[i].mul_add(v[i], acc);
+        i += 1;
+    }
+    acc
+}
+
+#[inline]
+fn naive_chunked_dot(a: &[f64], b: &[f64]) -> f64 {
+    let mut acc = 0.0;
+    let mut i = 0usize;
+    let n = a.len();
+    while i + PAIRWISE_BASE_CHUNK <= n {
+        acc = a[i].mul_add(b[i], acc);
+        acc = a[i + 1].mul_add(b[i + 1], acc);
+        acc = a[i + 2].mul_add(b[i + 2], acc);
+        acc = a[i + 3].mul_add(b[i + 3], acc);
+        acc = a[i + 4].mul_add(b[i + 4], acc);
+        acc = a[i + 5].mul_add(b[i + 5], acc);
+        acc = a[i + 6].mul_add(b[i + 6], acc);
+        acc = a[i + 7].mul_add(b[i + 7], acc);
+        i += PAIRWISE_BASE_CHUNK;
+    }
+    while i < n {
+        acc = a[i].mul_add(b[i], acc);
+        i += 1;
+    }
+    acc
+}
+
+fn pairwise_sum_sq(v: &[f64]) -> f64 {
+    if v.len() < PAIRWISE_THRESHOLD {
+        return naive_chunked_sum_sq(v);
+    }
+    let mid = (v.len() / 2) & !(PAIRWISE_BASE_CHUNK - 1);
+    pairwise_sum_sq(&v[..mid]) + pairwise_sum_sq(&v[mid..])
+}
+
+fn pairwise_sum_dot(a: &[f64], b: &[f64]) -> f64 {
+    if a.len() < PAIRWISE_THRESHOLD {
+        return naive_chunked_dot(a, b);
+    }
+    let mid = (a.len() / 2) & !(PAIRWISE_BASE_CHUNK - 1);
+    pairwise_sum_dot(&a[..mid], &b[..mid]) + pairwise_sum_dot(&a[mid..], &b[mid..])
 }
 
 fn axpy_inplace(y: &mut [f64], alpha: f64, x: &[f64]) {

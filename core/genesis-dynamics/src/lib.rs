@@ -58,6 +58,10 @@ pub mod criticality;
 ///
 /// AX-ID: AXIOMA-003, AXIOMA-008, `H_información`
 pub mod free_energy;
+/// Compensated summation primitives for numerically stable reductions.
+///
+/// AX-ID: AXIOMA-006, `H_dinámica`
+pub mod kahan;
 /// Quantum Kuramoto network — synchronisation dynamics over G(1,3) phases.
 ///
 /// AX-ID: AXIOMA-006, `H_dinámica`
