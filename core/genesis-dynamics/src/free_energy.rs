@@ -378,18 +378,13 @@ impl VFEMinimizer {
         let target = obs.copied().unwrap_or_default();
         // VFE over the 4 blades of grade 1 — Kahan summation.
         // Applies VFE_BLADE_WEIGHTS for consistency with compute_vfe_with_grad (FIX-3).
-        let mut sum = 0.0f64;
-        let mut comp = 0.0f64;
+        let mut acc = KahanAccumulator::new();
         for (k, &blade_idx) in GRADE1_BLADE_INDICES.iter().enumerate() {
             let delta = mean_full[blade_idx] - target[k];
-            let w = VFE_BLADE_WEIGHTS[blade_idx];
-            let weighted_precision = w * precision_full[blade_idx];
-            let y = delta.mul_add(delta * weighted_precision, -comp);
-            let t = sum + y;
-            comp = (t - sum) - y;
-            sum = t;
+            let term = VFE_BLADE_WEIGHTS[blade_idx] * precision_full[blade_idx] * delta * delta;
+            acc.add(term);
         }
-        sum
+        acc.sum()
     }
 
     /// VFE full over the 16 blades of G(1,3) and gradiente `[f64; 16]`.

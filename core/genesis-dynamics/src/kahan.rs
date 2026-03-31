@@ -55,6 +55,14 @@ impl KahanAccumulator<f64> {
         self.sum - self.compensation
     }
 
+    /// Returns the accumulated sum with compensation applied.
+    ///
+    /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
+    #[inline(always)]
+    pub fn sum(self) -> f64 {
+        self.total()
+    }
+
     /// Returns the absolute compensation magnitude for precision diagnostics.
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
