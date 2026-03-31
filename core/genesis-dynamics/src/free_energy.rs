@@ -1166,6 +1166,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_precision_compensation_ratio_non_negative() {
+        let id = NodeId::try_new(7).expect("NodeId válido");
+        let mut vfe = VFEMinimizer::new();
+        vfe.add_node(id, [0.25, -0.5, 0.75, -1.0]);
+        let obs = SparseCliffordVector::from_iter([(1usize, -0.25), (2, 0.4), (4, -0.2), (8, 0.1)])
+            .expect("obs válida");
+
+        let (_value, _grad) = vfe.compute_vfe_with_grad(id, Some(&obs));
+        let ratio = vfe.precision_compensation_ratio();
+        assert!(
+            ratio.is_finite(),
+            "precision_compensation_ratio debe ser finito"
+        );
+        assert!(
+            ratio >= 0.0,
+            "precision_compensation_ratio debe ser no negativo, got {ratio}"
+        );
+    }
+
     /// Verifies that update_full updates all the 16 blades active in obs.
     #[test]
     fn update_full_updates_all_active_blades() {

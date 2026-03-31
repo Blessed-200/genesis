@@ -44,7 +44,7 @@ impl KahanAccumulator<f64> {
     #[inline(always)]
     pub fn merge(&mut self, other: Self) {
         self.add(other.sum);
-        self.add(other.compensation);
+        self.add(-other.compensation);
     }
 
     /// Returns the accumulated sum with compensation applied.
@@ -80,5 +80,24 @@ mod tests {
 
         left.merge(right);
         assert!((left.total() - 12.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn merge_preserves_followup_add_path() {
+        let mut partial = KahanAccumulator::new();
+        partial.add(1.0e16);
+        partial.add(1.0);
+        assert!(partial.compensation_abs() > 0.0);
+
+        let mut merged = KahanAccumulator::new();
+        merged.merge(partial);
+        merged.add(1.0);
+
+        let mut direct = KahanAccumulator::new();
+        direct.add(1.0e16);
+        direct.add(1.0);
+        direct.add(1.0);
+
+        assert!((merged.total() - direct.total()).abs() < 1e-12);
     }
 }
