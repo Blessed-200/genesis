@@ -8,7 +8,7 @@
 
 #![allow(clippy::float_cmp)]
 
-use core::cell::Cell;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use genesis_math::SparseCliffordVector;
 use genesis_types::{GenesisError, NodeId};
@@ -233,7 +233,7 @@ pub struct VFEMinimizer {
     /// `u32::MAX` = no registered.
     id_to_idx: PagedIndex,
     /// Ratio |compensation| / max(|sum|, 1) measured during the last 16-blade VFE reduction.
-    precision_compensation_ratio: Cell<f64>,
+    precision_compensation_ratio_bits: AtomicU64,
 }
 
 const PAGE_BITS: u32 = 12;
@@ -290,7 +290,7 @@ impl VFEMinimizer {
             beliefs: Vec::new(),
             fisher: Vec::new(),
             id_to_idx: PagedIndex { pages: Vec::new() },
-            precision_compensation_ratio: Cell::new(0.0),
+            precision_compensation_ratio_bits: AtomicU64::new(0.0f64.to_bits()),
         }
     }
 
@@ -447,8 +447,10 @@ impl VFEMinimizer {
             grad[i] = delta * (2.0 * weighted_precision);
         }
         let vfe = vfe_acc.total();
-        self.precision_compensation_ratio
-            .set(vfe_acc.compensation_abs() / vfe.abs().max(1.0));
+        self.precision_compensation_ratio_bits.store(
+            (vfe_acc.compensation_abs() / vfe.abs().max(1.0)).to_bits(),
+            Ordering::Relaxed,
+        );
         (vfe, grad)
     }
 
@@ -457,7 +459,10 @@ impl VFEMinimizer {
     /// AX-ID: AXIOMA-003, H_información (LEY_FUNDACIONAL §3.3)
     #[inline]
     pub fn precision_compensation_ratio(&self) -> f64 {
-        self.precision_compensation_ratio.get()
+        f64::from_bits(
+            self.precision_compensation_ratio_bits
+                .load(Ordering::Relaxed),
+        )
     }
 
     /// Gradiente of grade 1 only — access conveniente for callers
