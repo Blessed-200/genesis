@@ -38,6 +38,10 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+      # Enforce professional technical English in Rust comments/rustdoc.
+      - name: English-only docs/comments check
+        run: scripts/check_english_only.sh
+
       - name: Clippy (workspace, deny warnings)
         run: |
           cargo clippy --workspace --all-targets --all-features -- \

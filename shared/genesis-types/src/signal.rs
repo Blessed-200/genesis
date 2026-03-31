@@ -72,7 +72,7 @@ impl NodeId {
     /// Maximum valid `NodeId` value accepted by [`NodeId::try_new`].
     /// The only forbidden ID is the sentinel `NodeId::INVALID` (u64::MAX).
     /// The practical node limit is imposed by HNSW (u32::MAX ≈ 4B nodes),
-    /// no this tipo primitivo.
+    /// not by this primitive integer wrapper type.
     pub const MAX_VALID: u64 = u64::MAX - 1;
 
     /// Sentinel value used to fill empty slots (never a valid node identifier).

@@ -481,3 +481,9 @@ If any condition fails → fix before completing task
 ### Priority
 
 This rule has HIGHER priority than stylistic preferences.
+
+### Automated enforcement
+
+- Primary enforcement: `scripts/check_english_only.sh` (CI gate in `.github/workflows/Rust.yml`).
+- Secondary enforcement: CodeRabbit review-time checks via `.coderabbit.yaml`.
+- Keep this section minimal; detailed review behavior and path-specific rules live in `.coderabbit.yaml` `path_instructions`.

@@ -94,14 +94,14 @@ const _: () = {
 #[inline]
 pub(crate) fn canonicalize_signed_zero(buf: &mut [f64; TOTAL_BLADES]) {
     for coeff in buf.iter_mut() {
-        // IEEE-754: +0.0 and -0.0 are the same as values ​​but different in bits.
+        // IEEE-754: +0.0 and -0.0 are equal as values but differ at the bit level.
         // `is_sign_negative()` reads the sign bit directly; the compiler
         // cannot eliminate this branch because `is_sign_negative` reads the
         // actual bit, not semantic value.
         // Required so that bytemuck::Pod is safe and the hashes of
-        // SparseCliffordVector sean estables independently of the origin of the cero.
+        // SparseCliffordVector remain stable regardless of the zero-sign origin.
         if *coeff == 0.0 && coeff.is_sign_negative() {
-            *coeff = 0.0_f64; // explícitamente +0.0 (bit de signo = 0)
+            *coeff = 0.0_f64; // explicitly +0.0 (sign bit = 0)
         }
     }
 }
@@ -172,7 +172,7 @@ impl SparseCliffordVector {
     /// # Errors
     /// Returns `GenesisError::BladeIndexOutOfRange` if any index
     /// exceeds `TOTAL_BLADES - 1`. Returns `GenesisError::SignatureViolation`
-    /// if any coefficient is NaN or infinito.
+    /// if any coefficient is NaN or infinite.
     #[allow(clippy::should_implement_trait)]
     pub fn from_iter<I>(iter: I) -> Result<Self, GenesisError>
     where
@@ -203,7 +203,7 @@ impl SparseCliffordVector {
     ///
     /// # Errors
     /// Returns `GenesisError::SignatureViolation` if any coefficient
-    /// is NaN or infinito.
+    /// is NaN or infinite.
     pub fn from_dense(dense: &[f64; TOTAL_BLADES]) -> Result<Self, GenesisError> {
         for (i, &v) in dense.iter().enumerate() {
             if !v.is_finite() {
@@ -639,16 +639,16 @@ impl crate::GeometricProduct for SparseCliffordVector {
 ///
 /// | Grade | Blades | Geometric type    | Cognitive semantics               | Weight |
 /// |-------|--------|--------------------|-----------------------------------|------|
-/// | 0     | 1      | Scalar            | Magnitud / intensidad global      | 2.0  |
-/// | 1     | 4      | Vectors           | Semantic direction (primaria)    | 1.5  |
-/// | 2     | 6      | Bivectores         | Relaciones / rotaciones           | 1.0  |
-/// | 3     | 4      | Trivectores        | Volumen orientado                 | 0.5  |
+/// | 0     | 1      | Scalar            | Global magnitude / intensity      | 2.0  |
+/// | 1     | 4      | Vectors           | Primary semantic direction        | 1.5  |
+/// | 2     | 6      | Bivectors         | Relations / rotations             | 1.0  |
+/// | 3     | 4      | Trivectors        | Oriented volume                   | 0.5  |
 /// | 4     | 1      | Pseudoscalar      | Global space orientation    | 0.3  |
 ///
-/// # Efecto in HNSW
+/// # Effect in HNSW
 ///
 /// With these weights, `fast_metric_distance` emphasizes similarity in
-/// direction semantic (grade 1) and magnitude (grade 0). The clusters
+/// semantic direction (grade 1) and magnitude (grade 0). The clusters
 /// that emerge in HNSW reflect real conceptual proximity, not
 /// similarity in orientation of the full space.
 ///
@@ -658,8 +658,8 @@ impl crate::GeometricProduct for SparseCliffordVector {
 /// # Preparation for CRATE-004
 /// `DiscreteRicciFlow` requires the metric to reflect real geometry
 /// why the Ollivier-Ricci curvature is cognitively significant.
-/// Weights uniform would produce isotropic curvature; differentiated weights
-/// producen curvature high in fronteras between grades semantics distintos.
+/// Uniform weights would produce isotropic curvature; differentiated weights
+/// produce higher curvature at boundaries between distinct semantic grades.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 /// Grade-weighted metric on G(1,3) blade coefficients.
@@ -697,7 +697,7 @@ pub(crate) const METRIC_WEIGHTS: [f64; TOTAL_BLADES] = {
 /// ```
 ///
 /// Variant without `sqrt` for hot-path comparisons (HNSW heaps/sorting).
-/// Conserva the same Cauchy–Schwarz gate sub-Planck that `fast_metric_distance`.
+/// Preserves the same sub-Planck Cauchy–Schwarz gate as `fast_metric_distance`.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 #[inline]
@@ -725,15 +725,15 @@ pub fn fast_metric_distance_sq(a: &SparseCliffordVector, b: &SparseCliffordVecto
 /// ```
 ///
 /// Satisfies the four metric axioms by construction:
-/// - **Symmetry:** `d(a,b) = d(b,a)` — diferencias to the cuadrado
+/// - **Symmetry:** `d(a,b) = d(b,a)` — squared differences
 /// - **Positivity:** `d(a,b) ≥ 0` — all the `METRIC_WEIGHTS[i] > 0`
-/// - **Identidad:** `d(a,a) = 0`
+/// - **Identity:** `d(a,a) = 0`
 /// - **Triangle inequality:** is preserved by the weighted ℓ² norm
 ///
-/// Grade weighting does that HNSW conecte nodes with **direction
-/// semantic similar** (grade 1, weight 1.5) before nodes with orientation
-/// global similar (grado 4, weight 0.3). Ver `METRIC_WEIGHTS` for la
-/// full rationale.
+/// Grade weighting makes HNSW connect nodes with **similar semantic direction**
+/// (grade 1, weight 1.5) before nodes that are only **globally similar in orientation**
+/// (grade 4, weight 0.3). See `METRIC_WEIGHTS`
+/// for full rationale.
 ///
 /// Complexity: O(16), without allocations, vectorizable with AVX-512.
 /// Compatible with HNSW for graphs up to 10⁸ nodes.
@@ -741,9 +741,9 @@ pub fn fast_metric_distance_sq(a: &SparseCliffordVector, b: &SparseCliffordVecto
 /// Returns `f64::MAX` if the joint energy is sub-Planck (without HNSW connection).
 ///
 /// # Preparation for CRATE-004
-/// The gradient of this distance feeds `DiscreteRicciFlow`. Con weights
-/// differentiated, the Ollivier-Ricci curvature is more pronounced in
-/// fronteras between regiones of grade semantic different.
+/// The gradient of this distance feeds `DiscreteRicciFlow`. With differentiated
+/// weights, Ollivier-Ricci curvature is more pronounced at boundaries between
+/// regions with different semantic grades.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 #[inline]
