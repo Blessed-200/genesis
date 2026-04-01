@@ -1110,7 +1110,7 @@ mod private {
 
 /// Type restriction for consolidation state markers.
 ///
-/// Only `Saturated` and `Certified` implement this trait — sellado mediante
+/// Only `Saturated` and `Certified` implement this trait — sealed via
 /// `mod private`. No external type can be used as `State` in
 /// `DomainConsolidationSignal<State>`.
 ///

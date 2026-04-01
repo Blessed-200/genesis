@@ -545,10 +545,12 @@ impl Default for MetaConsistencyValidator<NodeDomainStateConflictRule> {
 // VerifiedProof token — compile-time guarantee
 // ============================================================================
 
-/// Verified-proof token. **Not constructible outside [`AxiomGuard::verify_for`].**
+/// Verified-proof token.
+/// **Not constructible outside [`AxiomGuard::verify_for`] or [`AxiomGuard::verify_for_result`].**
 ///
 /// Compile-time guarantee: [`Mutation::apply`] can be called only if
-/// `AxiomGuard::verify_for` returns `Some(token)` — that is, if the [`Proof`]
+/// `AxiomGuard::verify_for` returns `Some(token)` or
+/// `AxiomGuard::verify_for_result` returns `Ok(token)` — that is, if the [`Proof`]
 /// was successfully verified. There is no way to construct this token without
 /// passing through verification.
 ///
