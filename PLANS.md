@@ -31,6 +31,10 @@
 
 ## 1.6 Repository professionalization phase (2026-03-30)
 
+### Status
+
+- ✅ Completed (governance + CI + reviewer hardening + language normalization).
+
 ### Root cause
 
 - CI policy is split across duplicated workflows, creating redundant checks and inconsistent diagnostics.
@@ -56,6 +60,33 @@
    - Define classification/removal process for stale files.
 7. `docs/TRI_AGENT_HANDOFF_PROTOCOL.md`
    - Define Codex–CodeRabbit–Lead handoff and finding-state model.
+8. `core/genesis-dynamics/src/kuramoto.rs`, `shared/genesis-types/src/proof.rs`, `core/genesis-math/src/multivector.rs`, `shared/genesis-types/src/signal.rs`
+   - Normalize mixed-language comments and rustdoc to professional technical English, preserving AX-ID anchors and semantics.
+9. `scripts/check_english_only.sh`, `.github/workflows/Rust.yml`
+   - Add CI enforcement to detect non-English technical wording in comments/rustdoc before clippy/test execution.
+10. `AGENTS.md`
+   - Add compact English-only documentation enforcement note and reference automation layers.
+
+### Completion notes
+
+- CI unification is complete: `.github/workflows/Rust.yml` is the sole production workflow and duplicate pipeline removal is finalized.
+- Governance documents are complete:
+  - `docs/AI_ENGINEERING_OPERATING_SYSTEM.md` contains §11 out-of-scope failure triage.
+  - `docs/ENGINEERING_OWNERSHIP_MATRIX.md` contains ownership table, mandatory reviewer matrix, and SLA.
+  - `docs/TRI_AGENT_HANDOFF_PROTOCOL.md` contains finding-state model and merge checklist.
+  - `docs/STALE_ARTIFACT_POLICY.md` contains artifact classification process and removal rules.
+- CodeRabbit hardening is complete in `.coderabbit.yaml` (`commit_status`, `fail_commit_status`, `enable_prompt_for_ai_agents`, and noise-reduction path filters).
+- English normalization campaign complete in:
+  - `core/genesis-dynamics/src/kuramoto.rs`
+  - `shared/genesis-types/src/proof.rs`
+  - `core/genesis-math/src/multivector.rs`
+  - `shared/genesis-types/src/signal.rs`
+- CI language enforcement added via `scripts/check_english_only.sh` and wired into `.github/workflows/Rust.yml`.
+
+### Exit criteria validation
+
+- ✅ Language consistency achieved for targeted mixed-language technical documentation blocks.
+- ✅ CI enforcement active for comment/rustdoc language policy in `core/**/*.rs` and `shared/**/*.rs`.
 
 ### Validation
 

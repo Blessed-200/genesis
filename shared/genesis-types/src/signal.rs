@@ -72,7 +72,7 @@ impl NodeId {
     /// Maximum valid `NodeId` value accepted by [`NodeId::try_new`].
     /// The only forbidden ID is the sentinel `NodeId::INVALID` (u64::MAX).
     /// The practical node limit is imposed by HNSW (u32::MAX ≈ 4B nodes),
-    /// no this tipo primitivo.
+    /// not by this primitive integer wrapper type.
     pub const MAX_VALID: u64 = u64::MAX - 1;
 
     /// Sentinel value used to fill empty slots (never a valid node identifier).
@@ -181,7 +181,7 @@ impl Timestamp {
 ///
 /// Fixed at `CLIFFORD_BASIS_SIZE` = 16 for the base G(1,3) algebra.
 /// The `SoA` arrays are sized by this constant; it is the **single source of truth**
-/// for the spike layercity. Changing this constant changes all array sizes
+/// for the spike layout capacity. Changing this constant changes all array sizes
 /// simultaneously, without silent divergence.
 ///
 /// AX-ID: AXIOMA-001, AXIOMA-018
@@ -310,7 +310,7 @@ pub struct SpikeComponents {
     tail_pad: [u8; 24],
 }
 
-// Compile-time layout verifiestion.
+// Compile-time layout verification.
 static_assertions::assert_eq_size!(SpikeComponents, [u8; 192]);
 static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 64);
 
@@ -1100,7 +1100,7 @@ static_assertions::const_assert_eq!(
 
 // ── Sealed trait for ConsolidationState ─────────────────────────────────────
 // Prevents external types from implementing ConsolidationState and injecting
-// states invalids in DomainConsolidationSignal<T>.
+// invalid states in DomainConsolidationSignal<T>.
 // Only Saturated and Certified can be State — compile-time type invariant.
 //
 // AX-ID: GENESIS_PROOF_SPEC §A4, AXIOMA-008, AXIOMA-009
@@ -1110,7 +1110,7 @@ mod private {
 
 /// Type restriction for consolidation state markers.
 ///
-/// Only `Saturated` and `Certified` implement this trait — sellado mediante
+/// Only `Saturated` and `Certified` implement this trait — sealed via
 /// `mod private`. No external type can be used as `State` in
 /// `DomainConsolidationSignal<State>`.
 ///
@@ -1268,7 +1268,7 @@ impl<State: ConsolidationState + Hash> Hash for DomainConsolidationSignal<State>
 }
 
 // ============================================================================
-// DOMAIN RESET SIGNAL — STRUCTURAL CORRECTION-2 + DE CALIDAD-2
+// DOMAIN RESET SIGNAL — STRUCTURAL CORRECTION-2 + QUALITY CHECK-2
 // ============================================================================
 
 /// Re-opens a previously consolidated domain for ingestion.
@@ -1671,13 +1671,13 @@ mod tests {
     #[test]
     fn node_id_try_new_rejects_upper_bound() {
         // The only invalid ID is the u64::MAX sentinel.
-        let err = NodeId::try_new(u64::MAX).expect_err("u64::MAX (centinela) debe ser rechazado");
+        let err = NodeId::try_new(u64::MAX).expect_err("u64::MAX sentinel must be rejected");
         assert_eq!(err, GenesisError::NodeIdOutOfRange { raw: u64::MAX });
     }
 
     #[test]
     fn node_id_try_new_accepts_999999() {
-        let id = NodeId::try_new(999_999).expect("999_999 debe ser aceptado");
+        let id = NodeId::try_new(999_999).expect("999_999 must be accepted");
         assert_eq!(id.get(), 999_999);
     }
 

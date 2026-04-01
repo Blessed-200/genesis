@@ -6,23 +6,23 @@ const INV_2POW53: f64 = 1.0 / ((1u64 << 53) as f64);
 
 /// Generates an approximately `N(0,1)` via Box-Muller with LCG of 64 bits.
 ///
-/// Algoritmo:
+/// Algorithm:
 ///   1. LCG step: `rng = rng * 6364136223846793005 + 1442695040888963407`
 ///   2. `u1 = ((rng >> 11) / 2^53).clamp(MIN_POSITIVE, 1.0)`
-///   3. LCG step adicional for u2 ∈ [0, 1)
+///   3. Additional LCG step for `u2 ∈ [0, 1)`
 ///   4. r = sqrt(-2 * ln(u1)),  θ = 2π * u2
-///   5. Returns r * cos(θ) ~ N(0, 1)
+///   5. Return `r * cos(θ) ~ N(0, 1)`
 ///
-/// Propiedades:
+/// Properties:
 /// - Distribution: Box-Muller standard over a discrete grid of `u1`/`u2`.
 /// - Amplitude bound via clamping: for `u1_min = f64::MIN_POSITIVE = 2^-1022`,
 ///   `r_max = sqrt(-2 ln(u1_min)) = sqrt(2 * 1022 * ln 2) ≈ 37.64σ`.
 /// - Statistical consistency: tests validate `E[η] ≈ 0` and `Var[η] ≈ 1`.
-/// - Costo: 2 iteraciones LCG + ln + sqrt + cos ≈ 25-35 ciclos in AVX-512
-/// - Heap: cero. Dependencias: cero. State: 8 bytes (rng in registro).
+/// - Cost: 2 LCG iterations + ln + sqrt + cos ≈ 25-35 cycles on AVX-512 targets.
+/// - Heap: zero. Dependencies: zero. State: 8 bytes (`rng` in a register).
 ///
 /// For N=10⁶ oscillators × 5 degrees = 5×10⁶ calls/step.
-/// A 30 ciclos/llamada × 3.5 GHz = ~43ms/step. Aceptable for dt=0.01s.
+/// At 30 cycles/call × 3.5 GHz = ~43ms/step. Acceptable for `dt = 0.01s`.
 /// If profiling shows regression, replace with a vectorized Ziggurat method.
 ///
 /// AX-ID: AXIOMA-006 — thermal decoherence required in Euler-Maruyama.
@@ -30,8 +30,8 @@ const INV_2POW53: f64 = 1.0 / ((1u64 << 53) as f64);
 #[allow(clippy::inline_always)]
 #[inline(always)]
 fn gaussian_noise(rng: &mut u64) -> f64 {
-    // Implementation Box-Muller deterministic for keep E[η]≈0 and Var[η]≈1
-    // (ver test `gaussian_noise_mean_and_variance`).
+    // Deterministic Box-Muller implementation to preserve E[η]≈0 and Var[η]≈1
+    // (see test `gaussian_noise_mean_and_variance`).
     *rng = rng
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
@@ -42,7 +42,7 @@ fn gaussian_noise(rng: &mut u64) -> f64 {
     *rng = rng
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
-    // Same razonamiento: 53 bits efectivos in numerador and 2^53 exact in denominador.
+    // Same reasoning: 53 effective bits in the numerator and exact 2^53 in the denominator.
     #[allow(clippy::cast_precision_loss)]
     let u2 = (*rng >> 11) as f64 * INV_2POW53;
 
@@ -53,20 +53,20 @@ fn gaussian_noise(rng: &mut u64) -> f64 {
 
 // ── wrap_phase_diff ───────────────────────────────────────────────────────────
 
-/// Diferencia of phase in S¹.
+/// Phase difference in S¹.
 ///
 /// Expected range for main difference: (−π, π].
 /// With the branchless convention used here, the cases of boundary `d = ±π`
 /// (and its periodic equivalent) it represented as `-π`.
 ///
-/// Comportamiento exact of fronteras:
+/// Exact boundary behavior:
 /// - `d = n·2π + π`  → `-π`
 /// - `d = n·2π - π`  → `-π`
 ///
 /// If `d` is `NaN`, the result remains `NaN` (IEEE-754 propagation).
 ///
-/// Invariant a circular-shift circular: wrap(φ + 2πk) = wrap(φ) ∀k ∈ ℤ.
-// Hot path of diferencias angulares used in metrics and coupling of phase.
+/// Circular-shift invariant: `wrap(φ + 2πk) = wrap(φ)` for all `k ∈ ℤ`.
+// Hot path for angular differences used in phase metrics and coupling.
 #[allow(clippy::inline_always)]
 #[inline(always)]
 pub(crate) fn wrap_phase(x: f64) -> f64 {
@@ -146,62 +146,62 @@ fn accumulate_grades_simd(sums: &mut [f64; 5], gamma: f64, contrib: &[f64; 5]) {
 
 // ── QuantumKuramotoNetwork ────────────────────────────────────────────────────
 
-/// Network of oscillators of Kuramoto quantum.
+/// Quantum Kuramoto oscillator network.
 ///
 /// The equation of motion is NOT postulated — it is derived from `H_dinámica`:
 ///  dφᵢ/dt = ωᵢ + Σⱼ Γᵢⱼ sin(φⱼ - φᵢ) + η√(2kT·dt)
 ///
 /// Forbidden: forced deterministic collapse (AXIOMA-006).
 /// Forbidden: `HashMap` in any hot path.
-/// Without dependency of `rand` — Internal deterministic LCG.
+/// No `rand` dependency — internal deterministic LCG.
 ///
 /// AX-ID: AXIOMA-006, `H_dinámica` (`LEY_FUNDACIONAL` §3.2)
 pub struct QuantumKuramotoNetwork {
     pub(crate) oscillators: OscillatorSlab,
 
-    /// Coupling public (`NodeId`-based) — source of truth for serialization.
-    /// Forbidden `HashMap` — `Vec` sparse.
+    /// Public coupling (`NodeId`-based) — source of truth for serialization.
+    /// `HashMap` is forbidden; use sparse `Vec`.
     ///
     /// Each entry is `(src, dst, gamma, A_ij)` where `A_ij` is the connection gauge
-    /// discrete over the edge dirigida `src → dst`.
+    /// discrete over the directed edge `src → dst`.
     pub coupling: Vec<(NodeId, NodeId, f64, f64)>,
 
-    /// Index internal: (`idx_i`, `idx_j`, `gamma`, `A_ij`, public_edge_idx`)
-    /// sorted by `idx_i` for access contiguo per node origin.
-    /// It reconstruye lazy when the topology changes.
+    /// Internal index: (`idx_i`, `idx_j`, `gamma`, `A_ij`, `public_edge_idx`)
+    /// sorted by `idx_i` for contiguous access per source node.
+    /// Rebuilt lazily when topology changes.
     coupling_idx: Vec<(u32, u32, f64, f64, u32)>,
 
     /// `NodeId` → index in `oscillators`. `u32::MAX` = no registered.
-    /// Direct array: O(1) lookup, valid for `NodeIds` consecutivos.
+    /// Direct array: O(1) lookup, valid for consecutive `NodeId` values.
     id_to_idx: Vec<u32>,
 
-    /// kT — controls amplitude of decoherence térmica.
+    /// kT — controls thermal decoherence amplitude.
     pub temperature: f64,
 
     /// `η_gauge` — rate of adaptation of the field gauge.
     ///
-    /// Too small: the field no records mismatches local and the system collapses.
-    /// Too large: introduces overcorrection, oscillations numerical and noise of phase.
+    /// Too small: the field does not record local mismatches and the system collapses.
+    /// Too large: introduces overcorrection, numerical oscillations, and phase noise.
     ///
     /// AX-ID: AXIOMA-006, AXIOMA-007, H_estructura (LEY_FUNDACIONAL §3.1)
     pub gauge_learning_rate: f64,
 
     /// `λ_curvature` — discrete curvature damping.
     ///
-    /// Too small: the holonomías crecen without limit and dominate the coupling.
+    /// Too small: holonomies grow without bound and dominate coupling.
     /// Too large: Flattens the connection too quickly and destroys local criticality.
     ///
     /// AX-ID: AXIOMA-006, AXIOMA-007, H_estructura (LEY_FUNDACIONAL §3.1)
     pub curvature_damping: f64,
 
-    /// State of the LCG. Semilla fixed → reproducibilidad deterministic.
+    /// LCG state. Fixed seed → deterministic reproducibility.
     rng_state: u64,
 
-    /// Segunda sample Box-Muller pendiente of consumir.
+    /// Second Box-Muller sample pending consumption.
     spare_gaussian: f64, // f64::NAN = no buffered spare; valid samples are always finite
 
-    /// Scratch for phases of the paso previous (Euler-Maruyama correct).
-    /// Reutilizado between `steps`. Un only alloc, resize only in `add_oscillator`.
+    /// Scratch for previous-step phases (Euler-Maruyama correctness).
+    /// Reused between `step` calls. Single allocation; resized only in `add_oscillator`.
     phase_scratch: Vec<[f64; 5]>,
 
     /// Offsets per node origin in `coupling_idx`: `(start, end)` for access O(1).
@@ -225,7 +225,7 @@ pub struct QuantumKuramotoNetwork {
     /// Flag: the topology changed and must be recomputed indices and triangles.
     dirty: bool,
 
-    /// Triangles dirigidos `(e_ij, e_jk, e_ki)` expresados in indices of `self.coupling`.
+    /// Directed triangles `(e_ij, e_jk, e_ki)` expressed as `self.coupling` indices.
     triangles: Vec<(usize, usize, usize)>,
 
     /// Inverse index: public edge → triangles that contain it.
@@ -233,7 +233,7 @@ pub struct QuantumKuramotoNetwork {
     /// Reusable backing storage for triangle adjacency rebuilds.
     triangle_scratch: Vec<Vec<usize>>,
 
-    /// Index of edge reversa for keep antisimetría `A_ji = -A_ij`.
+    /// Reverse-edge index used to preserve antisymmetry `A_ji = -A_ij`.
     reverse_edges: Vec<Option<usize>>,
 
     /// Cache of the parameter of order r_sync.
@@ -315,10 +315,10 @@ impl QuantumKuramotoNetwork {
         Ok(node_id)
     }
 
-    /// Sets coupling Γᵢⱼ. If gamma == 0.0, remove the edge.
+    /// Sets coupling Γᵢⱼ. If `gamma == 0.0`, removes the edge.
     ///
-    /// COMPLEJIDAD: O(log E) — binary search over Vec sorted.
-    /// Mantiene `coupling` sorted per (i.get(), j.get()) for O(log E) lookup.
+    /// COMPLEXITY: O(log E) — binary search over a sorted `Vec`.
+    /// Maintains `coupling` sorted by `(i.get(), j.get())` for O(log E) lookup.
     pub fn set_coupling(&mut self, i: NodeId, j: NodeId, gamma: f64) {
         let key = (i.get(), j.get());
         let pos = self
@@ -335,16 +335,16 @@ impl QuantumKuramotoNetwork {
         self.dirty = true;
     }
 
-    /// Inserta N couplings in O(E log E) total instead of O(N × E).
+    /// Inserts N couplings in O(E log E) total instead of O(N × E).
     pub fn set_coupling_batch(&mut self, pairs: &[(NodeId, NodeId, f64)]) {
         for &(i, j, gamma) in pairs {
             self.set_coupling(i, j, gamma);
         }
     }
 
-    /// Establece the connection gauge discrete `A_ij` and maintains the antisimetría `A_ji = -A_ij`.
+    /// Sets the discrete connection gauge `A_ij` and maintains antisymmetry `A_ji = -A_ij`.
     ///
-    /// If the edge reversa no exists, it creates with weight `0.0` for preservar the contract gauge
+    /// If the reverse edge does not exist, it is created with weight `0.0` to preserve the gauge contract
     /// without altering the pre-existing dynamic coupling.
     ///
     /// AX-ID: AXIOMA-006, AXIOMA-007, H_estructura (LEY_FUNDACIONAL §3.1)
@@ -584,7 +584,7 @@ impl QuantumKuramotoNetwork {
         self.sync_dirty = true;
     }
 
-    /// Number of nodes registrados.
+    /// Number of registered nodes.
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
@@ -592,20 +592,20 @@ impl QuantumKuramotoNetwork {
         self.live_count
     }
 
-    /// Access inmutable a all the oscillators.
-    /// Expuesto for `genesis-evolution::compression` (contract CRATE-004).
+    /// Immutable access to all oscillators.
+    /// Exposed for `genesis-evolution::compression` (contract CRATE-004).
     #[inline]
     pub fn phases(&self) -> &[QuantumOscillator] {
         &self.oscillators
     }
 
-    /// Diferencia of phase normalizada (RMS over 5 grades) between nodes i and j.
+    /// Normalized phase difference (RMS over 5 grades) between nodes `i` and `j`.
     ///
     /// Returns `√(Σ_g wrap(φᵢg - φⱼg)² / 5) ∈ [0, π]`.
-    /// Simétrica: `phase_diff_norm(i,j) == phase_diff_norm(j,i)`.
-    /// Cero for the same node. Invariant a circular-shift circular (module 2π).
+    /// Symmetric: `phase_diff_norm(i,j) == phase_diff_norm(j,i)`.
+    /// Zero for the same node. Circular-shift invariant (modulo `2π`).
     ///
-    /// Expuesto for `genesis-evolution::compression` (`LEY_FUNDACIONAL` §3.7).
+    /// Exposed for `genesis-evolution::compression` (`LEY_FUNDACIONAL` §3.7).
     /// AX-ID: `LEY_FUNDACIONAL` §3.7
     pub fn phase_diff_norm(&self, i: NodeId, j: NodeId) -> f64 {
         let Some(ii) = self.lookup_idx(i) else {
@@ -1001,7 +1001,7 @@ impl QuantumKuramotoNetwork {
         }
     }
 
-    /// Reconstruye `coupling_idx` sorted by source oscilador index and materializa offsets.
+    /// Rebuilds `coupling_idx` sorted by source-oscillator index and materializes offsets.
     fn rebuild_if_dirty(&mut self) {
         if !self.dirty {
             return;
