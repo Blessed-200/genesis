@@ -181,7 +181,7 @@ impl Timestamp {
 ///
 /// Fixed at `CLIFFORD_BASIS_SIZE` = 16 for the base G(1,3) algebra.
 /// The `SoA` arrays are sized by this constant; it is the **single source of truth**
-/// for the spike layercity. Changing this constant changes all array sizes
+/// for the spike layout capacity. Changing this constant changes all array sizes
 /// simultaneously, without silent divergence.
 ///
 /// AX-ID: AXIOMA-001, AXIOMA-018
@@ -310,7 +310,7 @@ pub struct SpikeComponents {
     tail_pad: [u8; 24],
 }
 
-// Compile-time layout verifiestion.
+// Compile-time layout verification.
 static_assertions::assert_eq_size!(SpikeComponents, [u8; 192]);
 static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 64);
 
@@ -1100,7 +1100,7 @@ static_assertions::const_assert_eq!(
 
 // ── Sealed trait for ConsolidationState ─────────────────────────────────────
 // Prevents external types from implementing ConsolidationState and injecting
-// states invalids in DomainConsolidationSignal<T>.
+// invalid states in DomainConsolidationSignal<T>.
 // Only Saturated and Certified can be State — compile-time type invariant.
 //
 // AX-ID: GENESIS_PROOF_SPEC §A4, AXIOMA-008, AXIOMA-009

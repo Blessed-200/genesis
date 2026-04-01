@@ -29,7 +29,7 @@ use smallvec::SmallVec;
 use crate::{error::GenesisError, signal::NodeId};
 
 /// SSO witness buffer — stack-inline for witnesses ≤ 512 bytes (matches
-/// `WitnessBuffer::Small` layercity, guaranteeing zero-alloc end-to-end),
+/// `WitnessBuffer::Small` inline capacity, guaranteeing zero-alloc end-to-end),
 /// heap spill only for larger witnesses.
 ///
 /// # Why 512, not 64 (BN-03 revision, FIX-5)
@@ -37,7 +37,7 @@ use crate::{error::GenesisError, signal::NodeId};
 /// `WitnessBuffer::Small` stores up to 512 bytes inline in `ArrayVec<u8, 512>`.
 /// A `Proof::witness` of `SmallVec<[u8; 64]>` would force a heap allocation for
 /// any witness in the range 65–512 bytes, silently breaking the zero-alloc contract
-/// promised by `WitnessBuilder`. Unifying both layercities at 512 bytes eliminates
+/// promised by `WitnessBuilder`. Unifying both inline capacities at 512 bytes eliminates
 /// the allocation for all current (20–28 byte) and anticipated proof types.
 ///
 /// Stack cost: 512 bytes per `Proof` struct (acceptable — Proofs are not persisted
@@ -46,21 +46,21 @@ use crate::{error::GenesisError, signal::NodeId};
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.2, BN-03
 pub type Witness = SmallVec<[u8; 512]>;
 
-/// Inline layercity of the `Witness` SSO buffer in bytes.
+/// Inline capacity of the `Witness` SSO buffer in bytes.
 ///
 /// Used in `debug_assert!` in `WitnessBuilder::build()` to verify that the
 /// assembled witness fits inline. If this fires, increase both this constant
-/// and the SmallVec layercity in the `Witness` type alias above.
+/// and the SmallVec inline capacity in the `Witness` type alias above.
 ///
 /// AX-ID: GENESIS_PROOF_SPEC §2.2, FIX-C
 pub const WITNESS_INLINE_CAPACITY: usize = 512;
 
-/// Canonical hash of un [`Proof`] (BLAKE3, 32 bytes).
+/// Canonical hash of a [`Proof`] (BLAKE3, 32 bytes).
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.2
 pub type ProofHash = [u8; 32];
 
-/// Inline layercity for causal premises before spilling to heap.
+/// Inline capacity for causal premises before spilling to heap.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.5
 pub const PREMISES_INLINE_CAPACITY: usize = 4;
@@ -298,26 +298,29 @@ impl AxiomID {
 // Proof
 // ============================================================================
 
-/// Cryptographic certificate that a mutation preserves the invariants
-/// axiomatic. The `hash` is BLAKE3 over `witness`.
+/// Cryptographic certificate proving that a mutation preserves axiomatic invariants.
+/// The `hash` field is BLAKE3 over `witness`.
 ///
-/// Un [`Proof`] is valid if and only if:
+/// A [`Proof`] is valid if and only if:
 /// 1. `blake3(witness) == hash` (integrity)
 /// 2. The serialized witness contains a valid frame for each axiom in
 ///    `axioms_checked` with `result == 1` (positive verification)
 ///
 /// # Memory model (BN-03)
-/// `witness` uses SSO: inline stack storage for witnesses ≤ 64 bytes
-/// (zero heap allocation for all current proof types), heap spill only for
-/// larger proofs. This eliminates the `malloc` that dominated the proof
-/// hot-path (~30–50ns vs ~15ns for BLAKE3 itself).
+/// `witness` uses SSO via [`Witness`] = `SmallVec<[u8; 512]>`, so the inline
+/// threshold is [`WITNESS_INLINE_CAPACITY`] bytes (currently 512).
+/// This keeps witnesses of length `<= WITNESS_INLINE_CAPACITY` on stack and
+/// spills to heap only beyond that bound, eliminating allocator cost on the
+/// common proof path.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.2
 #[derive(Debug, Clone)]
 pub struct Proof {
     /// List of axioms positively verified in this proof.
     pub axioms_checked: AxiomSet,
-    /// Serialized binary verification trace (SSO — inline ≤ 64 bytes).
+    /// Serialized binary verification trace.
+    /// Stored as [`Witness`] (`SmallVec<[u8; 512]>`) with inline capacity
+    /// [`WITNESS_INLINE_CAPACITY`] (512 bytes).
     /// Frame format: [`axiom_id`: u8, `result`: u8, `ctx_len`: u16le, `ctx`: [u8; `ctx_len`]].
     pub witness: Witness,
     /// Generation timestamp in nanoseconds.
@@ -773,11 +776,11 @@ impl AxiomGuard {
 // WitnessBuilder
 // ============================================================================
 
-/// Construye un witness binario ejecutando checks axiomatic in secuencia.
+/// Builds a binary witness by executing axiomatic checks in sequence.
 ///
-/// Each llamada a [`check`][WitnessBuilder::check] serializa un frame
-/// `[axiom_id, result, 0, 0]` to the witness internal. If the check falla,
-/// returns un error inmediatamente.
+/// Each call to [`check`][WitnessBuilder::check] serializes one frame
+/// `[axiom_id, result, 0, 0]` into the internal witness buffer. If a check fails,
+/// it returns an error immediately.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §3
 pub struct WitnessBuilder {
@@ -792,7 +795,7 @@ enum WitnessBuffer {
 }
 
 impl WitnessBuilder {
-    /// Creates un builder empty.
+    /// Creates an empty builder.
     pub fn new() -> Self {
         Self {
             frames: WitnessBuffer::Small(ArrayVec::new()),
@@ -833,9 +836,9 @@ impl WitnessBuilder {
         }
     }
 
-    /// Ejecuta the check `f` for `axiom` and serializa the frame to the witness.
+    /// Executes check `f` for `axiom` and serializes the frame into the witness.
     ///
-    /// If `f()` returns `false`, serializa `result=0` and returns
+    /// If `f()` returns `false`, serializes `result=0` and returns
     /// [`GenesisError::InvariantViolation`][crate::GenesisError::InvariantViolation].
     /// # Errors
     /// Returns `GenesisError::InvariantViolation` when the evaluated axiom check fails.
@@ -845,7 +848,7 @@ impl WitnessBuilder {
         f: F,
     ) -> Result<(), crate::error::GenesisError> {
         let ok = f();
-        // Serializar frame: [axiom_id: u8, result: u8, ctx_len: u16le = 0]
+        // Serialize frame: [axiom_id: u8, result: u8, ctx_len: u16le = 0]
         self.push_byte(axiom as u8);
         self.push_byte(u8::from(ok));
         self.extend_bytes(&0u16.to_le_bytes());
@@ -860,18 +863,18 @@ impl WitnessBuilder {
         Ok(())
     }
 
-    /// Finaliza the builder and returns un [`Proof`] with the timestamp dado.
+    /// Finalizes the builder and returns a [`Proof`] with the given timestamp.
     ///
     /// # Allocation contract (BN-03 + FIX-5)
     /// For witnesses ≤ 512 bytes: zero heap allocation (inline SmallVec matches
-    /// WitnessBuffer::Small layercity — no copy crosses stack/heap boundary).
+    /// WitnessBuffer::Small inline capacity — no copy crosses stack/heap boundary).
     /// For witnesses > 512 bytes: single heap allocation (SmallVec spill, same
     /// as the builder's WitnessBuffer::Large path).
     pub fn build(self, timestamp: u64) -> Proof {
         let witness: Witness = match self.frames {
             WitnessBuffer::Small(frames) => {
                 // FIX-C: Use WITNESS_INLINE_CAPACITY constant — was hardcoded 64 but
-                // Witness is now SmallVec<[u8; 512]> to match WitnessBuffer::Small layercity.
+                // Witness is now SmallVec<[u8; 512]> to match WitnessBuffer::Small inline capacity.
                 debug_assert!(
                     frames.len() <= WITNESS_INLINE_CAPACITY,
                     "Witness exceeds SSO inline capacity ({} > {} bytes): \
@@ -1114,12 +1117,12 @@ mod tests {
         future_proof.timestamp = 100;
         assert!(
             !future_proof.is_fresh(50),
-            "proof del futuro debe ser not-fresh"
+            "proof from the future must be non-fresh"
         );
         // current_ns=0 < timestamp=100 → also non-fresh.
         assert!(
             !future_proof.is_fresh(0),
-            "proof del futuro debe ser not-fresh en t=0"
+            "proof from the future must be non-fresh at t=0"
         );
     }
 
