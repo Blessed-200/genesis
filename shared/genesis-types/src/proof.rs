@@ -570,7 +570,8 @@ pub struct VerifiedProof<'mutation, M: Mutation> {
 ///
 /// Contract: `propose()` verifies invariants and generates a [`Proof`];
 /// `apply()` executes the mutation only with a [`VerifiedProof`] issued by
-/// [`AxiomGuard::verify_for`] — compile-time verification guarantee.
+/// [`AxiomGuard::verify_for`] or [`AxiomGuard::verify_for_result`] —
+/// compile-time verification guarantee.
 ///
 /// AX-ID: `GENESIS_PROOF_SPEC` §2.3
 pub trait Mutation: Send + Sync {
@@ -738,10 +739,10 @@ impl AxiomGuard {
         validator.validate_against_history(proof, history)
     }
 
-    /// Deserializes the witness frame to frame and verifies that there are axioms
-    /// claimed are presentes with `result == 1`.
+    /// Deserializes witness frames and verifies that all claimed axioms are
+    /// present with `result == 1`.
     ///
-    /// Formato of frame: [`axiom_id`: u8][result: u8][`ctx_len`: u16le][ctx: bytes]
+    /// Frame format: [`axiom_id`: u8][result: u8][`ctx_len`: u16le][ctx: bytes]
     fn replay_witness(witness: &[u8], claimed: AxiomSet) -> bool {
         let mut cursor = 0usize;
         let mut verified = AxiomSet::empty();

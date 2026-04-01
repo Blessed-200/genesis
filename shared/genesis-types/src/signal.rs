@@ -1268,7 +1268,7 @@ impl<State: ConsolidationState + Hash> Hash for DomainConsolidationSignal<State>
 }
 
 // ============================================================================
-// DOMAIN RESET SIGNAL — STRUCTURAL CORRECTION-2 + DE CALIDAD-2
+// DOMAIN RESET SIGNAL — STRUCTURAL CORRECTION-2 + QUALITY CHECK-2
 // ============================================================================
 
 /// Re-opens a previously consolidated domain for ingestion.
@@ -1671,13 +1671,13 @@ mod tests {
     #[test]
     fn node_id_try_new_rejects_upper_bound() {
         // The only invalid ID is the u64::MAX sentinel.
-        let err = NodeId::try_new(u64::MAX).expect_err("u64::MAX (centinela) debe ser rechazado");
+        let err = NodeId::try_new(u64::MAX).expect_err("u64::MAX sentinel must be rejected");
         assert_eq!(err, GenesisError::NodeIdOutOfRange { raw: u64::MAX });
     }
 
     #[test]
     fn node_id_try_new_accepts_999999() {
-        let id = NodeId::try_new(999_999).expect("999_999 debe ser aceptado");
+        let id = NodeId::try_new(999_999).expect("999_999 must be accepted");
         assert_eq!(id.get(), 999_999);
     }
 
