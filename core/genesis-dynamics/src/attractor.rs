@@ -9,16 +9,16 @@
 //! `register()` was O(N) due to `retain()` + `Vec::insert`. At scale (N_attractors ~ 10⁴)
 //! this became a bottleneck for the consciousness layer.
 //!
-//! New implementation: `HashMap<NodeId, f64>` for O(1) ID lookup + `BTreeSet<AttractorEntry>`
-//! for O(log N) energy-ordered insertion. The `HashMap` is not in the HNSW/Kuramoto hot-path —
+//! New implementation: `FastHashMap<NodeId, f64>` for O(1) ID lookup + `BTreeSet<AttractorEntry>`
+//! for O(log N) energy-ordered insertion. The `FastHashMap` is not in the HNSW/Kuramoto hot-path —
 //! it serves the attractor bookkeeping layer (consciousness, CRATE-006).
 //!
 //! PROHIBITED: implementing memories as external lookup tables outside the attractor landscape.
 //! All memory lives in attractor topology. (AXIOMA-004)
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
-use genesis_types::NodeId;
+use genesis_types::{FastHashMap, NodeId};
 
 use crate::{free_energy::VFEMinimizer, phase_semantics::PhaseSemanticsEngine};
 
@@ -74,15 +74,15 @@ impl PartialOrd for AttractorEntry {
 /// Cognitive attractor landscape.
 ///
 /// # Complexity after BN-06
-/// - `register()`: O(log N) — HashMap O(1) + BTreeSet O(log N)
+/// - `register()`: O(log N) — FastHashMap O(1) + BTreeSet O(log N)
 /// - `descend()`: O(N) via BTreeSet iteration (cache-friendly, ordered)
-/// - `energy_of()`: O(1) via HashMap
+/// - `energy_of()`: O(1) via FastHashMap
 /// - `attractor_count()`: O(1)
 ///
 /// AX-ID: AXIOMA-004
 pub struct AttractorLandscape {
     /// O(1) energy lookup by NodeId.
-    id_to_energy: HashMap<NodeId, f64>,
+    id_to_energy: FastHashMap<NodeId, f64>,
     /// Energy-ordered set for deterministic iteration.
     ordered_landscape: BTreeSet<AttractorEntry>,
 }
@@ -112,7 +112,7 @@ impl AttractorLandscape {
     /// Creates an empty attractor landscape with no registered attractors.
     pub fn new() -> Self {
         Self {
-            id_to_energy: HashMap::new(),
+            id_to_energy: FastHashMap::new(),
             ordered_landscape: BTreeSet::new(),
         }
     }
@@ -122,21 +122,14 @@ impl AttractorLandscape {
     /// If the same `NodeId` already exists with a different energy, the old entry
     /// is removed and the new one inserted. Idempotent for same (id, energy).
     pub fn register(&mut self, id: NodeId, energy: f64) {
-        match self.id_to_energy.entry(id) {
-            std::collections::hash_map::Entry::Occupied(mut occupied) => {
-                let old_energy = *occupied.get();
-                if old_energy.to_bits() == energy.to_bits() {
-                    return; // Exact same value — idempotent, no work needed.
-                }
-                self.ordered_landscape.remove(&AttractorEntry {
-                    id,
-                    energy: old_energy,
-                });
-                occupied.insert(energy);
+        if let Some(old_energy) = self.id_to_energy.insert(id, energy) {
+            if old_energy.to_bits() == energy.to_bits() {
+                return; // Exact same value — idempotent, no work needed.
             }
-            std::collections::hash_map::Entry::Vacant(vacant) => {
-                vacant.insert(energy);
-            }
+            self.ordered_landscape.remove(&AttractorEntry {
+                id,
+                energy: old_energy,
+            });
         }
         self.ordered_landscape.insert(AttractorEntry { id, energy });
         #[cfg(debug_assertions)]
@@ -234,7 +227,7 @@ impl AttractorLandscape {
         self.ordered_landscape.len()
     }
 
-    /// Registered energy of an attractor. O(1) via HashMap.
+    /// Registered energy of an attractor. O(1) via FastHashMap.
     #[inline]
     pub fn energy_of(&self, id: NodeId) -> Option<f64> {
         self.id_to_energy.get(&id).copied()

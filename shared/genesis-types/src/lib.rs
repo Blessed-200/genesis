@@ -87,6 +87,18 @@ pub use constants::{
 };
 // — Errors —
 pub use error::GenesisError;
+// — Fast non-cryptographic hash tables —
+pub use ahash::{AHashMap, AHashSet};
+
+/// Fast hash map alias for non-cryptographic table operations.
+///
+/// AX-ID: AXIOMA-017, H_estructura (LEY_FUNDACIONAL §3.1)
+pub type FastHashMap<K, V> = AHashMap<K, V>;
+
+/// Fast hash set alias for non-cryptographic membership operations.
+///
+/// AX-ID: AXIOMA-017, H_estructura (LEY_FUNDACIONAL §3.1)
+pub type FastHashSet<T> = AHashSet<T>;
 // — Fisher Edge Metric —
 pub use fisher_edge::FisherEdgeMetric;
 // — Multivector Types —
