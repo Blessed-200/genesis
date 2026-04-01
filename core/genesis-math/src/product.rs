@@ -747,7 +747,8 @@ pub fn bivector_norm_sq_of_product(
             let k = i ^ j;
             let lane = BIVECTOR_LANE_MAP[k];
             if lane >= 0 {
-                bivector_buf[lane as usize] = coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
+                bivector_buf[lane as usize] =
+                    coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
             }
             mask_b &= mask_b - 1;
         }
@@ -825,7 +826,8 @@ pub fn bivector_norm_sq_of_product_lhs_dense(
             let k = i ^ j;
             let lane = BIVECTOR_LANE_MAP[k];
             if lane >= 0 {
-                bivector_buf[lane as usize] = coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
+                bivector_buf[lane as usize] =
+                    coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
             }
             mask_b &= mask_b - 1;
         }
@@ -1372,7 +1374,8 @@ mod tests {
 #[cfg(all(test, target_arch = "x86_64"))]
 mod simd_equivalence_tests {
     use super::{
-        geometric_product_scalar_dense, geometric_product_x86_avx2_fma_dense, TOTAL_BLADES,
+        geometric_product_dispatch_by_mask, geometric_product_scalar_dense,
+        geometric_product_scalar_sparse, geometric_product_x86_avx2_fma_dense, TOTAL_BLADES,
     };
 
     #[test]
@@ -1416,6 +1419,99 @@ mod simd_equivalence_tests {
                     "mismatch at blade {k}: scalar={} simd={}",
                     scalar[k],
                     simd[k]
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "avx512")]
+    #[test]
+    fn avx512_dense_kernel_matches_scalar_for_one_million_cases() {
+        if !std::arch::is_x86_feature_detected!("avx512f") {
+            return;
+        }
+
+        let mut state = 0x9B07_1D2A_F4E1_5C33u64;
+        for _ in 0..1_000_000usize {
+            let mut a = [0.0f64; TOTAL_BLADES];
+            let mut b = [0.0f64; TOTAL_BLADES];
+
+            for i in 0..TOTAL_BLADES {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let x = ((state >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
+                a[i] = x.mul_add(2.0, -1.0);
+
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let y = ((state >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
+                b[i] = y.mul_add(2.0, -1.0);
+            }
+
+            let mut scalar = [0.0f64; TOTAL_BLADES];
+            let mut dispatch = [0.0f64; TOTAL_BLADES];
+            geometric_product_scalar_dense(&a, &b, &mut scalar);
+            geometric_product_dispatch_by_mask(&a, 0xFFFF, &b, 0xFFFF, &mut dispatch);
+
+            for k in 0..TOTAL_BLADES {
+                assert_eq!(
+                    scalar[k].to_bits(),
+                    dispatch[k].to_bits(),
+                    "AVX-512 dense mismatch at blade {k}: scalar={} dispatch={}",
+                    scalar[k],
+                    dispatch[k]
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "avx512")]
+    #[test]
+    fn avx512_dispatch_sparse_inputs_match_scalar_reference() {
+        if !std::arch::is_x86_feature_detected!("avx512f") {
+            return;
+        }
+
+        const MASK_A: u16 = 0x0F0F;
+        const MASK_B: u16 = 0x3333;
+
+        let mut state = 0xA76E_2F39_5D11_84C5u64;
+        for _ in 0..1_000_000usize {
+            let mut a = [0.0f64; TOTAL_BLADES];
+            let mut b = [0.0f64; TOTAL_BLADES];
+
+            for i in 0..TOTAL_BLADES {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let x = ((state >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
+                if (MASK_A & (1u16 << i)) != 0 {
+                    a[i] = x.mul_add(2.0, -1.0);
+                }
+
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                let y = ((state >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
+                if (MASK_B & (1u16 << i)) != 0 {
+                    b[i] = y.mul_add(2.0, -1.0);
+                }
+            }
+
+            let mut scalar = [0.0f64; TOTAL_BLADES];
+            let mut dispatch = [0.0f64; TOTAL_BLADES];
+            geometric_product_scalar_sparse(&a, MASK_A, &b, MASK_B, &mut scalar);
+            geometric_product_dispatch_by_mask(&a, MASK_A, &b, MASK_B, &mut dispatch);
+
+            for k in 0..TOTAL_BLADES {
+                assert_eq!(
+                    scalar[k].to_bits(),
+                    dispatch[k].to_bits(),
+                    "Sparse dispatch mismatch at blade {k}: scalar={} dispatch={}",
+                    scalar[k],
+                    dispatch[k]
                 );
             }
         }

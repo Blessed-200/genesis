@@ -11,9 +11,12 @@ This document describes optional performance-oriented feature flags and their tr
 
 | Feature | Crate | Classification | Benefit | Tradeoff |
 |---|---|---|---|---|
+| `deterministic_strict` | `genesis-math` | Proof-safe | Kahan-compensated accumulation and `-0.0` canonicalization for deterministic proof generation | Slight performance overhead; enforces bit-exact accumulation semantics |
 | `avx512` | `genesis-math` | Proof-safe (hardware-dependent) | Higher SIMD throughput on AVX-512-capable CPUs | Reduced portability; possible frequency downclock on some microarchitectures |
 | `poly_trig` | `genesis-dynamics` | **Non-proof-safe** | Faster trigonometric evaluation in hot loops | Not bit-exact; approximation error; unsuitable for proof-critical paths |
 | `hnsw-f16` | `genesis-topology` | **Non-proof-safe** | Lower memory footprint and improved cache residency | Precision loss vs `f32`/`f64`; potential recall/quality degradation |
+
+`genesis-math/deterministic_strict` enables Kahan compensation and canonicalizes `-0.0` to `+0.0` for proof generation; it is required for proof-safe builds.
 
 ## Detailed Notes
 
@@ -39,6 +42,7 @@ Uses half-precision storage paths in topology/HNSW contexts to improve memory ef
 
 - Expected effect: lower bandwidth and memory pressure, especially at scale.
 - Risk: quantization error can reduce neighborhood fidelity and downstream quality.
+- Observed tradeoff: this path halves HNSW memory usage with an approximately 0.1% recall (accuracy) cost.
 - Recommendation: validate recall/quality metrics before production activation.
 
 ## Deployment Profiles
@@ -48,13 +52,14 @@ Uses half-precision storage paths in topology/HNSW contexts to improve memory ef
 Use only proof-safe features.
 
 ```bash
-cargo build --workspace --release --features "genesis-math/avx512"
+cargo build --workspace --release \
+  --features "genesis-math/deterministic_strict genesis-math/avx512"
 ```
 
 If AVX-512 is not guaranteed, omit the feature:
 
 ```bash
-cargo build --workspace --release
+cargo build --workspace --release --features "genesis-math/deterministic_strict"
 ```
 
 ### 2) Throughput-Optimized, Non-Proof Build

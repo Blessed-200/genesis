@@ -35,9 +35,12 @@ RUSTFLAGS="-Cprofile-generate=/tmp/pgo-data" \
   cargo build --workspace --profile release-pgo-gen
 
 # 2) Execute representative workloads (examples)
-# Replace with real binaries and realistic datasets.
-./target/release-pgo-gen/your_binary --scenario production_like_a
-./target/release-pgo-gen/your_binary --scenario production_like_b
+# Workspace-linked examples: use binaries/benches that exist in this repository.
+./target/release-pgo-gen/dynamics --scenario production_like_a
+./target/release-pgo-gen/iai_hotpaths
+
+# Alternative: drive representative integration tests in genesis-dynamics.
+cargo test --package genesis-dynamics --test <integration_test_name> -- --nocapture
 
 # 3) Merge profile artifacts
 llvm-profdata merge -o /tmp/pgo-data/merged.profdata /tmp/pgo-data/*.profraw
