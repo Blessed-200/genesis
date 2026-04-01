@@ -86,7 +86,7 @@ fn bench_iter(c: &mut Criterion) {
             fast.insert(key, idx);
         }
 
-        group.bench_with_input(BenchmarkId::new("siphash_std", size), &size, |b, &_size| {
+        group.bench_with_input(BenchmarkId::new("siphash_std", size), &keys, |b, _keys| {
             b.iter(|| {
                 let mut acc = 0u64;
                 for (&k, &v) in &sip {
@@ -96,7 +96,7 @@ fn bench_iter(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("ahash", size), &size, |b, &_size| {
+        group.bench_with_input(BenchmarkId::new("ahash", size), &keys, |b, _keys| {
             b.iter(|| {
                 let mut acc = 0u64;
                 for (&k, &v) in &fast {
