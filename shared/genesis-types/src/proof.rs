@@ -582,7 +582,8 @@ pub trait Mutation: Send + Sync {
     fn propose(&self) -> Result<Proof, crate::error::GenesisError>;
 
     /// Applies the mutation. REQUIRES token of verification issued by
-    /// [`AxiomGuard::verify_for`] — compile-time guarantee of proof verification.
+    /// [`AxiomGuard::verify_for`] or [`AxiomGuard::verify_for_result`] —
+    /// compile-time guarantee of proof verification via either entry point.
     ///
     /// `where Self: Sized` is required because `VerifiedProof<'_, Self>`
     /// is parameterized over `Self`; trait objects (`dyn Mutation`) do not
