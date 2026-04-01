@@ -24,6 +24,7 @@ smallvec          = { version = "1.13", features = ["const_generics"] }
 arrayvec          = "0.7"
 memoffset     = "0.9"
 iai-callgrind   = "0.14"
+ahash             = "0.8"
 
 [profile.release]
 opt-level     = 3

@@ -1,5 +1,34 @@
 # PLANS
 
+## 1.8 Non-cryptographic hash table migration to ahash (2026-04-01)
+
+### Root cause
+
+- Residual non-cryptographic table lookups still rely on std `HashMap`/`HashSet` defaults, paying SipHash overhead where adversarial resistance is not required.
+- The workspace has no canonical fast-hash alias in `genesis-types`, so migration is inconsistent across crates.
+- Existing `genesis-types` benchmark coverage focuses on cryptographic hashing, not hash-table throughput for `NodeId` indexing.
+
+### File-level actions
+
+1. `Cargo.toml`
+   - Add `ahash = "0.8"` to `[workspace.dependencies]`.
+2. `shared/genesis-types/Cargo.toml` + `shared/genesis-types/src/lib.rs`
+   - Add `ahash` to crate dependencies through workspace wiring.
+   - Re-export `AHashMap`/`AHashSet` and expose `FastHashMap`/`FastHashSet` public aliases.
+3. `core/genesis-dynamics/src/attractor.rs`
+   - Replace `HashMap` usage with `FastHashMap` for attractor bookkeeping.
+4. `core/genesis-topology/src/**/*.rs` (audit)
+   - Migrate any non-test `HashMap`/`HashSet` usages to `FastHashMap`/`FastHashSet` if present.
+5. `shared/genesis-types/benches/hash_bench.rs`
+   - Implement Criterion benchmark suite comparing std SipHash map vs ahash map for `NodeId` insert/lookup/iteration at 10K/100K/1M entries.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-types --bench hash_bench --no-run`
+
 ## 1.7 Compensated and pairwise summation hardening (2026-03-31)
 
 ### Root cause
