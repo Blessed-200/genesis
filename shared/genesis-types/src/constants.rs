@@ -1,4 +1,3 @@
-#![allow(clippy::items_after_test_module)]
 //! # Physical Constants of the GENESIS Cognitive Core
 //!
 //! Every constant defined here is a **physical law** of the system.
@@ -240,147 +239,6 @@ pub const fn validate_constant_ordering() -> bool {
 // TESTS
 // ============================================================================
 
-#[cfg(test)]
-#[allow(clippy::assertions_on_constants)]
-mod tests {
-    use super::*;
-
-    /// AX-ID: AXIOMA-001, AXIOMA-002
-    #[test]
-    fn minkowski_signature_time_positive() {
-        assert!(MINKOWSKI_SIGNATURE[0] > 0.0);
-    }
-
-    /// AX-ID: AXIOMA-001, AXIOMA-002
-    #[test]
-    fn minkowski_signature_space_negative() {
-        // CORRECTION-3: unrolled to avoid needless_range_loop over fixed array.
-        assert!(MINKOWSKI_SIGNATURE[1] < 0.0);
-        assert!(MINKOWSKI_SIGNATURE[2] < 0.0);
-        assert!(MINKOWSKI_SIGNATURE[3] < 0.0);
-    }
-
-    #[test]
-    fn minkowski_signature_exact_values() {
-        assert_eq!(MINKOWSKI_SIGNATURE, [1.0, -1.0, -1.0, -1.0]);
-    }
-
-    #[test]
-    fn cognitive_planck_constant_positive_and_small() {
-        assert!(COGNITIVE_PLANCK_CONSTANT > 0.0);
-        assert!(COGNITIVE_PLANCK_CONSTANT < 1e-6);
-    }
-
-    #[test]
-    fn spatial_basis_mask_covers_bits_1_2_3_only() {
-        // assert_eq!/assert_ne! with format strings are not constifiable.
-        // The mask values are literals — runtime assertions are acceptable here.
-        assert_eq!(
-            SPATIAL_BASIS_MASK & 0b0001,
-            0,
-            "Bit 0 (time) must NOT be spatial"
-        );
-        assert_ne!(SPATIAL_BASIS_MASK & 0b0010, 0, "Bit 1 (e₁) must be spatial");
-        assert_ne!(SPATIAL_BASIS_MASK & 0b0100, 0, "Bit 2 (e₂) must be spatial");
-        assert_ne!(SPATIAL_BASIS_MASK & 0b1000, 0, "Bit 3 (e₃) must be spatial");
-    }
-
-    /// CORRECTION-3: use `.iter().enumerate()` to avoid needless_range_loop.
-    #[test]
-    fn spatial_mask_consistent_with_minkowski_signature() {
-        for (i, &sig) in MINKOWSKI_SIGNATURE.iter().enumerate() {
-            let bit_set = (SPATIAL_BASIS_MASK >> i) & 1 == 1;
-            let is_spatial = sig < 0.0;
-            assert_eq!(
-                bit_set, is_spatial,
-                "Bit {} of SPATIAL_BASIS_MASK inconsistent with MINKOWSKI_SIGNATURE[{}]={}",
-                i, i, sig
-            );
-        }
-    }
-
-    #[test]
-    fn soc_tau_range_biologically_valid() {
-        assert!(SOC_TAU_MIN >= 1.5);
-        assert!(SOC_TAU_MAX <= 2.5);
-        assert!(SOC_TAU_MIN < SOC_TAU_MAX);
-    }
-
-    #[test]
-    fn synchrony_threshold_in_unit_interval() {
-        assert!(SYNCHRONY_COLLAPSE_THRESHOLD > 0.0);
-        assert!(SYNCHRONY_COLLAPSE_THRESHOLD < 1.0);
-    }
-
-    // --- NonZeroUsize windows ---
-
-    /// FISHER_SATIATION_WINDOW is NonZeroUsize — verify raw value via .get().
-    ///
-    /// AX-ID: AXIOMA-008
-    #[test]
-    fn fisher_satiation_window_nonzero_get() {
-        assert_eq!(FISHER_SATIATION_WINDOW.get(), 50);
-    }
-
-    /// SINKHORN_MAX_ITER is NonZeroUsize — verify raw value via .get().
-    ///
-    /// AX-ID: AXIOMA-015
-    #[test]
-    fn sinkhorn_max_iter_nonzero_get() {
-        assert_eq!(SINKHORN_MAX_ITER.get(), 1_000);
-    }
-
-    // --- Sinkhorn ---
-
-    /// Transport convergence precision must be at least as fine as Fisher
-    /// satiation resolution.
-    ///
-    /// AX-ID: AXIOMA-008, AXIOMA-015
-    #[test]
-    fn sinkhorn_convergence_at_most_equal_to_fisher_satiation() {
-        assert!(SINKHORN_CONVERGENCE_EPSILON <= FISHER_SATIATION_EPSILON);
-    }
-
-    #[test]
-    fn sinkhorn_regularisation_positive() {
-        assert!(SINKHORN_REGULARISATION > 0.0);
-    }
-
-    // --- JL delta ---
-
-    /// Basis expansion threshold must exceed the Planck thermal noise floor.
-    ///
-    /// AX-ID: AXIOMA-001, AXIOMA-014
-    #[test]
-    fn jl_residual_delta_above_planck_constant() {
-        assert!(JL_RESIDUAL_EXPANSION_DELTA > COGNITIVE_PLANCK_CONSTANT);
-    }
-
-    // --- Ordering invariants ---
-
-    /// Invariant chain: COGNITIVE_PLANCK_CONSTANT < HEAT_DIFFUSION_CONVERGENCE_EPSILON
-    ///                                             < FISHER_SATIATION_EPSILON
-    ///
-    /// AX-ID: AXIOMA-016, `IMPLEMENTATION_ROADMAP` §4.4
-    #[test]
-    fn heat_diffusion_epsilon_between_planck_and_fisher() {
-        assert!(HEAT_DIFFUSION_CONVERGENCE_EPSILON > COGNITIVE_PLANCK_CONSTANT);
-        assert!(HEAT_DIFFUSION_CONVERGENCE_EPSILON < FISHER_SATIATION_EPSILON);
-    }
-
-    /// Full ordering chain for the audit's const_assert directives.
-    ///
-    /// AX-ID: AXIOMA-001, AXIOMA-008, AXIOMA-014, AXIOMA-015, AXIOMA-016
-    #[test]
-    fn constant_ordering_chain_is_consistent() {
-        assert!(COGNITIVE_PLANCK_CONSTANT < HEAT_DIFFUSION_CONVERGENCE_EPSILON);
-        assert!(HEAT_DIFFUSION_CONVERGENCE_EPSILON < FISHER_SATIATION_EPSILON);
-        assert!(JL_RESIDUAL_EXPANSION_DELTA > COGNITIVE_PLANCK_CONSTANT);
-        assert!(SINKHORN_CONVERGENCE_EPSILON <= FISHER_SATIATION_EPSILON);
-        assert!(validate_constant_ordering());
-    }
-}
-
 // ============================================================================
 // PROOF SYSTEM PARAMETERS (GENESIS_PROOF_SPEC v1.1.0)
 // ============================================================================
@@ -573,3 +431,144 @@ pub const SINKHORN_LOG_EPSILON: f32 = 5e-2_f32;
 ///
 /// AX-ID: AXIOMA-015
 pub const SINKHORN_L1_MAX_ITER: usize = 15;
+
+#[cfg(test)]
+#[allow(clippy::assertions_on_constants)]
+mod tests {
+    use super::*;
+
+    /// AX-ID: AXIOMA-001, AXIOMA-002
+    #[test]
+    fn minkowski_signature_time_positive() {
+        assert!(MINKOWSKI_SIGNATURE[0] > 0.0);
+    }
+
+    /// AX-ID: AXIOMA-001, AXIOMA-002
+    #[test]
+    fn minkowski_signature_space_negative() {
+        // CORRECTION-3: unrolled to avoid needless_range_loop over fixed array.
+        assert!(MINKOWSKI_SIGNATURE[1] < 0.0);
+        assert!(MINKOWSKI_SIGNATURE[2] < 0.0);
+        assert!(MINKOWSKI_SIGNATURE[3] < 0.0);
+    }
+
+    #[test]
+    fn minkowski_signature_exact_values() {
+        assert_eq!(MINKOWSKI_SIGNATURE, [1.0, -1.0, -1.0, -1.0]);
+    }
+
+    #[test]
+    fn cognitive_planck_constant_positive_and_small() {
+        assert!(COGNITIVE_PLANCK_CONSTANT > 0.0);
+        assert!(COGNITIVE_PLANCK_CONSTANT < 1e-6);
+    }
+
+    #[test]
+    fn spatial_basis_mask_covers_bits_1_2_3_only() {
+        // assert_eq!/assert_ne! with format strings are not constifiable.
+        // The mask values are literals — runtime assertions are acceptable here.
+        assert_eq!(
+            SPATIAL_BASIS_MASK & 0b0001,
+            0,
+            "Bit 0 (time) must NOT be spatial"
+        );
+        assert_ne!(SPATIAL_BASIS_MASK & 0b0010, 0, "Bit 1 (e₁) must be spatial");
+        assert_ne!(SPATIAL_BASIS_MASK & 0b0100, 0, "Bit 2 (e₂) must be spatial");
+        assert_ne!(SPATIAL_BASIS_MASK & 0b1000, 0, "Bit 3 (e₃) must be spatial");
+    }
+
+    /// CORRECTION-3: use `.iter().enumerate()` to avoid needless_range_loop.
+    #[test]
+    fn spatial_mask_consistent_with_minkowski_signature() {
+        for (i, &sig) in MINKOWSKI_SIGNATURE.iter().enumerate() {
+            let bit_set = (SPATIAL_BASIS_MASK >> i) & 1 == 1;
+            let is_spatial = sig < 0.0;
+            assert_eq!(
+                bit_set, is_spatial,
+                "Bit {} of SPATIAL_BASIS_MASK inconsistent with MINKOWSKI_SIGNATURE[{}]={}",
+                i, i, sig
+            );
+        }
+    }
+
+    #[test]
+    fn soc_tau_range_biologically_valid() {
+        assert!(SOC_TAU_MIN >= 1.5);
+        assert!(SOC_TAU_MAX <= 2.5);
+        assert!(SOC_TAU_MIN < SOC_TAU_MAX);
+    }
+
+    #[test]
+    fn synchrony_threshold_in_unit_interval() {
+        assert!(SYNCHRONY_COLLAPSE_THRESHOLD > 0.0);
+        assert!(SYNCHRONY_COLLAPSE_THRESHOLD < 1.0);
+    }
+
+    // --- NonZeroUsize windows ---
+
+    /// FISHER_SATIATION_WINDOW is NonZeroUsize — verify raw value via .get().
+    ///
+    /// AX-ID: AXIOMA-008
+    #[test]
+    fn fisher_satiation_window_nonzero_get() {
+        assert_eq!(FISHER_SATIATION_WINDOW.get(), 50);
+    }
+
+    /// SINKHORN_MAX_ITER is NonZeroUsize — verify raw value via .get().
+    ///
+    /// AX-ID: AXIOMA-015
+    #[test]
+    fn sinkhorn_max_iter_nonzero_get() {
+        assert_eq!(SINKHORN_MAX_ITER.get(), 1_000);
+    }
+
+    // --- Sinkhorn ---
+
+    /// Transport convergence precision must be at least as fine as Fisher
+    /// satiation resolution.
+    ///
+    /// AX-ID: AXIOMA-008, AXIOMA-015
+    #[test]
+    fn sinkhorn_convergence_at_most_equal_to_fisher_satiation() {
+        assert!(SINKHORN_CONVERGENCE_EPSILON <= FISHER_SATIATION_EPSILON);
+    }
+
+    #[test]
+    fn sinkhorn_regularisation_positive() {
+        assert!(SINKHORN_REGULARISATION > 0.0);
+    }
+
+    // --- JL delta ---
+
+    /// Basis expansion threshold must exceed the Planck thermal noise floor.
+    ///
+    /// AX-ID: AXIOMA-001, AXIOMA-014
+    #[test]
+    fn jl_residual_delta_above_planck_constant() {
+        assert!(JL_RESIDUAL_EXPANSION_DELTA > COGNITIVE_PLANCK_CONSTANT);
+    }
+
+    // --- Ordering invariants ---
+
+    /// Invariant chain: COGNITIVE_PLANCK_CONSTANT < HEAT_DIFFUSION_CONVERGENCE_EPSILON
+    ///                                             < FISHER_SATIATION_EPSILON
+    ///
+    /// AX-ID: AXIOMA-016, `IMPLEMENTATION_ROADMAP` §4.4
+    #[test]
+    fn heat_diffusion_epsilon_between_planck_and_fisher() {
+        assert!(HEAT_DIFFUSION_CONVERGENCE_EPSILON > COGNITIVE_PLANCK_CONSTANT);
+        assert!(HEAT_DIFFUSION_CONVERGENCE_EPSILON < FISHER_SATIATION_EPSILON);
+    }
+
+    /// Full ordering chain for the audit's const_assert directives.
+    ///
+    /// AX-ID: AXIOMA-001, AXIOMA-008, AXIOMA-014, AXIOMA-015, AXIOMA-016
+    #[test]
+    fn constant_ordering_chain_is_consistent() {
+        assert!(COGNITIVE_PLANCK_CONSTANT < HEAT_DIFFUSION_CONVERGENCE_EPSILON);
+        assert!(HEAT_DIFFUSION_CONVERGENCE_EPSILON < FISHER_SATIATION_EPSILON);
+        assert!(JL_RESIDUAL_EXPANSION_DELTA > COGNITIVE_PLANCK_CONSTANT);
+        assert!(SINKHORN_CONVERGENCE_EPSILON <= FISHER_SATIATION_EPSILON);
+        assert!(validate_constant_ordering());
+    }
+}

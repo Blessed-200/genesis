@@ -3523,7 +3523,9 @@ mod scaling_tests {
             for i in 0..n {
                 let id = NodeId::try_new(i as u64).unwrap();
                 let v = make_scaling_vec(i as u64 * 31337);
-                let _ = graph.insert(id, &v);
+                graph.insert(id, &v).unwrap_or_else(|_| {
+                    panic!("insert failed in scaling benchmark for id={}", id.get())
+                });
             }
             let query = make_scaling_vec(999_999);
             let start = std::time::Instant::now();
@@ -3677,7 +3679,18 @@ mod scaling_tests {
             max_seen_len = final_seen_len;
         }
 
-        // Assert we never exceeded the budget
+        // Assert we exercised the exact worst-case budget boundary.
+        assert_eq!(
+            neighbors.len(),
+            MAX_UNIQUE_NEIGHBOR_BUDGET,
+            "Fixture must emit exactly MAX_UNIQUE_NEIGHBOR_BUDGET unique neighbors"
+        );
+        assert_eq!(
+            max_seen_len, MAX_UNIQUE_NEIGHBOR_BUDGET,
+            "Seen set must hit the exact inline budget boundary"
+        );
+
+        // Assert we never exceeded the budget.
         assert!(
             max_seen_len <= MAX_UNIQUE_NEIGHBOR_BUDGET,
             "SmallVec spilled! max_seen_len={}, budget={}. \
@@ -3687,12 +3700,6 @@ mod scaling_tests {
             M,
             M0,
             MAX_LAYERS
-        );
-
-        // Also verify we actually tested a meaningful case
-        assert!(
-            neighbors.len() > 0,
-            "Test is trivial: no neighbors were emitted"
         );
 
         // Verify the SmallVec never allocated on the heap by checking spilled() method

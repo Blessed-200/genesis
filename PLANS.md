@@ -26,7 +26,7 @@
 
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `! cargo check --workspace 2>&1 | grep "^warning:"`
 - `cargo bench -p genesis-types --bench hash_bench --no-run`
 
 ## 1.7 Compensated and pairwise summation hardening (2026-03-31)
@@ -56,7 +56,7 @@
 - `cargo test --release -p genesis-topology -- invariant --nocapture`
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `! cargo check --workspace 2>&1 | grep "^warning:"`
 
 ## 1.6 Repository professionalization phase (2026-03-30)
 
@@ -1428,7 +1428,7 @@ Remaining risk:
 - `cargo fmt --all -- --check`
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `! cargo check --workspace 2>&1 | grep "^warning:"`
 
 ## 1.10 Address review findings for HNSW scaling tests and AVX-512 test visibility (2026-04-02)
 
@@ -1457,5 +1457,5 @@ Remaining risk:
 - `cargo fmt --all -- --check`
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:" || true`
+- `! cargo check --workspace 2>&1 | grep "^warning:"`
 - `scripts/check_english_only.sh`
