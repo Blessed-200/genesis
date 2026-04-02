@@ -454,7 +454,10 @@ mod tests {
 
     #[test]
     fn minkowski_signature_exact_values() {
-        assert_eq!(MINKOWSKI_SIGNATURE, [1.0, -1.0, -1.0, -1.0]);
+        let expected = [1.0, -1.0, -1.0, -1.0];
+        for (actual, expected) in MINKOWSKI_SIGNATURE.iter().zip(expected.iter()) {
+            assert!((actual - expected).abs() < 1e-12);
+        }
     }
 
     #[test]

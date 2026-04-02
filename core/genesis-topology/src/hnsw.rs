@@ -514,6 +514,7 @@ pub(crate) const M: usize = 16;
 /// `pub(crate)` for manifold.rs stack-allocated neighbour buffers (BN-02).
 pub(crate) const M0: usize = M * 2;
 pub(crate) const MAX_UNIQUE_NEIGHBOR_BUDGET: usize = M0 + (MAX_LAYERS - 1) * M;
+const _: () = assert!(M0 <= genesis_types::constants::SINKHORN_MAX_LOCAL_DEGREE);
 
 /// Per-node adjacency storage for one HNSW layer set.
 ///
@@ -856,10 +857,10 @@ pub fn fast_metric_distance_f16(stored: &[u16; 16], query: &SparseCliffordVector
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 pub fn fast_metric_distance_f16_sq(stored: &[u16; 16], query: &SparseCliffordVector) -> f64 {
     // ARCHITECTURAL NOTE:
-    // It usa compile-time dispatch instead of runtime dispatch for avoid
+    // It uses compile-time dispatch instead of runtime dispatch to avoid
     // loss of inlining and `vzeroupper` penalties in the hot loop.
-    // En x86_64, compilar with RUSTFLAGS="-C target-cpu=native" for activer AVX2.
-    // Target primario: Genesis Edge (ARM + NEON).
+    // On x86_64, compile with RUSTFLAGS="-C target-cpu=native" to activate AVX2.
+    // Primary target: Genesis Edge (ARM + NEON).
     let mut decompressed = [0.0_f64; 16];
 
     #[cfg(all(
@@ -926,8 +927,8 @@ pub struct HnswGraph {
     entry_layer: usize,
     /// `ef_construction` parameter.
     ef_construction: usize,
-    /// Mapa directo `NodeId.get()` → `internal_idx` when `NodeIds` are consecutivos.
-    /// Dynamic layercity: expands when inserting `NodeIds` mayores.
+    /// Direct map `NodeId.get()` → `internal_idx` when `NodeIds` are consecutive.
+    /// Dynamic capacity: expands when inserting larger `NodeIds`.
     direct_index: Vec<u32>, // u32::MAX = no presente
     /// Secondary index state `id_index`.
     state: GraphState,
@@ -1133,7 +1134,7 @@ impl HnswGraph {
     /// Lookup internal index by `NodeId`. O(1) average with direct index, fallback O(log N).
     fn idx(&self, id: NodeId) -> Option<usize> {
         // Contract CRATE-002: NodeIds are consecutive from 0. N < 2^32 in any
-        // GENESIS deployment (physical memory limit). u64 → usize is seguro.
+        // GENESIS deployment (physical memory limit). u64 → usize is safe.
         #[allow(clippy::cast_possible_truncation)]
         let raw = id.get() as usize;
         if raw < self.direct_index.len() {
@@ -1184,7 +1185,7 @@ impl HnswGraph {
             .get()
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1_442_695_040_888_963_407);
-        // uniform u in (0, 1): usa 53 bits and shifts by half an ULP to avoid exact 0.
+        // Uniform u in (0, 1): uses 53 bits and shifts by half an ULP to avoid exact 0.
         // x >> 11 ∈ [0, 2^53). Conversions are exact in f64 for 53 bits.
         #[allow(clippy::cast_precision_loss)]
         let mut u = (((x >> 11) as f64) + 0.5) * (1.0 / ((1_u64 << 53) as f64));
@@ -2063,7 +2064,7 @@ mod tests {
     }
 
     fn make_id(v: u64) -> NodeId {
-        NodeId::try_new(v).expect("NodeId válido por construcción")
+        NodeId::try_new(v).expect("NodeId valid by construction")
     }
 
     fn expected_keep_and_drop(
@@ -2402,7 +2403,7 @@ mod tests {
     #[test]
     fn hnsw_insert_duplicate_id_is_idempotent() {
         let mut g = HnswGraph::new(16);
-        let id = NodeId::try_new(7).expect("NodeId válido por construcción");
+        let id = NodeId::try_new(7).expect("NodeId valid by construction");
         let first = make_vec(0.8);
         let second = make_vec(1.9);
 
@@ -2462,7 +2463,7 @@ mod tests {
             .unwrap();
             vecs.push(v);
             g.insert(
-                NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+                NodeId::try_new(i as u64).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2568,7 +2569,7 @@ mod tests {
             let v = SparseCliffordVector::from_iter((0..4).map(|b| (b, coeff * (b as f64 + 1.0))))
                 .unwrap();
             g.insert(
-                NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+                NodeId::try_new(i as u64).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2596,7 +2597,7 @@ mod tests {
         for i in 0..n {
             let v = make_vec((i as f64).mul_add(0.01, 0.1));
             g.insert(
-                NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+                NodeId::try_new(i as u64).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2621,14 +2622,8 @@ mod tests {
         #[allow(clippy::cast_precision_loss)]
         let p1 = level_1 as f64 / n as f64;
 
-        assert!(
-            (0.90..=0.97).contains(&p0),
-            "P(level=0) fuera de rango: {p0}"
-        );
-        assert!(
-            (0.03..=0.08).contains(&p1),
-            "P(level=1) fuera de rango: {p1}"
-        );
+        assert!((0.90..=0.97).contains(&p0), "P(level=0) out of range: {p0}");
+        assert!((0.03..=0.08).contains(&p1), "P(level=1) out of range: {p1}");
 
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let expected_max = (10_000_f64).log(16_f64).floor() as usize;
@@ -2647,7 +2642,7 @@ mod tests {
         for i in 0..n {
             let v = make_vec((i as f64).mul_add(0.05, 0.1));
             g.insert(
-                NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+                NodeId::try_new(i as u64).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2671,7 +2666,7 @@ mod tests {
         for i in 0..20u64 {
             let v = make_vec((i as f64).mul_add(0.1, 0.1));
             g.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2696,7 +2691,7 @@ mod tests {
         for i in 0..50u64 {
             let v = make_vec((i as f64).mul_add(0.05, 0.1));
             g.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2777,7 +2772,7 @@ mod tests {
         for i in 0..50u64 {
             let v = make_vec((i as f64).mul_add(0.05, 0.1));
             g.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2806,7 +2801,7 @@ mod tests {
             )
             .unwrap();
             g.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2963,7 +2958,7 @@ mod tests {
         let mut g = HnswGraph::new(16);
         let v0 = make_vec(0.4);
         g.insert(
-            NodeId::try_new(0).expect("NodeId válido por construcción"),
+            NodeId::try_new(0).expect("NodeId valid by construction"),
             &v0,
         )
         .unwrap();
@@ -2972,7 +2967,7 @@ mod tests {
         let v1 = make_vec(0.5);
         let err = g
             .insert(
-                NodeId::try_new(1).expect("NodeId válido por construcción"),
+                NodeId::try_new(1).expect("NodeId valid by construction"),
                 &v1,
             )
             .unwrap_err();
@@ -2988,7 +2983,7 @@ mod tests {
         for i in [5_u64, 2, 9, 1, 7] {
             let v = make_vec((i as f64).mul_add(0.1, 0.2));
             g.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -3002,11 +2997,11 @@ mod tests {
 
         for id in [1_u64, 2, 5, 7, 9] {
             assert!(g
-                .idx(NodeId::try_new(id).expect("NodeId válido por construcción"))
+                .idx(NodeId::try_new(id).expect("NodeId valid by construction"))
                 .is_some());
         }
         assert!(g
-            .idx(NodeId::try_new(3).expect("NodeId válido por construcción"))
+            .idx(NodeId::try_new(3).expect("NodeId valid by construction"))
             .is_none());
     }
     #[cfg(feature = "hnsw-f16")]
@@ -3603,9 +3598,17 @@ mod scaling_tests {
         graph.layer_neighbors[central_idx].clear_layer(0);
         graph.layer_neighbors[central_idx].upper =
             Some(vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1].into_boxed_slice());
+        for neighbor_idx in 1..=num_neighbors {
+            graph.layer_neighbors[neighbor_idx].clear_layer(0);
+            graph.layer_neighbors[neighbor_idx].upper =
+                Some(vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1].into_boxed_slice());
+            graph.nodes[neighbor_idx].max_layer = 0;
+        }
 
         // Manually populate adjacency lists to create worst-case scenario
         // Layer 0: M0 neighbors
+        let central_internal_idx = central_idx as u32;
+        let central_slab_idx = graph.layer0_soa.node_to_slab[central_idx];
         for i in 1..=M0 {
             let neighbor_idx = i as u32;
             let slab_idx = graph.layer0_soa.node_to_slab[neighbor_idx as usize];
@@ -3614,6 +3617,16 @@ mod scaling_tests {
             assert!(
                 inserted,
                 "fixture insertion failed for layer0 neighbor={neighbor_idx}"
+            );
+            let reverse_inserted = graph.layer_neighbors[neighbor_idx as usize].add_neighbor(
+                0,
+                central_internal_idx,
+                central_slab_idx,
+                M0,
+            );
+            assert!(
+                reverse_inserted,
+                "fixture reverse insertion failed for layer0 neighbor={neighbor_idx}"
             );
         }
 
@@ -3634,6 +3647,18 @@ mod scaling_tests {
                     assert!(
                         inserted,
                         "fixture insertion failed for upper layer={} neighbor={neighbor_idx}",
+                        layer_idx + 1
+                    );
+                    let neighbor_internal_idx = neighbor_idx as usize;
+                    graph.nodes[neighbor_internal_idx].max_layer = graph.nodes
+                        [neighbor_internal_idx]
+                        .max_layer
+                        .max(layer_idx + 1);
+                    let reverse_inserted = graph.layer_neighbors[neighbor_internal_idx]
+                        .add_neighbor(layer_idx + 1, central_internal_idx, central_slab_idx, M);
+                    assert!(
+                        reverse_inserted,
+                        "fixture reverse insertion failed for upper layer={} neighbor={neighbor_idx}",
                         layer_idx + 1
                     );
                 }
