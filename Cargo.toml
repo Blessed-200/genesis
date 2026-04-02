@@ -31,14 +31,13 @@ opt-level     = 3
 lto           = "fat"
 codegen-units = 1
 panic         = "abort"
+strip         = "symbols"
 
 
 [profile.release-pgo-gen]
+# Builds instrumented binaries that emit `.profraw` data for PGO training runs.
 inherits = "release"
-codegen-units = 1
-lto = "fat"
 
 [profile.release-pgo-use]
+# Consumes merged profile data (`.profdata`) to optimize production release binaries.
 inherits = "release"
-codegen-units = 1
-lto = "fat"

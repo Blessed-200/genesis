@@ -418,9 +418,22 @@ Every unsafe block must include:
 
 // SAFETY: explanation of why this is valid
 
+## Error Response Philosophy
+
+Every error, whether reported by a user or discovered at runtime, is an opportunity to elevate the codebase to pinnacle quality.
+
+Always resolve the root cause; never apply cosmetic patches that leave structural defects in place.
+
+A completed fix must embody best practices so thoroughly that no further corrective suggestions are necessary.
+
+Corrections must be comprehensive: modern Rust idioms, optimal algorithmic and data-layout choices, clean formatting, and complete technical documentation.
+
+Validation is mandatory: correctness, performance implications, and maintainability must all improve together.
+
+The target is inevitable optimality: the best achievable solution under current language capabilities, hardware constraints, and industry standards.
 
 
-*GÉNESIS Cognitive Core | AGENTS.md v4.0.0 | 384 tests, 0 failures*
+*GÉNESIS Cognitive Core | AGENTS.md v4.1.0 | 384 tests, 0 failures*
 
 ## Documentation Language Integrity (CRITICAL RULE)
 

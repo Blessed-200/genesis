@@ -747,7 +747,8 @@ pub fn bivector_norm_sq_of_product(
             let k = i ^ j;
             let lane = BIVECTOR_LANE_MAP[k];
             if lane >= 0 {
-                bivector_buf[lane as usize] = coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
+                bivector_buf[lane as usize] =
+                    coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
             }
             mask_b &= mask_b - 1;
         }
@@ -825,7 +826,8 @@ pub fn bivector_norm_sq_of_product_lhs_dense(
             let k = i ^ j;
             let lane = BIVECTOR_LANE_MAP[k];
             if lane >= 0 {
-                bivector_buf[lane as usize] = coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
+                bivector_buf[lane as usize] =
+                    coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
             }
             mask_b &= mask_b - 1;
         }
@@ -1421,6 +1423,10 @@ mod simd_equivalence_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "product/arch_specific_tests.rs"]
+mod arch_specific_tests;
 
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(all(test, feature = "properties"))]
