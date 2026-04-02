@@ -1,36 +1,24 @@
-# This config was automatically generated from your source code
-# Stacks detected: cicd:github-actions:.github/workflows,deps:rust:.
 version: 2.1
+
 jobs:
-  test-rust:
+  build:
     docker:
-      - image: cimg/rust:1.70
+      - image: cimg/base:2023.11
+    parallelism: 4
+    resource_class: large
     steps:
       - checkout
-      - restore_cache:
-          key: cargo-{{ checksum "Cargo.lock" }}
       - run:
-          command: cargo test
-      - save_cache:
-          key: cargo-{{ checksum "Cargo.lock" }}
-          paths:
-            - ~/.cargo
-  deploy:
-    # This is an example deploy job, not actually used by the workflow
-    docker:
-      - image: cimg/base:stable
-    steps:
-      # Replace this with steps to deploy to users
-      - run:
-          name: deploy
-          command: '#e.g. ./deploy.sh'
-      - run:
-          name: found github actions config
-          command: ':'
+          command: |
+            mkdir test-results
+            pnpm run serve &
+            TESTFILES=$(circleci tests glob "specs/e2e/**/*.spec.ts")
+            echo "$TESTFILES" | circleci tests run --command="xargs pnpm playwright test --config=playwright.config.ci.ts --reporter=junit" --verbose --split-by=timings
+      - store_test_results:
+          path: test-results
+
 workflows:
-  build-and-test:
+  version: 2
+  build_and_test:
     jobs:
-      - test-rust
-    # - deploy:
-    #     requires:
-    #       - test-rust
+      - build
