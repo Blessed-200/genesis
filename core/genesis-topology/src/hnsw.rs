@@ -100,9 +100,7 @@ impl<T: Default> Default for CachePadded<T> {
 
 impl<T> CachePadded<T> {
     fn new(value: T) -> Self {
-        Self {
-            value,
-        }
+        Self { value }
     }
 }
 
@@ -3638,10 +3636,12 @@ mod scaling_tests {
         };
 
         let mut max_seen_len = 0;
-        let neighbors: Vec<_> = iter.inspect(|_| {
-            // Access the iterator's internal state via a fresh iteration
-            // (We can't access `iter.seen` directly during iteration)
-        }).collect();
+        let neighbors: Vec<_> = iter
+            .inspect(|_| {
+                // Access the iterator's internal state via a fresh iteration
+                // (We can't access `iter.seen` directly during iteration)
+            })
+            .collect();
 
         // Re-create the iterator to check final state
         let mut iter = NeighborIter {
