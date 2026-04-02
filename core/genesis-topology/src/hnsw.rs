@@ -3494,28 +3494,15 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "hnsw_scaling_test_support.rs"]
+mod scaling_test_support;
+
+#[cfg(test)]
 mod scaling_tests {
-    use genesis_math::SparseCliffordVector;
     use genesis_types::NodeId;
 
+    use super::scaling_test_support::{make_neighbor_vec, make_scaling_vec};
     use super::*;
-
-    #[inline]
-    fn make_scaling_vec(seed: u64) -> SparseCliffordVector {
-        let mut coeffs = [0.0f64; 16];
-        let mut rng = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-        for c in &mut coeffs {
-            rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-            *c = ((rng >> 33) as f64 / u32::MAX as f64).mul_add(2.0, -1.0);
-        }
-        SparseCliffordVector::from_dense(&coeffs).unwrap_or_else(|_| SparseCliffordVector::zero())
-    }
-
-    #[inline]
-    fn make_neighbor_vec(coeff: f64) -> SparseCliffordVector {
-        SparseCliffordVector::from_iter((0..4).map(|i| (i, coeff * (i as f64 + 1.0) * 0.1)))
-            .unwrap_or_else(|_| SparseCliffordVector::zero())
-    }
 
     /// Empirically verify HNSW search scales as O(log N) not O(N).
     ///
@@ -3610,24 +3597,43 @@ mod scaling_tests {
             graph.insert(neighbor_id, &neighbor_vec).unwrap();
         }
 
+        // Reset central adjacency so this fixture remains fully controlled.
+        graph.layer_neighbors[central_idx].clear_layer(0);
+        graph.layer_neighbors[central_idx].upper =
+            Some(vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1].into_boxed_slice());
+
         // Manually populate adjacency lists to create worst-case scenario
         // Layer 0: M0 neighbors
         for i in 1..=M0 {
             let neighbor_idx = i as u32;
-            let packed = NodeAdj::pack_layer0(neighbor_idx, 0);
-            graph.layer_neighbors[central_idx].layer0.push(packed);
+            let slab_idx = graph.layer0_soa.node_to_slab[neighbor_idx as usize];
+            let inserted =
+                graph.layer_neighbors[central_idx].add_neighbor(0, neighbor_idx, slab_idx, M0);
+            assert!(
+                inserted,
+                "fixture insertion failed for layer0 neighbor={neighbor_idx}"
+            );
         }
 
         // Upper layers: M neighbors each
-        if let Some(ref mut upper) = graph.layer_neighbors[central_idx].upper {
-            for layer_idx in 0..(MAX_LAYERS - 1) {
-                for i in 0..M {
-                    // Use unique neighbor IDs across layers to maximize deduplication work
-                    let neighbor_offset = M0 + layer_idx * M + i;
-                    if neighbor_offset < num_neighbors {
-                        let neighbor_idx = (neighbor_offset + 1) as u32;
-                        upper[layer_idx].push(neighbor_idx);
-                    }
+        for layer_idx in 0..(MAX_LAYERS - 1) {
+            for i in 0..M {
+                // Use unique neighbor IDs across layers to maximize deduplication work
+                let neighbor_offset = M0 + layer_idx * M + i;
+                if neighbor_offset < num_neighbors {
+                    let neighbor_idx = (neighbor_offset + 1) as u32;
+                    let slab_idx = graph.layer0_soa.node_to_slab[neighbor_idx as usize];
+                    let inserted = graph.layer_neighbors[central_idx].add_neighbor(
+                        layer_idx + 1,
+                        neighbor_idx,
+                        slab_idx,
+                        M,
+                    );
+                    assert!(
+                        inserted,
+                        "fixture insertion failed for upper layer={} neighbor={neighbor_idx}",
+                        layer_idx + 1
+                    );
                 }
             }
         }

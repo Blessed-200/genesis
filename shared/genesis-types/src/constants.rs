@@ -108,7 +108,6 @@ pub const FISHER_SATIATION_EPSILON: f64 = 1e-6;
 // SAFETY: 50 is a non-zero literal. NonZeroUsize::new(50).unwrap() is the const-safe
 // equivalent but Option::unwrap() is not yet stable as a const fn on our MSRV (Rust 1.75).
 // When MSRV >= 1.83, replace with: NonZeroUsize::new(50).unwrap()
-// SAFETY: 50 is non-zero; new_unchecked avoids const-unstable Option::unwrap on MSRV 1.75.
 #[allow(clippy::useless_nonzero_new_unchecked)]
 pub const FISHER_SATIATION_WINDOW: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(50) };
 

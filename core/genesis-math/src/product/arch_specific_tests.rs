@@ -7,6 +7,13 @@ pub(super) use super::{
     feature = "avx512",
     not(feature = "deterministic_strict")
 ))]
+pub(super) use super::geometric_product_scalar_dense;
+
+#[cfg(all(
+    target_arch = "x86_64",
+    feature = "avx512",
+    not(feature = "deterministic_strict")
+))]
 pub(super) use super::geometric_product_x86_avx512_dense;
 
 #[cfg(all(

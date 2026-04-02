@@ -1429,3 +1429,33 @@ Remaining risk:
 - `cargo check --workspace`
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.10 Address review findings for HNSW scaling tests and AVX-512 test visibility (2026-04-02)
+
+### Root cause
+
+- `geometric_product_scalar_dense` visibility was reduced in test re-exports, breaking AVX-512 test import expectations.
+- The HNSW worst-case neighbor fixture used packed inserts that bypassed adjacency invariants (`layer0_groups`) and could generate invalid fixture state.
+- Scaling test helper generation masked constructor failures and used suboptimal bit extraction.
+- `FISHER_SATIATION_WINDOW` retained duplicate SAFETY commentary.
+
+### File-level actions
+
+1. `core/genesis-math/src/product/arch_specific_tests.rs`
+   - Restore AVX-512 gated re-export for `geometric_product_scalar_dense` while avoiding non-AVX warnings.
+2. `core/genesis-topology/src/hnsw.rs`
+   - Route fixture adjacency construction through `NodeAdj::add_neighbor` using real slab indices.
+   - Reset controlled fixture adjacency before injecting worst-case neighbors.
+3. `core/genesis-topology/src/hnsw_scaling_test_support.rs`
+   - Move scaling helper generators into a test-support file.
+   - Use 32-bit extraction (`rng >> 32`) and fail-fast constructor handling with explicit panic context.
+4. `shared/genesis-types/src/constants.rs`
+   - Remove duplicated SAFETY comment for `FISHER_SATIATION_WINDOW`.
+
+### Validation
+
+- `cargo fmt --all -- --check`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:" || true`
+- `scripts/check_english_only.sh`
