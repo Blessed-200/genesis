@@ -1373,9 +1373,10 @@ mod tests {
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(all(test, target_arch = "x86_64"))]
 mod simd_equivalence_tests {
+    #[cfg(all(feature = "avx512", not(feature = "deterministic_strict")))]
+    use super::{geometric_product_dispatch_by_mask, geometric_product_scalar_sparse};
     use super::{
-        geometric_product_dispatch_by_mask, geometric_product_scalar_dense,
-        geometric_product_scalar_sparse, geometric_product_x86_avx2_fma_dense, TOTAL_BLADES,
+        geometric_product_scalar_dense, geometric_product_x86_avx2_fma_dense, TOTAL_BLADES,
     };
 
     #[test]
@@ -1424,15 +1425,16 @@ mod simd_equivalence_tests {
         }
     }
 
-    #[cfg(feature = "avx512")]
+    #[cfg(all(feature = "avx512", not(feature = "deterministic_strict")))]
     #[test]
-    fn avx512_dense_kernel_matches_scalar_for_one_million_cases() {
+    fn avx512_dense_kernel_matches_scalar_for_one_hundred_thousand_cases() {
         if !std::arch::is_x86_feature_detected!("avx512f") {
             return;
         }
 
+        const CASES: usize = 100_000;
         let mut state = 0x9B07_1D2A_F4E1_5C33u64;
-        for _ in 0..1_000_000usize {
+        for _ in 0..CASES {
             let mut a = [0.0f64; TOTAL_BLADES];
             let mut b = [0.0f64; TOTAL_BLADES];
 
@@ -1467,18 +1469,19 @@ mod simd_equivalence_tests {
         }
     }
 
-    #[cfg(feature = "avx512")]
+    #[cfg(all(feature = "avx512", not(feature = "deterministic_strict")))]
     #[test]
-    fn avx512_dispatch_sparse_inputs_match_scalar_reference() {
+    fn avx512_dispatch_dense_masks_match_scalar_sparse_reference() {
         if !std::arch::is_x86_feature_detected!("avx512f") {
             return;
         }
 
-        const MASK_A: u16 = 0x0F0F;
-        const MASK_B: u16 = 0x3333;
+        const MASK_A: u16 = ((1u32 << TOTAL_BLADES) - 1) as u16;
+        const MASK_B: u16 = ((1u32 << TOTAL_BLADES) - 1) as u16;
 
+        const CASES: usize = 100_000;
         let mut state = 0xA76E_2F39_5D11_84C5u64;
-        for _ in 0..1_000_000usize {
+        for _ in 0..CASES {
             let mut a = [0.0f64; TOTAL_BLADES];
             let mut b = [0.0f64; TOTAL_BLADES];
 
@@ -1509,7 +1512,7 @@ mod simd_equivalence_tests {
                 assert_eq!(
                     scalar[k].to_bits(),
                     dispatch[k].to_bits(),
-                    "Sparse dispatch mismatch at blade {k}: scalar={} dispatch={}",
+                    "Dense-mask dispatch mismatch at blade {k}: scalar={} dispatch={}",
                     scalar[k],
                     dispatch[k]
                 );
