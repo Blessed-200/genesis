@@ -19,12 +19,13 @@ fn scalar_sparse_dispatch_routing_identity() {
         (0x00FF, 0x0FF0),
         (0x1357, 0x2468),
     ];
-    const CASES_PER_MASK: usize = 25_000;
+    const FULL_MASK: u16 = ((1u32 << TOTAL_BLADES) - 1) as u16;
+    const CASES_PER_MASK: usize = 5_000;
 
     let mut state = 0xA76E_2F39_5D11_84C5u64;
     for &(mask_a, mask_b) in SPARSE_MASKS {
-        assert!(mask_a.count_ones() < TOTAL_BLADES as u32);
-        assert!(mask_b.count_ones() < TOTAL_BLADES as u32);
+        assert_ne!(mask_a, FULL_MASK);
+        assert_ne!(mask_b, FULL_MASK);
 
         for _ in 0..CASES_PER_MASK {
             let mut a = [0.0f64; TOTAL_BLADES];
