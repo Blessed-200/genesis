@@ -1433,6 +1433,10 @@ mod simd_equivalence_tests {
 #[path = "product/avx512_tests.rs"]
 mod avx512_tests;
 
+#[cfg(test)]
+#[path = "product/scalar_dispatch_tests.rs"]
+mod scalar_dispatch_tests;
+
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(all(test, feature = "properties"))]
 #[allow(clippy::needless_range_loop)]
