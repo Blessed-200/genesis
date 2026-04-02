@@ -1424,18 +1424,9 @@ mod simd_equivalence_tests {
     }
 }
 
-#[cfg(all(
-    test,
-    target_arch = "x86_64",
-    feature = "avx512",
-    not(feature = "deterministic_strict")
-))]
-#[path = "product/avx512_tests.rs"]
-mod avx512_tests;
-
 #[cfg(test)]
-#[path = "product/scalar_dispatch_tests.rs"]
-mod scalar_dispatch_tests;
+#[path = "product/arch_specific_tests.rs"]
+mod arch_specific_tests;
 
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(all(test, feature = "properties"))]

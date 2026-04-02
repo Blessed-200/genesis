@@ -1,11 +1,12 @@
 use super::{geometric_product_dispatch_by_mask, geometric_product_scalar_sparse, TOTAL_BLADES};
 
 #[inline]
-fn next_unit(state: &mut u64) -> f64 {
-    *state = state
+fn next_unit(state: u64) -> (u64, f64) {
+    let next = state
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
-    ((*state >> 11) as f64) * (1.0 / ((1u64 << 53) as f64))
+    let unit = ((next >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
+    (next, unit)
 }
 
 #[test]
@@ -32,12 +33,16 @@ fn scalar_sparse_dispatch_routing_identity() {
             let mut b = [0.0f64; TOTAL_BLADES];
 
             for i in 0..TOTAL_BLADES {
-                let x = next_unit(&mut state).mul_add(2.0, -1.0);
+                let (next_a, unit_a) = next_unit(state);
+                state = next_a;
+                let x = unit_a.mul_add(2.0, -1.0);
                 if (mask_a & (1u16 << i)) != 0 {
                     a[i] = x;
                 }
 
-                let y = next_unit(&mut state).mul_add(2.0, -1.0);
+                let (next_b, unit_b) = next_unit(state);
+                state = next_b;
+                let y = unit_b.mul_add(2.0, -1.0);
                 if (mask_b & (1u16 << i)) != 0 {
                     b[i] = y;
                 }

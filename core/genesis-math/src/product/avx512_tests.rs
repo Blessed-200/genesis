@@ -1,11 +1,12 @@
 use super::{geometric_product_scalar_dense, geometric_product_x86_avx512_dense, TOTAL_BLADES};
 
 #[inline]
-fn next_unit(state: &mut u64) -> f64 {
-    *state = state
+fn next_unit(state: u64) -> (u64, f64) {
+    let next = state
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
-    ((*state >> 11) as f64) * (1.0 / ((1u64 << 53) as f64))
+    let unit = ((next >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
+    (next, unit)
 }
 
 #[test]
@@ -22,8 +23,13 @@ fn avx512_dense_kernel_matches_scalar_for_one_hundred_thousand_cases() {
         let mut b = [0.0f64; TOTAL_BLADES];
 
         for i in 0..TOTAL_BLADES {
-            a[i] = next_unit(&mut state).mul_add(2.0, -1.0);
-            b[i] = next_unit(&mut state).mul_add(2.0, -1.0);
+            let (next_a, unit_a) = next_unit(state);
+            state = next_a;
+            a[i] = unit_a.mul_add(2.0, -1.0);
+
+            let (next_b, unit_b) = next_unit(state);
+            state = next_b;
+            b[i] = unit_b.mul_add(2.0, -1.0);
         }
 
         let mut scalar = [0.0f64; TOTAL_BLADES];
