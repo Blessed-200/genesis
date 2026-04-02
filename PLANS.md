@@ -1406,3 +1406,26 @@ Remaining risk:
 - `cargo check --workspace`
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.9 Restore constants contract and resolve `cargo check` regressions (2026-04-02)
+
+### Root cause
+
+- `shared/genesis-types/src/constants.rs` was reduced to a single constant, breaking crate-wide constant exports and imports.
+- Compile-time size checks in `shared/genesis-types/src/signal.rs` currently use `assert_eq_size!` in contexts that trigger transmute-based layout failures.
+
+### File-level actions
+
+1. `shared/genesis-types/src/constants.rs`
+   - Restore the complete constants module from the latest known-good contract version and keep AX-ID annotations.
+   - Preserve `NonZeroUsize` const-safety comments and compile-time/runtimes invariant checks.
+2. `shared/genesis-types/src/signal.rs`
+   - Replace fragile `assert_eq_size!` calls with `const_assert_eq!(size_of::<...>(), size_of::<...>())`-style checks.
+   - Keep explicit alignment assertions unchanged.
+
+### Validation
+
+- `cargo fmt --all -- --check`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`

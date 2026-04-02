@@ -311,7 +311,7 @@ pub struct SpikeComponents {
 }
 
 // Compile-time layout verification.
-static_assertions::assert_eq_size!(SpikeComponents, [u8; 192]);
+static_assertions::const_assert_eq!(core::mem::size_of::<SpikeComponents>(), 192);
 static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 64);
 
 /// Layout version of SpikeEvent repr(C) contract.
@@ -1088,7 +1088,10 @@ impl<D: CognitiveDomain> DomainSignal<D> {
     }
 }
 
-static_assertions::assert_eq_size!(DomainSignal<PhysicsDomain>, SpikeEvent);
+static_assertions::const_assert_eq!(
+    core::mem::size_of::<DomainSignal<PhysicsDomain>>(),
+    core::mem::size_of::<SpikeEvent>()
+);
 static_assertions::const_assert_eq!(
     core::mem::align_of::<DomainSignal<PhysicsDomain>>(),
     core::mem::align_of::<SpikeEvent>()

@@ -3500,6 +3500,23 @@ mod scaling_tests {
 
     use super::*;
 
+    #[inline]
+    fn make_scaling_vec(seed: u64) -> SparseCliffordVector {
+        let mut coeffs = [0.0f64; 16];
+        let mut rng = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        for c in &mut coeffs {
+            rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            *c = ((rng >> 33) as f64 / u32::MAX as f64).mul_add(2.0, -1.0);
+        }
+        SparseCliffordVector::from_dense(&coeffs).unwrap_or_else(|_| SparseCliffordVector::zero())
+    }
+
+    #[inline]
+    fn make_neighbor_vec(coeff: f64) -> SparseCliffordVector {
+        SparseCliffordVector::from_iter((0..4).map(|i| (i, coeff * (i as f64 + 1.0) * 0.1)))
+            .unwrap_or_else(|_| SparseCliffordVector::zero())
+    }
+
     /// Empirically verify HNSW search scales as O(log N) not O(N).
     ///
     /// For HNSW with M=16, ef_construction=50:
@@ -3514,25 +3531,14 @@ mod scaling_tests {
     /// AX-ID: AXIOMA-013 — O(log N) semantic search
     #[test]
     fn hnsw_search_scaling_is_sublinear() {
-        fn make_vec(seed: u64) -> SparseCliffordVector {
-            let mut coeffs = [0.0f64; 16];
-            let mut rng = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-            for c in &mut coeffs {
-                rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-                *c = ((rng >> 33) as f64 / u32::MAX as f64).mul_add(2.0, -1.0);
-            }
-            SparseCliffordVector::from_dense(&coeffs)
-                .unwrap_or_else(|_| SparseCliffordVector::zero())
-        }
-
         fn build_and_time_search(n: usize, repetitions: u32) -> std::time::Duration {
             let mut graph = HnswGraph::new(16);
             for i in 0..n {
                 let id = NodeId::try_new(i as u64).unwrap();
-                let v = make_vec(i as u64 * 31337);
+                let v = make_scaling_vec(i as u64 * 31337);
                 let _ = graph.insert(id, &v);
             }
-            let query = make_vec(999_999);
+            let query = make_scaling_vec(999_999);
             let start = std::time::Instant::now();
             for _ in 0..repetitions {
                 let _ = graph.search_nearest(&query, 10);
@@ -3586,7 +3592,7 @@ mod scaling_tests {
 
         // Create a central node with max layers
         let central_id = NodeId::try_new(0).unwrap();
-        let central_vec = make_vec(0.0);
+        let central_vec = make_neighbor_vec(0.0);
         graph.insert(central_id, &central_vec).unwrap();
 
         // Force the central node to have max_layer = MAX_LAYERS - 1
@@ -3595,12 +3601,12 @@ mod scaling_tests {
 
         // Allocate upper layers storage
         let upper_layers = vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1];
-        graph.nodes[central_idx].adj.upper = Some(upper_layers.into_boxed_slice());
+        graph.layer_neighbors[central_idx].upper = Some(upper_layers.into_boxed_slice());
 
         // Insert neighbor nodes
         for i in 1..=num_neighbors {
             let neighbor_id = NodeId::try_new(i as u64).unwrap();
-            let neighbor_vec = make_vec(i as f64 * 0.01);
+            let neighbor_vec = make_neighbor_vec(i as f64 * 0.01);
             graph.insert(neighbor_id, &neighbor_vec).unwrap();
         }
 
@@ -3609,11 +3615,11 @@ mod scaling_tests {
         for i in 1..=M0 {
             let neighbor_idx = i as u32;
             let packed = NodeAdj::pack_layer0(neighbor_idx, 0);
-            graph.nodes[central_idx].adj.layer0.push(packed);
+            graph.layer_neighbors[central_idx].layer0.push(packed);
         }
 
         // Upper layers: M neighbors each
-        if let Some(ref mut upper) = graph.nodes[central_idx].adj.upper {
+        if let Some(ref mut upper) = graph.layer_neighbors[central_idx].upper {
             for layer_idx in 0..(MAX_LAYERS - 1) {
                 for i in 0..M {
                     // Use unique neighbor IDs across layers to maximize deduplication work
