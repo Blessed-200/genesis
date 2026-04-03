@@ -244,7 +244,7 @@ fn reduce_blocks_parallel(
     node_count: usize,
     chunk_size: usize,
 ) -> [(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5] {
-    let mut partials: Vec<_> = blocks
+    blocks
         .par_chunks(chunk_size)
         .enumerate()
         .map(|(chunk_idx, block_chunk)| {
@@ -253,28 +253,19 @@ fn reduce_blocks_parallel(
             let valid = remaining.min(block_chunk.len() * 8);
             reduce_blocks(block_chunk, valid)
         })
-        .collect();
-    let chunk_count = partials.len();
-    let mut stride = 1usize;
-    while stride < chunk_count {
-        let step = stride * 2;
-        let mut base = 0usize;
-        while base + stride < chunk_count {
-            let (head, tail) = partials.split_at_mut(base + stride);
-            merge_grade_totals(&mut head[base], &tail[0]);
-            base += step;
-        }
-        stride = step;
-    }
-    if chunk_count == 0 {
-        [(
-            KahanAccumulator::new(),
-            KahanAccumulator::new(),
-            KahanAccumulator::new(),
-        ); 5]
-    } else {
-        partials[0]
-    }
+        .reduce(
+            || {
+                [(
+                    KahanAccumulator::new(),
+                    KahanAccumulator::new(),
+                    KahanAccumulator::new(),
+                ); 5]
+            },
+            |mut left, right| {
+                merge_grade_totals(&mut left, &right);
+                left
+            },
+        )
 }
 
 #[inline]
@@ -399,7 +390,7 @@ pub fn synchronized_cluster(network: &QuantumKuramotoNetwork, threshold: f64) ->
 #[allow(clippy::float_cmp, clippy::uninlined_format_args)]
 mod tests {
     use super::*;
-    use crate::oscillator::QuantumOscillator;
+    use crate::oscillator::{OscillatorBlock, QuantumOscillator};
 
     fn fully_synced_net(n: usize, common_phase: f64) -> QuantumKuramotoNetwork {
         let mut net = QuantumKuramotoNetwork::new(0.0);
@@ -548,6 +539,36 @@ mod tests {
         .expect("NodeId válido por construcción");
         let cluster = synchronized_cluster(&net, 0.5);
         assert_eq!(cluster.len(), 9, "outlier no debe estar en el cluster");
+    }
+
+    #[test]
+    fn parallel_and_serial_reduction_match_above_rayon_threshold() {
+        let node_count = 4_352usize;
+        let net = uniform_phase_net(node_count);
+        let oscs = net.phases();
+        let block_count = oscs.len().div_ceil(8);
+        let mut blocks = vec![OscillatorBlock::default(); block_count];
+        for (i, osc) in oscs.iter().enumerate() {
+            let block = i / 8;
+            let lane = i % 8;
+            blocks[block].node_ids[lane] = osc.node_id;
+            blocks[block].states[lane] = osc.state;
+            for g in 0..5 {
+                blocks[block].phases[g][lane] = osc.phases[g];
+                blocks[block].amplitudes[g][lane] = osc.amplitudes[g];
+                blocks[block].frequencies[g][lane] = osc.frequencies[g];
+            }
+        }
+
+        const DETERMINISTIC_BLOCK_CHUNK: usize = 16;
+        let serial = reduce_blocks_serial(&blocks, node_count, DETERMINISTIC_BLOCK_CHUNK);
+        let parallel = reduce_blocks_parallel(&blocks, node_count, DETERMINISTIC_BLOCK_CHUNK);
+        let serial_r = finalize_grade_totals(&serial);
+        let parallel_r = finalize_grade_totals(&parallel);
+        assert!(
+            (serial_r - parallel_r).abs() < 1e-12,
+            "parallel and serial synchrony reductions must match above threshold: serial={serial_r:.16e}, parallel={parallel_r:.16e}"
+        );
     }
 
     // ── Amplitude-weighted r_sync tests ───────────────────────────────────────

@@ -36,6 +36,9 @@ use genesis_types::NodeId;
 ///   `FisherInfo::trace ≈ 1.0` → `amplitude ≈ 1.0` → full `r_sync` contribution
 /// - Node with **low VFE** (saturated domain, AXIOMA-008):
 ///   `FisherInfo::trace → 0` → `amplitude → 0` → suppressed `r_sync` contribution
+/// - After lifecycle transition to `OscillatorState::Saturated`, the oscillator does
+///   not re-enter active learning; amplitude remains a non-increasing certainty gate
+///   until eventual pruning (`Active -> Saturated -> Pruned`).
 ///
 /// This makes `r_sync` measure **angular coherence weighted by inferential certainty**,
 /// not only raw angular coherence. A node that has consolidated knowledge reduces
@@ -60,8 +63,9 @@ pub struct QuantumOscillator {
     /// Initializes to `1.0` for all grades (maximum-certainty prior /
     /// maximum `r_sync` contribution).
     ///
-    /// Decreases when node `FisherInfo::trace` decreases (active learning).
-    /// Increases again when the node re-enters a high-VFE regime (new exploration).
+    /// Decreases when node `FisherInfo::trace` decreases during active learning.
+    /// Once the lifecycle reaches `Saturated`, the oscillator does not resume
+    /// active-learning updates.
     ///
     /// Amplitude decay is the responsibility of the external pipeline that calls
     /// `update_amplitude_from_fisher()` after each `VFEMinimizer::update()`.
@@ -652,7 +656,7 @@ impl QuantumOscillator {
     /// AX-ID: AXIOMA-006, AXIOMA-008, LEY_FUNDACIONAL §3.2
     #[inline]
     pub fn update_amplitude_from_fisher(&mut self, fisher_trace: f64) {
-        let a = fisher_trace.clamp(0.0, 1.0);
+        let a = (fisher_trace / Self::FISHER_TRACE_INITIAL).clamp(0.0, 1.0);
         self.amplitudes = [a; 5];
     }
 

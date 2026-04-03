@@ -871,6 +871,7 @@ mod tests {
             }
         }
     }
+    #[test]
     fn add_node_rejects_non_finite_prior_mean() {
         let mut vfe = VFEMinimizer::new();
         let id_nan = NodeId::try_new(0).expect("NodeId válido por construcción");

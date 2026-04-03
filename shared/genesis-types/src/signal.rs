@@ -337,24 +337,50 @@ impl SpikeComponents {
     where
         I: IntoIterator<Item = (u16, f64)>,
     {
-        let mut aggregated: Vec<(u16, f64)> = Vec::new();
-        for (idx, coef) in iter {
-            if !coef.is_finite() {
-                continue;
-            }
-            if let Some((_, acc)) = aggregated
-                .iter_mut()
-                .find(|(stored_idx, _)| *stored_idx == idx)
-            {
-                *acc += coef;
-            } else {
-                aggregated.push((idx, coef));
-            }
-        }
-        aggregated
+        let mut pairs: Vec<(u16, f64)> = iter
             .into_iter()
-            .filter(|(_, coef)| coef.is_finite() && coef.abs() > COGNITIVE_PLANCK_CONSTANT)
-            .collect()
+            .filter(|(_, coef)| coef.is_finite())
+            .collect();
+        pairs.sort_unstable_by_key(|(idx, _)| *idx);
+
+        let mut aggregated: Vec<(u16, f64)> = Vec::with_capacity(pairs.len());
+        let mut read = 0usize;
+        while read < pairs.len() {
+            let idx = pairs[read].0;
+            let mut acc = pairs[read].1;
+            read += 1;
+            while read < pairs.len() && pairs[read].0 == idx {
+                acc += pairs[read].1;
+                read += 1;
+            }
+            aggregated.push((idx, acc));
+        }
+        aggregated.retain(|(_, coef)| coef.is_finite() && coef.abs() > COGNITIVE_PLANCK_CONSTANT);
+        aggregated
+    }
+
+    #[inline]
+    #[cfg(feature = "serde")]
+    fn indices_are_canonical(indices: &[u16; SPIKE_MAX_COMPONENTS], count: u8) -> bool {
+        let n = count as usize;
+        if n > SPIKE_MAX_COMPONENTS {
+            return false;
+        }
+        if n == 0 {
+            return true;
+        }
+        let max_index = SPIKE_MAX_COMPONENTS as u16;
+        if indices[0] >= max_index {
+            return false;
+        }
+        let mut i = 1usize;
+        while i < n {
+            if indices[i] >= max_index || indices[i - 1] >= indices[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
     }
 
     /// Returns `true` if all explicit padding fields are zeroed.
@@ -717,6 +743,11 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                 if count as usize > SPIKE_MAX_COMPONENTS {
                     return Err(de::Error::custom("count out of range"));
                 }
+                if !SpikeComponents::indices_are_canonical(&indices, count) {
+                    return Err(de::Error::custom(
+                        "indices must be strictly increasing, unique, and within bounds",
+                    ));
+                }
 
                 Ok(SpikeComponents {
                     values,
@@ -759,10 +790,16 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                 if count as usize > SPIKE_MAX_COMPONENTS {
                     return Err(de::Error::custom("count out of range"));
                 }
+                let indices = indices.ok_or_else(|| de::Error::missing_field("indices"))?;
+                if !SpikeComponents::indices_are_canonical(&indices, count) {
+                    return Err(de::Error::custom(
+                        "indices must be strictly increasing, unique, and within bounds",
+                    ));
+                }
 
                 Ok(SpikeComponents {
                     values: values.ok_or_else(|| de::Error::missing_field("values"))?,
-                    indices: indices.ok_or_else(|| de::Error::missing_field("indices"))?,
+                    indices,
                     count,
                     pad: [0u8; 7],
                     tail_pad: [0u8; 24],

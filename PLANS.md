@@ -1562,3 +1562,39 @@ Remaining risk:
 - `cargo clippy --all-targets`
 - `scripts/check_english_only.sh`
 - `cargo bench -p genesis-dynamics --bench iai_hotpaths`
+
+## 1.14 Inline review closure: synchrony reduction, serde canonicalization, and lifecycle semantics (2026-04-03)
+
+### Root cause
+
+- `QuantumOscillator` docs and amplitude update implementation diverged: docs specified normalization by `FISHER_TRACE_INITIAL`, while code clamped raw trace directly and one sentence implied reversible post-saturation behavior.
+- `synchrony_order_fast` parallel branch materialized partial accumulators into a `Vec`, adding avoidable per-call heap allocation in the hot path.
+- Parallel reduction branch lacked direct unit coverage above `RAYON_THRESHOLD`, so branch-specific regressions could go undetected.
+- `SpikeComponents` aggregation used O(U²) duplicate detection, and serde deserialization accepted non-canonical index ordering/duplicates.
+- Coverage gaps remained in crate API smoke tests and benchmark helper public API tests.
+
+### File-level actions
+
+1. `core/genesis-dynamics/src/oscillator.rs`
+   - Align rustdoc lifecycle semantics with one-way state progression (`Active -> Saturated -> Pruned`).
+   - Apply documented amplitude normalization formula: `(trace / FISHER_TRACE_INITIAL).clamp(0.0, 1.0)`.
+2. `core/genesis-dynamics/src/synchrony.rs`
+   - Replace `par_chunks(...).map(...).collect()` with allocation-free rayon `reduce` over fixed-size accumulators.
+   - Add explicit test comparing serial vs parallel reduction outputs above threshold.
+3. `shared/genesis-types/src/signal.rs`
+   - Rework `aggregate_coefficients` to `filter finite -> sort by index -> linear merge`, eliminating O(U²) scan.
+   - Validate serde `indices[..count]` invariants (strictly increasing, unique, and bounded) in both seq/map visitors.
+4. `core/genesis-topology/src/hnsw.rs`
+   - Add unit test ensuring `benchmark_scalar_distance_4x` returns finite values and `benchmark_batch_distance_4` delegates exactly.
+5. `shared/genesis-types/src/lib.rs`
+   - Include `METRIC_WEIGHTS` access in crate-root export smoke test.
+6. `core/genesis-dynamics/src/free_energy.rs`
+   - Add missing `#[test]` attribute to `add_node_rejects_non_finite_prior_mean`.
+
+### Validation
+
+- `cargo fmt --all`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `scripts/check_english_only.sh`
