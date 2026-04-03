@@ -133,6 +133,13 @@ pub struct Timestamp(
 );
 
 /// Pair of Gaussian samples used in signal-processing paths.
+///
+/// `#[repr(C, align(64))]` is a DAX contract, not an optimization hint:
+/// each instance starts on a cache-line boundary so memory-mapped direct-access
+/// storage does not split a pair across cache lines under sequential scanning.
+/// This avoids split-line fetch penalties in low-latency ingestion paths.
+///
+/// AX-ID: AXIOMA-018
 // CRYSTAL: FO32 — inevitable
 #[repr(C, align(64))]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -320,6 +327,36 @@ static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 64
 pub const SPIKE_EVENT_LAYOUT_VERSION: u32 = 2;
 
 impl SpikeComponents {
+    /// Aggregates duplicate blade contributions before top-K selection.
+    ///
+    /// Two-pass behavior:
+    /// 1. Scan all incoming pairs and sum coefficients by blade index.
+    /// 2. Drop non-finite/Planck-level merged coefficients and return compacted pairs.
+    #[inline]
+    fn aggregate_coefficients<I>(iter: I) -> Vec<(u16, f64)>
+    where
+        I: IntoIterator<Item = (u16, f64)>,
+    {
+        let mut aggregated: Vec<(u16, f64)> = Vec::new();
+        for (idx, coef) in iter {
+            if !coef.is_finite() {
+                continue;
+            }
+            if let Some((_, acc)) = aggregated
+                .iter_mut()
+                .find(|(stored_idx, _)| *stored_idx == idx)
+            {
+                *acc += coef;
+            } else {
+                aggregated.push((idx, coef));
+            }
+        }
+        aggregated
+            .into_iter()
+            .filter(|(_, coef)| coef.is_finite() && coef.abs() > COGNITIVE_PLANCK_CONSTANT)
+            .collect()
+    }
+
     /// Returns `true` if all explicit padding fields are zeroed.
     ///
     /// Used to verify the DAX layout contract after construction or
@@ -372,13 +409,8 @@ impl SpikeComponents {
         let mut min_abs: f64 = 0.0; // abs of weakest slot in buf
         let mut min_slot: usize = 0; // index of weakest slot
 
-        for (idx, coef) in iter {
-            // Thermal noise gate — AXIOMA-001.
+        for (idx, coef) in Self::aggregate_coefficients(iter) {
             let abs = coef.abs();
-            if !coef.is_finite() || abs <= COGNITIVE_PLANCK_CONSTANT {
-                continue;
-            }
-
             if filled < K {
                 // Buffer not full yet — insert directly.
                 buf[filled] = (abs, idx, coef);
@@ -386,12 +418,18 @@ impl SpikeComponents {
                 if filled == K {
                     // Find the weakest slot.
                     min_abs = f64::INFINITY;
-                    for i in 0..K {
+                    let prev_min_slot = min_slot;
+                    let prev_min_ix = buf[prev_min_slot].1;
+                    let mut weakest_ix = prev_min_ix;
+                    let mut i = 0;
+                    while i < K {
                         let (a, ix, _) = buf[i];
-                        if a < min_abs || (a == min_abs && ix > buf[min_slot].1) {
+                        if a < min_abs || (a == min_abs && ix > weakest_ix) {
                             min_abs = a;
                             min_slot = i;
+                            weakest_ix = ix;
                         }
+                        i += 1;
                     }
                 }
             } else {
@@ -402,15 +440,21 @@ impl SpikeComponents {
                     core::cmp::Ordering::Less => false,
                 };
                 if stronger {
+                    let prev_min_slot = min_slot;
+                    let prev_min_ix = buf[prev_min_slot].1;
                     buf[min_slot] = (abs, idx, coef);
                     // Recompute min slot.
                     min_abs = f64::INFINITY;
-                    for i in 0..K {
+                    let mut weakest_ix = prev_min_ix;
+                    let mut i = 0;
+                    while i < K {
                         let (a, ix, _) = buf[i];
-                        if a < min_abs || (a == min_abs && ix > buf[min_slot].1) {
+                        if a < min_abs || (a == min_abs && ix > weakest_ix) {
                             min_abs = a;
                             min_slot = i;
+                            weakest_ix = ix;
                         }
+                        i += 1;
                     }
                 }
             }
@@ -597,7 +641,12 @@ impl PartialEq for SpikeComponents {
         // cover exactly `n` initialized elements from `values[..n]`.
         let self_bits =
             unsafe { core::slice::from_raw_parts(self.values.as_ptr().cast::<u64>(), n) };
-        // SAFETY: same invariant as `self_bits` above.
+        // SAFETY: `other.values` is an initialized `[f64; SPIKE_MAX_COMPONENTS]`.
+        // We cast its pointer to `*const u64` because `f64` and `u64` have
+        // identical size and alignment on all supported targets, then build a
+        // slice of exactly `n` elements, where `n <= SPIKE_MAX_COMPONENTS`.
+        // No mutation occurs during this read-only conversion, so aliasing rules
+        // are preserved.
         let other_bits =
             unsafe { core::slice::from_raw_parts(other.values.as_ptr().cast::<u64>(), n) };
         if self_bits != other_bits {
@@ -665,6 +714,9 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                 let count: u8 = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+                if count as usize > SPIKE_MAX_COMPONENTS {
+                    return Err(de::Error::custom("count out of range"));
+                }
 
                 Ok(SpikeComponents {
                     values,
@@ -703,10 +755,15 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                     }
                 }
 
+                let count = count.ok_or_else(|| de::Error::missing_field("count"))?;
+                if count as usize > SPIKE_MAX_COMPONENTS {
+                    return Err(de::Error::custom("count out of range"));
+                }
+
                 Ok(SpikeComponents {
                     values: values.ok_or_else(|| de::Error::missing_field("values"))?,
                     indices: indices.ok_or_else(|| de::Error::missing_field("indices"))?,
-                    count: count.ok_or_else(|| de::Error::missing_field("count"))?,
+                    count,
                     pad: [0u8; 7],
                     tail_pad: [0u8; 24],
                 })
@@ -999,38 +1056,39 @@ impl<'de> serde::Deserialize<'de> for SpikeEvent {
 // DOMAIN MARKERS + ZERO-COST DOMAIN WRAPPER
 // ============================================================================
 
-mod domain_sealed {
+mod sealed {
     pub trait Sealed {}
+    pub trait ConsolidationStateSealed {}
 }
 
 /// Marker trait for valid cognitive domains.
 ///
 /// This trait is sealed so external crates cannot inject arbitrary domain
 /// markers into [`DomainSignal`].
-pub trait CognitiveDomain: domain_sealed::Sealed {}
+pub trait CognitiveDomain: sealed::Sealed {}
 
 /// Marker type for physics domain events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PhysicsDomain;
-impl domain_sealed::Sealed for PhysicsDomain {}
+impl sealed::Sealed for PhysicsDomain {}
 impl CognitiveDomain for PhysicsDomain {}
 
 /// Marker type for topology domain events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TopologyDomain;
-impl domain_sealed::Sealed for TopologyDomain {}
+impl sealed::Sealed for TopologyDomain {}
 impl CognitiveDomain for TopologyDomain {}
 
 /// Marker type for dynamics domain events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DynamicsDomain;
-impl domain_sealed::Sealed for DynamicsDomain {}
+impl sealed::Sealed for DynamicsDomain {}
 impl CognitiveDomain for DynamicsDomain {}
 
 /// Marker type for consciousness domain events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ConsciousnessDomain;
-impl domain_sealed::Sealed for ConsciousnessDomain {}
+impl sealed::Sealed for ConsciousnessDomain {}
 impl CognitiveDomain for ConsciousnessDomain {}
 
 /// Zero-cost domain-typed wrapper over [`SpikeEvent`].
@@ -1107,18 +1165,14 @@ static_assertions::const_assert_eq!(
 // Only Saturated and Certified can be State — compile-time type invariant.
 //
 // AX-ID: GENESIS_PROOF_SPEC §A4, AXIOMA-008, AXIOMA-009
-mod private {
-    pub trait Sealed {}
-}
-
 /// Type restriction for consolidation state markers.
 ///
-/// Only `Saturated` and `Certified` implement this trait — sealed via
-/// `mod private`. No external type can be used as `State` in
+/// Only `Saturated` and `Certified` implement this trait — sealed in
+/// `mod sealed`. No external type can be used as `State` in
 /// `DomainConsolidationSignal<State>`.
 ///
 /// AX-ID: AXIOMA-008, AXIOMA-009
-pub trait ConsolidationState: private::Sealed {}
+pub trait ConsolidationState: sealed::ConsolidationStateSealed {}
 
 /// Marker type: domain is **saturated** (Fisher gradient stable, reversible).
 ///
@@ -1129,7 +1183,7 @@ pub trait ConsolidationState: private::Sealed {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Saturated;
-impl private::Sealed for Saturated {}
+impl sealed::ConsolidationStateSealed for Saturated {}
 impl ConsolidationState for Saturated {}
 
 /// Marker type: domain is **certified** (H¹ = 0 globally, **irrevocable**).
@@ -1144,7 +1198,7 @@ impl ConsolidationState for Saturated {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Certified;
-impl private::Sealed for Certified {}
+impl sealed::ConsolidationStateSealed for Certified {}
 impl ConsolidationState for Certified {}
 
 // ============================================================================

@@ -20,12 +20,11 @@ use std::sync::Arc;
 use genesis_math::{
     fast_metric_distance_sq, fast_metric_distance_sq_from_dense, SparseCliffordVector,
 };
-use genesis_types::{GenesisError, NodeId};
+use genesis_types::{GenesisError, NodeId, CLIFFORD_BASIS_SIZE, METRIC_WEIGHTS};
 use smallvec::SmallVec;
 
-const TOTAL_BLADES: usize = 16;
 pub(crate) const SLAB_LANES: usize = 8;
-pub(crate) const SLAB_DIM: usize = TOTAL_BLADES;
+pub(crate) const SLAB_DIM: usize = CLIFFORD_BASIS_SIZE;
 pub(crate) const BLOCK_STRIDE: usize = SLAB_DIM * SLAB_LANES;
 const MAX_FIXED_HEAP_CAPACITY: usize = 512;
 const INITIAL_NODE_CAPACITY: usize = 1024;
@@ -35,26 +34,11 @@ const INITIAL_SLAB_BLOCK_CAPACITY: usize = INITIAL_NODE_CAPACITY.div_ceil(SLAB_L
     target_feature = "avx2",
     target_feature = "fma"
 ))]
-const METRIC_WEIGHTS_F32: [f32; TOTAL_BLADES] = [
-    2.0, 1.5, 1.5, 1.0, 1.5, 1.0, 1.0, 0.5, 1.5, 1.0, 1.0, 0.5, 1.0, 0.5, 0.5, 0.3,
-];
-
-const fn metric_weight_for_blade(blade: usize) -> f64 {
-    match blade.count_ones() {
-        0 => 2.0,
-        1 => 1.5,
-        2 => 1.0,
-        3 => 0.5,
-        4 => 0.3,
-        _ => 0.0,
-    }
-}
-
-const METRIC_WEIGHTS: [f64; TOTAL_BLADES] = {
-    let mut weights = [0.0; TOTAL_BLADES];
+const METRIC_WEIGHTS_F32: [f32; CLIFFORD_BASIS_SIZE] = {
+    let mut weights = [0.0_f32; CLIFFORD_BASIS_SIZE];
     let mut i = 0;
-    while i < TOTAL_BLADES {
-        weights[i] = metric_weight_for_blade(i);
+    while i < CLIFFORD_BASIS_SIZE {
+        weights[i] = METRIC_WEIGHTS[i] as f32;
         i += 1;
     }
     weights
@@ -280,6 +264,7 @@ unsafe fn slab_distance_avx2(
     let mut acc1 = _mm256_setzero_ps();
     let mut acc2 = _mm256_setzero_ps();
     let mut acc3 = _mm256_setzero_ps();
+    const _: [(); CLIFFORD_BASIS_SIZE] = [(); 16];
     fused_dim4!(block_base, 0, 1, 2, 3, acc0, acc1, acc2, acc3);
     fused_dim4!(block_base, 4, 5, 6, 7, acc0, acc1, acc2, acc3);
     fused_dim4!(block_base, 8, 9, 10, 11, acc0, acc1, acc2, acc3);
@@ -342,8 +327,8 @@ fn slab_distance(
 // AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
 
 mod layer0_codec {
-    use super::TOTAL_BLADES;
     use genesis_math::SparseCliffordVector;
+    use genesis_types::CLIFFORD_BASIS_SIZE;
 
     #[cfg(feature = "hnsw-f16")]
     mod f16_kernel {
@@ -399,9 +384,9 @@ mod layer0_codec {
     pub(super) trait Layer0Codec: sealed::Sealed {
         type Storage: Copy;
 
-        fn encode(values: &[f32; TOTAL_BLADES]) -> Self::Storage;
+        fn encode(values: &[f32; CLIFFORD_BASIS_SIZE]) -> Self::Storage;
         fn distance_sq(stored: &Self::Storage, query: &SparseCliffordVector) -> f64;
-        fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES];
+        fn decode_to_f64(stored: &Self::Storage) -> [f64; CLIFFORD_BASIS_SIZE];
     }
 
     #[cfg(any(not(feature = "hnsw-f16"), test))]
@@ -409,9 +394,9 @@ mod layer0_codec {
 
     #[cfg(any(not(feature = "hnsw-f16"), test))]
     impl Layer0Codec for F32Codec {
-        type Storage = [f32; TOTAL_BLADES];
+        type Storage = [f32; CLIFFORD_BASIS_SIZE];
 
-        fn encode(values: &[f32; TOTAL_BLADES]) -> Self::Storage {
+        fn encode(values: &[f32; CLIFFORD_BASIS_SIZE]) -> Self::Storage {
             *values
         }
 
@@ -420,7 +405,7 @@ mod layer0_codec {
             super::fast_metric_distance_sq_from_dense(&dense, query)
         }
 
-        fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES] {
+        fn decode_to_f64(stored: &Self::Storage) -> [f64; CLIFFORD_BASIS_SIZE] {
             core::array::from_fn(|i| f64::from(stored[i]))
         }
     }
@@ -430,9 +415,9 @@ mod layer0_codec {
 
     #[cfg(feature = "hnsw-f16")]
     impl Layer0Codec for F16Codec {
-        type Storage = [u16; TOTAL_BLADES];
+        type Storage = [u16; CLIFFORD_BASIS_SIZE];
 
-        fn encode(values: &[f32; TOTAL_BLADES]) -> Self::Storage {
+        fn encode(values: &[f32; CLIFFORD_BASIS_SIZE]) -> Self::Storage {
             #[cfg(genesis_const_layer0_codec)]
             {
                 return encode_f16_const(values);
@@ -448,21 +433,21 @@ mod layer0_codec {
             super::fast_metric_distance_f16_sq(stored, query)
         }
 
-        fn decode_to_f64(stored: &Self::Storage) -> [f64; TOTAL_BLADES] {
+        fn decode_to_f64(stored: &Self::Storage) -> [f64; CLIFFORD_BASIS_SIZE] {
             core::array::from_fn(|i| f64::from(f16_bits_to_f32(stored[i])))
         }
     }
 
     #[cfg(all(feature = "hnsw-f16", not(genesis_const_layer0_codec)))]
-    fn encode_f16_runtime(values: &[f32; TOTAL_BLADES]) -> [u16; TOTAL_BLADES] {
+    fn encode_f16_runtime(values: &[f32; CLIFFORD_BASIS_SIZE]) -> [u16; CLIFFORD_BASIS_SIZE] {
         core::array::from_fn(|i| f32_to_f16_bits(values[i]))
     }
 
     #[cfg(all(feature = "hnsw-f16", genesis_const_layer0_codec))]
-    const fn encode_f16_const(values: &[f32; TOTAL_BLADES]) -> [u16; TOTAL_BLADES] {
-        let mut encoded = [0_u16; TOTAL_BLADES];
+    const fn encode_f16_const(values: &[f32; CLIFFORD_BASIS_SIZE]) -> [u16; CLIFFORD_BASIS_SIZE] {
+        let mut encoded = [0_u16; CLIFFORD_BASIS_SIZE];
         let mut i = 0;
-        while i < TOTAL_BLADES {
+        while i < CLIFFORD_BASIS_SIZE {
             encoded[i] = f32_to_f16_bits_const(values[i]);
             i += 1;
         }
@@ -821,7 +806,7 @@ impl HnswNode {
 ///
 /// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
 #[cfg(test)]
-fn encode_layer0(values: &[f32; TOTAL_BLADES]) -> Result<Layer0Coeffs, GenesisError> {
+fn encode_layer0(values: &[f32; CLIFFORD_BASIS_SIZE]) -> Result<Layer0Coeffs, GenesisError> {
     if values.iter().any(|value| !value.is_finite()) {
         return Err(GenesisError::InvalidInput(
             "Non-finite coefficients detected after conversion",
@@ -842,7 +827,10 @@ fn encode_layer0(values: &[f32; TOTAL_BLADES]) -> Result<Layer0Coeffs, GenesisEr
 /// violates the encoding invariants of `f32_to_f16_bits` for finite inputs.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
-pub fn fast_metric_distance_f16(stored: &[u16; 16], query: &SparseCliffordVector) -> f64 {
+pub fn fast_metric_distance_f16(
+    stored: &[u16; CLIFFORD_BASIS_SIZE],
+    query: &SparseCliffordVector,
+) -> f64 {
     fast_metric_distance_f16_sq(stored, query).sqrt()
 }
 
@@ -855,13 +843,16 @@ pub fn fast_metric_distance_f16(stored: &[u16; 16], query: &SparseCliffordVector
 /// violates the encoding invariants of `f32_to_f16_bits` for finite inputs.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
-pub fn fast_metric_distance_f16_sq(stored: &[u16; 16], query: &SparseCliffordVector) -> f64 {
+pub fn fast_metric_distance_f16_sq(
+    stored: &[u16; CLIFFORD_BASIS_SIZE],
+    query: &SparseCliffordVector,
+) -> f64 {
     // ARCHITECTURAL NOTE:
     // It uses compile-time dispatch instead of runtime dispatch to avoid
     // loss of inlining and `vzeroupper` penalties in the hot loop.
     // On x86_64, compile with RUSTFLAGS="-C target-cpu=native" to activate AVX2.
     // Primary target: Genesis Edge (ARM + NEON).
-    let mut decompressed = [0.0_f64; 16];
+    let mut decompressed = [0.0_f64; CLIFFORD_BASIS_SIZE];
 
     #[cfg(all(
         target_arch = "x86_64",
@@ -896,12 +887,34 @@ pub fn fast_metric_distance_f16_sq(stored: &[u16; 16], query: &SparseCliffordVec
         target_feature = "avx2"
     )))]
     {
-        for i in 0..16 {
+        for i in 0..CLIFFORD_BASIS_SIZE {
             decompressed[i] = f64::from(layer0_codec::f16_bits_to_f32(stored[i]));
         }
     }
 
     fast_metric_distance_sq_from_dense(&decompressed, query)
+}
+
+/// Benchmark helper: computes four squared distances with a scalar loop.
+///
+/// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+pub fn benchmark_scalar_distance_4x(
+    query: &SparseCliffordVector,
+    candidates: &[SparseCliffordVector; 4],
+) -> [f64; 4] {
+    core::array::from_fn(|i| fast_metric_distance_sq(query, &candidates[i]))
+}
+
+/// Benchmark helper: computes four squared distances in a batch API.
+///
+/// This preserves the benchmark contract used by `benches/manifold.rs`.
+///
+/// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+pub fn benchmark_batch_distance_4(
+    query: &SparseCliffordVector,
+    candidates: &[SparseCliffordVector; 4],
+) -> [f64; 4] {
+    benchmark_scalar_distance_4x(query, candidates)
 }
 
 #[cfg(all(feature = "hnsw-f16", test))]
@@ -2038,27 +2051,27 @@ impl LockFreeHnswIndex {
             updated.insert(id, vec)?;
             let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
 
-            match self.head.compare_exchange(
-                current,
-                candidate,
-                AtomicOrdering::AcqRel,
-                AtomicOrdering::Acquire,
-            ) {
-                Ok(_) => {
-                    // SAFETY: Successful CAS replaced the head's strong reference from
-                    // `current` to `candidate`; release the superseded head ref.
-                    unsafe {
-                        drop(Arc::from_raw(current));
-                    }
-                    return Ok(());
+            if self
+                .head
+                .compare_exchange(
+                    current,
+                    candidate,
+                    AtomicOrdering::AcqRel,
+                    AtomicOrdering::Acquire,
+                )
+                .is_ok()
+            {
+                // SAFETY: Successful CAS replaced the head's strong reference from
+                // `current` to `candidate`; release the superseded head ref.
+                unsafe {
+                    drop(Arc::from_raw(current));
                 }
-                Err(_) => {
-                    self.cas_retries.value.fetch_add(1, AtomicOrdering::Relaxed);
-                    // SAFETY: CAS failed, so `candidate` was never published.
-                    unsafe {
-                        drop(Arc::from_raw(candidate));
-                    }
-                }
+                return Ok(());
+            }
+            self.cas_retries.value.fetch_add(1, AtomicOrdering::Relaxed);
+            // SAFETY: CAS failed, so `candidate` was never published.
+            unsafe {
+                drop(Arc::from_raw(candidate));
             }
         }
     }
@@ -2209,6 +2222,7 @@ impl Iterator for NeighborIter<'_> {
 }
 
 #[cfg(test)]
+#[allow(clippy::explicit_iter_loop, clippy::many_single_char_names)]
 mod tests {
     use genesis_math::{fast_metric_distance, fast_metric_distance_sq, SparseCliffordVector};
     use proptest::prelude::*;
@@ -2652,7 +2666,7 @@ mod tests {
 
     #[test]
     fn search_nearest_matches_fixture_bruteforce_top1() {
-        let fixture: [[f64; TOTAL_BLADES]; 8] = [
+        let fixture: [[f64; CLIFFORD_BASIS_SIZE]; 8] = [
             [
                 0.10, -0.20, 0.30, -0.40, 0.50, -0.60, 0.70, -0.80, 0.90, -1.00, 1.10, -1.20, 1.30,
                 -1.40, 1.50, -1.60,
@@ -3167,7 +3181,7 @@ mod tests {
         let input = core::array::from_fn(|i| (i as f32).mul_add(0.25, -1.5));
         let encoded = encode_layer0(&input).expect("finite input must encode");
 
-        for i in 0..TOTAL_BLADES {
+        for i in 0..CLIFFORD_BASIS_SIZE {
             assert_eq!(encoded[i], f32_to_f16_bits(input[i]), "blade index {i}");
         }
     }
@@ -3186,14 +3200,14 @@ mod tests {
     fn layer0_f16_storage_is_half_of_f32() {
         assert_eq!(
             std::mem::size_of::<Layer0Coeffs>() * 2,
-            std::mem::size_of::<[f32; TOTAL_BLADES]>()
+            std::mem::size_of::<[f32; CLIFFORD_BASIS_SIZE]>()
         );
     }
 
     #[cfg(feature = "hnsw-f16")]
     #[test]
     fn layer0_distance_regression_f32_vs_f16_fixed_dataset() {
-        let dataset: [[f64; TOTAL_BLADES]; 6] = [
+        let dataset: [[f64; CLIFFORD_BASIS_SIZE]; 6] = [
             [
                 0.0, 0.1, -0.2, 0.3, 0.4, -0.5, 0.6, -0.7, 0.8, -0.9, 1.0, -1.1, 1.2, -1.3, 1.4,
                 -1.5,
@@ -3237,7 +3251,7 @@ mod tests {
         for (q_idx, query_dense) in dataset.iter().enumerate() {
             let query = SparseCliffordVector::from_dense(query_dense).expect("finite dense query");
             for (v_idx, vector_dense) in dataset.iter().enumerate() {
-                let f32_layer: [f32; TOTAL_BLADES] =
+                let f32_layer: [f32; CLIFFORD_BASIS_SIZE] =
                     core::array::from_fn(|i| vector_dense[i] as f32);
                 let encoded_f32 =
                     <layer0_codec::F32Codec as layer0_codec::Layer0Codec>::encode(&f32_layer);
@@ -3325,7 +3339,7 @@ mod tests {
                 .expect("finite 16D input must be accepted");
 
             let _node = HnswNode::new(make_id(999), vector, 0);
-            let layer0_f32: [f32; TOTAL_BLADES] = core::array::from_fn(|i| input[i] as f32);
+            let layer0_f32: [f32; CLIFFORD_BASIS_SIZE] = core::array::from_fn(|i| input[i] as f32);
             let encoded = encode_layer0(&layer0_f32).expect("finite layer0 must encode");
 
             #[cfg(not(feature = "hnsw-f16"))]
@@ -3335,17 +3349,17 @@ mod tests {
 
             #[cfg(feature = "hnsw-f16")]
             {
-                let decoded: [f32; TOTAL_BLADES] = core::array::from_fn(|i| f16_bits_to_f32(encoded[i]));
+                let decoded: [f32; CLIFFORD_BASIS_SIZE] = core::array::from_fn(|i| f16_bits_to_f32(encoded[i]));
                 prop_assert!(decoded.iter().all(|value| value.is_finite()));
             }
         }
 
         #[test]
         fn sparse_vector_rejects_non_finite_coefficients(
-            idx in 0usize..TOTAL_BLADES,
+            idx in 0usize..CLIFFORD_BASIS_SIZE,
             use_nan in any::<bool>()
         ) {
-            let mut dense = [0.0_f64; TOTAL_BLADES];
+            let mut dense = [0.0_f64; CLIFFORD_BASIS_SIZE];
             dense[idx] = if use_nan { f64::NAN } else { f64::INFINITY };
 
             let result = SparseCliffordVector::from_dense(&dense);
@@ -3355,7 +3369,7 @@ mod tests {
 
     #[test]
     fn encode_layer0_returns_invalid_input_when_input_contains_non_finite_values() {
-        let mut input = [0.0_f32; TOTAL_BLADES];
+        let mut input = [0.0_f32; CLIFFORD_BASIS_SIZE];
         input[3] = f32::NAN;
         let result = encode_layer0(&input);
 
@@ -3567,7 +3581,7 @@ mod tests {
 
         let l2 = |a: &SparseCliffordVector, b: &SparseCliffordVector| {
             let mut sum = 0.0;
-            for i in 0..TOTAL_BLADES {
+            for i in 0..CLIFFORD_BASIS_SIZE {
                 let d = a.coeffs[i] - b.coeffs[i];
                 sum += d * d;
             }
@@ -3720,6 +3734,7 @@ mod scaling_tests {
     ///
     /// AX-ID: AXIOMA-013
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn neighbor_iter_smallvec_never_spills() {
         let mut graph = HnswGraph::new(16);
 

@@ -1,5 +1,6 @@
 #![allow(clippy::cast_precision_loss)]
 
+use std::hint::black_box;
 use std::sync::OnceLock;
 
 use genesis_dynamics::{synchrony_order, QuantumKuramotoNetwork, QuantumOscillator, VFEMinimizer};
@@ -39,11 +40,6 @@ fn build_vfe(n: usize) -> (VFEMinimizer, Vec<NodeId>) {
     (vfe, ids)
 }
 
-fn synchrony_fixture() -> &'static QuantumKuramotoNetwork {
-    static FIXTURE: OnceLock<QuantumKuramotoNetwork> = OnceLock::new();
-    FIXTURE.get_or_init(|| build_network(2_048, 8, 0.0))
-}
-
 fn kuramoto_fixture() -> QuantumKuramotoNetwork {
     build_network(2_048, 8, 0.01)
 }
@@ -53,15 +49,23 @@ fn vfe_fixture() -> &'static (VFEMinimizer, Vec<NodeId>) {
     FIXTURE.get_or_init(|| build_vfe(4_096))
 }
 
-#[library_benchmark]
-fn synchrony_order_hotpath() -> f64 {
-    synchrony_order(synchrony_fixture())
+fn setup_synchrony_fixture() -> QuantumKuramotoNetwork {
+    build_network(2_048, 8, 0.0)
 }
 
-#[library_benchmark]
-fn kuramoto_step_hotpath() {
-    let mut net = kuramoto_fixture();
-    net.step(0.01);
+fn setup_kuramoto_fixture() -> QuantumKuramotoNetwork {
+    kuramoto_fixture()
+}
+
+#[library_benchmark(setup = setup_synchrony_fixture)]
+fn synchrony_order_hotpath(net: QuantumKuramotoNetwork) -> f64 {
+    black_box(synchrony_order(black_box(&net)))
+}
+
+#[library_benchmark(setup = setup_kuramoto_fixture)]
+fn kuramoto_step_hotpath(mut net: QuantumKuramotoNetwork) {
+    net.step(black_box(0.01));
+    black_box(net.node_count());
 }
 
 #[library_benchmark]
@@ -69,9 +73,9 @@ fn vfe_compute_hotpath() -> f64 {
     let (vfe, ids) = vfe_fixture();
     let mut total = 0.0;
     for &id in ids.iter().take(1024) {
-        total += vfe.compute_vfe(id, None);
+        total += black_box(vfe.compute_vfe(black_box(id), None));
     }
-    total
+    black_box(total)
 }
 
 library_benchmark_group!(
