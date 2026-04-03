@@ -3257,11 +3257,11 @@ mod tests {
                 let encoded_f16 =
                     <layer0_codec::F16Codec as layer0_codec::Layer0Codec>::encode(&f32_layer);
 
-                let d_f32 = <layer0_codec::F32Codec as layer0_codec::Layer0Codec>::distance(
+                let d_f32 = <layer0_codec::F32Codec as layer0_codec::Layer0Codec>::distance_sq(
                     &encoded_f32,
                     &query,
                 );
-                let d_f16 = <layer0_codec::F16Codec as layer0_codec::Layer0Codec>::distance(
+                let d_f16 = <layer0_codec::F16Codec as layer0_codec::Layer0Codec>::distance_sq(
                     &encoded_f16,
                     &query,
                 );
