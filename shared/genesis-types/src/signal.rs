@@ -369,13 +369,9 @@ impl SpikeComponents {
         if n == 0 {
             return true;
         }
-        let max_index = SPIKE_MAX_COMPONENTS as u16;
-        if indices[0] >= max_index {
-            return false;
-        }
         let mut i = 1usize;
         while i < n {
-            if indices[i] >= max_index || indices[i - 1] >= indices[i] {
+            if indices[i - 1] >= indices[i] {
                 return false;
             }
             i += 1;
