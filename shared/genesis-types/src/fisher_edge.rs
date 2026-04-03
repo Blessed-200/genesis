@@ -98,7 +98,6 @@ impl FisherEdgeMetric {
             .is_ok()
     }
 
-    #[inline(always)]
     fn increment_degree(&mut self, n: NodeId) {
         let pos = self
             .node_degrees

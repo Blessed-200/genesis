@@ -1459,3 +1459,29 @@ Remaining risk:
 - `cargo test --workspace`
 - `! cargo check --workspace 2>&1 | grep "^warning:"`
 - `scripts/check_english_only.sh`
+
+## 1.9 Review-followup: branch update for prior PR findings (2026-04-03)
+
+### Root cause
+
+- The last PR left three follow-up findings unresolved: an inconsistent fixture edge-count assignment in HNSW tests, a redundant SmallVec budget assertion, and an unsafe enum transmute pattern in witness replay.
+- A hot-path helper in `fisher_edge.rs` used `#[inline(always)]` without demonstrated need, which conflicts with pedantic lint expectations for forced inlining.
+
+### File-level actions
+
+1. `core/genesis-topology/src/hnsw.rs`
+   - Keep fixture bookkeeping aligned with internal semantics by assigning the directed layer-0 edge total directly to `edge_count_layer0_undirected` in the worst-case fixture setup.
+   - Remove the redundant `<=` budget assertion once exact-boundary assertions are already enforced.
+2. `shared/genesis-types/src/fisher_edge.rs`
+   - Remove forced inlining from `increment_degree`.
+3. `shared/genesis-types/src/proof.rs`
+   - Add `AxiomID::from_u8_unchecked` with explicit `// SAFETY:` invariants.
+   - Replace direct `transmute` in `replay_witness` with range check + helper call.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo clippy -p genesis-types --all-targets -- -D clippy::pedantic`
+- `scripts/check_english_only.sh`

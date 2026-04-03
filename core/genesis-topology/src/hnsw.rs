@@ -3835,7 +3835,7 @@ mod scaling_tests {
             0,
             "layer-0 directed edge count must be even in a bidirectional fixture"
         );
-        graph.edge_count_layer0_undirected = directed_layer0_edges / 2;
+        graph.edge_count_layer0_undirected = directed_layer0_edges;
 
         // Create a NeighborIter and exhaust it, tracking the maximum seen.len()
         let iter = NeighborIter {
@@ -3885,18 +3885,6 @@ mod scaling_tests {
         assert_eq!(
             max_seen_len, MAX_UNIQUE_NEIGHBOR_BUDGET,
             "Seen set must hit the exact inline budget boundary"
-        );
-
-        // Assert we never exceeded the budget.
-        assert!(
-            max_seen_len <= MAX_UNIQUE_NEIGHBOR_BUDGET,
-            "SmallVec spilled! max_seen_len={}, budget={}. \
-             Check M={}, M0={}, MAX_LAYERS={}",
-            max_seen_len,
-            MAX_UNIQUE_NEIGHBOR_BUDGET,
-            M,
-            M0,
-            MAX_LAYERS
         );
 
         // Verify the SmallVec never allocated on the heap by checking spilled() method
