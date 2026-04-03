@@ -1,5 +1,8 @@
 version: 2.1
 
+orbs:
+  node: circleci/node@7.2.1
+
 jobs:
   build:
     docker:
@@ -8,20 +11,20 @@ jobs:
     resource_class: large
     steps:
       - checkout
+
+      # El orb gestiona la instalación de pnpm con caché y permisos automáticamente
+      - node/install-packages:
+          pkg-manager: pnpm
+
       - run:
-          name: Install dependencies
-          command: |
-            npm install -g pnpm
-            pnpm install
-            npx playwright install --with-deps
+          name: Install Playwright browsers
+          command: npx playwright install --with-deps
+
       - run:
           name: Run tests
           command: |
-            mkdir test-results
-            export PLAYWRIGHT_JUNIT_OUTPUT_DIR=test-results
-            export PLAYWRIGHT_JUNIT_OUTPUT_NAME=results.xml
+            mkdir -p test-results
             pnpm run serve &
-            # Wait for server to be ready
             echo "Waiting for server to be ready..."
             for i in {1..30}; do
               if curl -f http://localhost:3000 > /dev/null 2>&1; then
@@ -36,12 +39,19 @@ jobs:
               sleep 2
             done
             TESTFILES=$(circleci tests glob "specs/e2e/**/*.spec.ts")
-            echo "$TESTFILES" | circleci tests run --command="xargs pnpm playwright test --config=playwright.config.ci.ts --reporter=junit" --verbose --split-by=timings
+            echo "$TESTFILES" | circleci tests run \
+              --command="xargs pnpm playwright test --config=playwright.config.ci.ts --reporter=junit" \
+              --verbose \
+              --split-by=timings
+
       - store_test_results:
           path: test-results
 
+      - store_artifacts:
+          path: test-results
+          destination: test-results
+
 workflows:
-  version: 2
   build_and_test:
     jobs:
       - build
