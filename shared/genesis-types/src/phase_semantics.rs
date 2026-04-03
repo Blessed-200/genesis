@@ -247,7 +247,7 @@ impl SemanticCluster {
 #[cfg(test)]
 mod tests {
     use super::{SemanticCluster, SemanticMarker, SEMANTIC_CLUSTER_MAX_NODES};
-    use crate::NodeId;
+    use crate::{GenesisError, NodeId};
 
     #[test]
     fn semantic_cluster_from_nodes_valid_slice_roundtrips() {
@@ -277,6 +277,17 @@ mod tests {
     }
 
     #[test]
+    fn semantic_cluster_from_nodes_rejects_invalid_sentinel_within_capacity() {
+        let within_capacity = [
+            NodeId::try_new(1).expect("1 is inside the valid NodeId range"),
+            NodeId::INVALID,
+        ];
+        assert!(
+            SemanticCluster::from_nodes(&within_capacity, SemanticMarker::Certainty, 1.0).is_none()
+        );
+    }
+
+    #[test]
     fn semantic_cluster_from_nodes_rejects_non_monotonic_or_duplicate_input() {
         let duplicate = [
             NodeId::try_new(2).expect("2 is inside the valid NodeId range"),
@@ -290,6 +301,21 @@ mod tests {
         ];
         assert!(
             SemanticCluster::from_nodes(&non_monotonic, SemanticMarker::Conflict, 0.2).is_none()
+        );
+    }
+
+    #[test]
+    fn semantic_cluster_canonical_key_rejects_out_of_range_node_count() {
+        let invalid = SemanticCluster {
+            nodes: [NodeId::INVALID; SEMANTIC_CLUSTER_MAX_NODES],
+            node_count: (SEMANTIC_CLUSTER_MAX_NODES + 1) as u8,
+            marker: SemanticMarker::Certainty,
+            coherence: 1.0,
+        };
+
+        assert_eq!(
+            invalid.canonical_key(),
+            Err(GenesisError::InvariantViolation { axiom_id: 4 })
         );
     }
 }

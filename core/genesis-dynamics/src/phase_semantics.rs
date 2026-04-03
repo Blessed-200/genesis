@@ -729,7 +729,7 @@ mod tests {
     use crate::oscillator::QuantumOscillator;
 
     fn id(raw: u64) -> NodeId {
-        NodeId::try_new(raw).expect("NodeId válido")
+        NodeId::try_new(raw).expect("failed to create NodeId")
     }
 
     fn network_with_phases(phases: &[f64], amplitudes: &[f64]) -> QuantumKuramotoNetwork {
