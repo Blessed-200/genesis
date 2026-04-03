@@ -192,6 +192,48 @@ mod integration_tests {
         let _ = SPIKE_MAX_COMPONENTS;
         let _ = METRIC_WEIGHTS;
 
+        // Phase-semantics primitives
+        let _phase_region = PhaseRegion::Certainty;
+        let _marker = SemanticMarker::Exploration;
+        let _metastate = MetaState::ExploratoryFlux;
+        let _node_state = NodeSemanticState {
+            node: NodeId::try_new(1).expect("1 is inside the valid NodeId range"),
+            marker: SemanticMarker::Integration,
+            phase: 0.0,
+            amplitude: 1.0,
+            stability: 1.0,
+        };
+        let _field_state = CognitiveFieldState {
+            dominant_marker: SemanticMarker::Certainty,
+            coherence: 1.0,
+            semantic_entropy: 0.0,
+            tension: 0.0,
+        };
+        let _network_state = NetworkSemanticState {
+            dominant_state: SemanticMarker::Certainty,
+            coherence: 1.0,
+            diversity: 0.0,
+            metastability: 0.0,
+        };
+        let _tension_edge = SemanticTensionEdge {
+            node_a: NodeId::try_new(2).expect("2 is inside the valid NodeId range"),
+            node_b: NodeId::try_new(3).expect("3 is inside the valid NodeId range"),
+            divergence: 0.5,
+        };
+        let _trace = SemanticTrace {
+            previous_marker: SemanticMarker::Conflict,
+            duration: 4,
+        };
+        let _cluster = SemanticCluster::from_nodes(
+            &[
+                NodeId::try_new(5).expect("5 is inside the valid NodeId range"),
+                NodeId::try_new(8).expect("8 is inside the valid NodeId range"),
+            ],
+            SemanticMarker::Exploration,
+            0.75,
+        )
+        .expect("cluster fits fixed-capacity representation");
+
         // Proof system constants
         let _ = LAMBDA2_MIN;
         let _ = PROOF_PENALTY;

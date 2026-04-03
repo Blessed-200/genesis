@@ -475,7 +475,7 @@ impl OscillatorSlab {
     }
 
     #[cfg(test)]
-    fn rebuild_count_for_test(&self) -> usize {
+    const fn rebuild_count_for_test(&self) -> usize {
         self.rebuild_count.get()
     }
 }

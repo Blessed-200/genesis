@@ -5,9 +5,12 @@
 //!
 //! AX-ID: AXIOMA-004, AXIOMA-006, H_dinámica, H_información
 
-use smallvec::SmallVec;
-
 use crate::NodeId;
+
+/// Maximum inline capacity for a semantic cluster node list.
+///
+/// AX-ID: AXIOMA-004, AXIOMA-006
+pub const SEMANTIC_CLUSTER_MAX_NODES: usize = 8;
 
 /// Semantic partition of wrapped phase `[0, 2π)`.
 ///
@@ -124,11 +127,13 @@ pub struct SemanticTrace {
 /// Resonant local cluster of semantically aligned nodes.
 ///
 /// AX-ID: AXIOMA-004, AXIOMA-006
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct SemanticCluster {
-    /// Cluster member nodes.
-    pub nodes: SmallVec<[NodeId; 8]>,
+    /// Cluster member nodes in canonical sorted order.
+    pub nodes: [NodeId; SEMANTIC_CLUSTER_MAX_NODES],
+    /// Number of active entries in `nodes`.
+    pub node_count: u8,
     /// Cluster representative marker.
     pub marker: SemanticMarker,
     /// Mean local coherence in `[0,1]`.
@@ -149,4 +154,36 @@ pub struct NetworkSemanticState {
     pub diversity: f64,
     /// Temporal marker variability proxy.
     pub metastability: f64,
+}
+
+impl SemanticCluster {
+    /// Builds a semantic cluster from an ordered node slice.
+    ///
+    /// Returns `None` when the slice exceeds `SEMANTIC_CLUSTER_MAX_NODES`.
+    ///
+    /// AX-ID: AXIOMA-004, AXIOMA-006
+    #[must_use]
+    pub fn from_nodes(nodes: &[NodeId], marker: SemanticMarker, coherence: f64) -> Option<Self> {
+        if nodes.len() > SEMANTIC_CLUSTER_MAX_NODES {
+            return None;
+        }
+
+        let mut fixed = [NodeId::INVALID; SEMANTIC_CLUSTER_MAX_NODES];
+        fixed[..nodes.len()].copy_from_slice(nodes);
+
+        Some(Self {
+            nodes: fixed,
+            node_count: nodes.len() as u8,
+            marker,
+            coherence,
+        })
+    }
+
+    /// Returns active cluster members as a slice.
+    ///
+    /// AX-ID: AXIOMA-004, AXIOMA-006
+    #[must_use]
+    pub fn nodes(&self) -> &[NodeId] {
+        &self.nodes[..usize::from(self.node_count)]
+    }
 }

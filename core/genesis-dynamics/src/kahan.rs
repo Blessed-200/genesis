@@ -67,7 +67,7 @@ impl KahanAccumulator {
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
-    pub fn compensation_abs(self) -> f64 {
+    pub const fn compensation_abs(self) -> f64 {
         self.compensation.abs()
     }
 }

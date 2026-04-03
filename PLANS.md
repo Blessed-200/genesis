@@ -1626,3 +1626,28 @@ Remaining risk:
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
 - `cargo clippy --workspace --all-targets`
+
+## 1.16 CRATE-000 review-finding closure (2026-04-03)
+
+### Root cause
+
+- Workspace-level clippy lint policy was declared but not opted into by member crates via `[lints] workspace = true`.
+- Crate-root export smoke test in `genesis-types` did not exercise newly exported phase-semantics primitives.
+- `SemanticCluster` used `SmallVec` under `#[repr(C)]`, which is not a C-ABI-stable field representation.
+
+### File-level actions
+
+1. `core/genesis-dynamics/Cargo.toml`, `core/genesis-math/Cargo.toml`, `core/genesis-topology/Cargo.toml`, `shared/genesis-types/Cargo.toml`, `fuzz/Cargo.toml`
+   - Add top-level `[lints]` with `workspace = true`.
+2. `shared/genesis-types/src/lib.rs`
+   - Extend `all_public_exports_accessible` to explicitly reference all phase-semantics primitive re-exports.
+3. `shared/genesis-types/src/phase_semantics.rs` + `core/genesis-dynamics/src/phase_semantics.rs`
+   - Replace `SemanticCluster.nodes: SmallVec<[NodeId; 8]>` with C-stable fixed storage (`[NodeId; 8]` + `node_count`).
+   - Update cluster construction logic and any call sites to preserve semantics while respecting fixed-capacity contract.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo clippy --workspace --all-targets`
+- `cargo check --workspace 2>&1 | grep "^warning:"`

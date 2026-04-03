@@ -51,7 +51,7 @@ struct SlabBlock {
 }
 
 impl SlabBlock {
-    fn zeroed() -> Self {
+    const fn zeroed() -> Self {
         Self {
             lanes: [f32::INFINITY; BLOCK_STRIDE],
         }
@@ -83,7 +83,7 @@ impl<T: Default> Default for CachePadded<T> {
 }
 
 impl<T> CachePadded<T> {
-    fn new(value: T) -> Self {
+    const fn new(value: T) -> Self {
         Self { value }
     }
 }
@@ -121,11 +121,11 @@ impl<const CAP: usize> FixedHeap<CAP> {
         }
     }
 
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         self.len
     }
 
-    fn worst(&self) -> f32 {
+    const fn worst(&self) -> f32 {
         if self.len == 0 {
             f32::INFINITY
         } else {
@@ -177,7 +177,7 @@ fn compare_dist_idx(lhs: (f32, u32), rhs: (f32, u32)) -> Ordering {
 }
 
 #[inline]
-fn ordered_f64_bits(value: f64) -> u64 {
+const fn ordered_f64_bits(value: f64) -> u64 {
     let bits = value.to_bits();
     let mask = ((bits as i64) >> 63) as u64;
     bits ^ (mask | (1_u64 << 63))
@@ -598,7 +598,7 @@ impl NodeAdj {
                 self.upper
                     .as_deref()
                     .and_then(|layers| layers.get(layer - 1))
-                    .map_or([].iter(), |neighbors| neighbors.iter()),
+                    .map_or_else(|| [].iter(), |neighbors| neighbors.iter()),
             )
         }
     }
@@ -790,7 +790,7 @@ impl HnswNode {
     /// guard to detect any invariant breach before `encode_layer0`.
     ///
     /// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
-    fn new(id: NodeId, vec: SparseCliffordVector, max_layer: usize) -> Self {
+    const fn new(id: NodeId, vec: SparseCliffordVector, max_layer: usize) -> Self {
         Self { id, vec, max_layer }
     }
 }
@@ -1069,7 +1069,7 @@ impl HnswGraph {
     }
 
     #[inline]
-    fn layer_max_neighbors(layer: usize) -> usize {
+    const fn layer_max_neighbors(layer: usize) -> usize {
         if layer == 0 {
             M0
         } else {
@@ -2248,11 +2248,10 @@ mod tests {
         let mut scored: Vec<u64> = g
             .node_neighbors_iter(idx, layer)
             .map(|nb| {
-                let dist = if let Some(query_f32) = &query_f32 {
-                    g.distance_to_layer0_node_sq(query_f32, nb as usize)
-                } else {
-                    g.distance_to_node_sq(&g.nodes[idx].vec, nb as usize, layer)
-                };
+                let dist = query_f32.as_ref().map_or_else(
+                    || g.distance_to_node_sq(&g.nodes[idx].vec, nb as usize, layer),
+                    |query_f32| g.distance_to_layer0_node_sq(query_f32, nb as usize),
+                );
                 let dist_bits = (dist as f32).to_bits();
                 ((dist_bits as u64) << 32) | u64::from(nb)
             })
@@ -2353,7 +2352,7 @@ mod tests {
         let mut graph = HnswGraph::new(16);
         for i in 0..100_u64 {
             graph
-                .insert(make_id(i), &make_vec(i as f64 * 0.01 + 0.2))
+                .insert(make_id(i), &make_vec((i as f64).mul_add(0.01, 0.2)))
                 .expect("insert");
         }
         for (idx, slab_idx) in graph.layer0_soa.node_to_slab.iter().enumerate() {
@@ -2366,7 +2365,7 @@ mod tests {
         let mut graph = HnswGraph::new(16);
         for i in 0..4_u64 {
             graph
-                .insert(make_id(i), &make_vec(i as f64 * 0.1 + 0.1))
+                .insert(make_id(i), &make_vec((i as f64).mul_add(0.1, 0.1)))
                 .expect("insert");
         }
         graph.remove_node(make_id(2)).expect("remove");
@@ -3102,9 +3101,9 @@ mod tests {
                 !after.contains(&dropped),
                 "removed edge {idx}->{dropped_idx} should be absent"
             );
-            let reverse: Vec<u32> = g.node_neighbors_iter(dropped_idx, 0).collect();
             assert!(
-                !reverse.contains(&(idx as u32)),
+                !g.node_neighbors_iter(dropped_idx, 0)
+                    .any(|x| x == (idx as u32)),
                 "reverse edge {dropped_idx}->{idx} should be absent"
             );
         }

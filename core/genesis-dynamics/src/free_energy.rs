@@ -42,6 +42,7 @@ fn is_finite_vec16(values: &[f64; 16]) -> bool {
     values.iter().all(|v| v.is_finite())
 }
 
+#[allow(clippy::missing_const_for_fn)]
 fn sanitize_trace(trace: f64) -> f64 {
     if !trace.is_finite() {
         return 1.0;
@@ -267,7 +268,7 @@ impl VFEMinimizer {
     /// Creates an empty VFE minimiser with no registered nodes.
     ///
     /// AX-ID: AXIOMA-003, H_información (LEY_FUNDACIONAL §3.3)
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             beliefs: Vec::new(),
             fisher: Vec::new(),

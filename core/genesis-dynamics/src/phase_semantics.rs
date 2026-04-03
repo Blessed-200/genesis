@@ -337,13 +337,15 @@ impl PhaseSemanticsEngine {
                 if !self
                     .clusters
                     .iter()
-                    .any(|cluster| cluster.nodes == assignment.nodes)
+                    .any(|cluster| cluster.nodes() == assignment.nodes.as_slice())
                 {
-                    self.clusters.push(SemanticCluster {
-                        nodes: assignment.nodes,
-                        marker: assignment.marker,
-                        coherence: assignment.coherence,
-                    });
+                    if let Some(cluster) = SemanticCluster::from_nodes(
+                        assignment.nodes.as_slice(),
+                        assignment.marker,
+                        assignment.coherence,
+                    ) {
+                        self.clusters.push(cluster);
+                    }
                 }
             }
         }
@@ -352,7 +354,7 @@ impl PhaseSemanticsEngine {
             rhs.coherence
                 .total_cmp(&lhs.coherence)
                 .then_with(|| lhs.marker.cmp(&rhs.marker))
-                .then_with(|| lhs.nodes.len().cmp(&rhs.nodes.len()).reverse())
+                .then_with(|| lhs.node_count.cmp(&rhs.node_count).reverse())
         });
     }
 

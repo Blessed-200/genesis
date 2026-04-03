@@ -114,8 +114,10 @@ impl CriticalityMonitor {
         }
         let s_half = (s_min - 0.5).max(0.5);
         let s_half_ln = s_half.ln();
-        let sum_ln: f64 =
-            sizes.iter().map(|&s| f64::from(s).ln()).sum::<f64>() - (n as f64) * s_half_ln;
+        let sum_ln: f64 = (n as f64).mul_add(
+            -s_half_ln,
+            sizes.iter().map(|&s| f64::from(s).ln()).sum::<f64>(),
+        );
         if sum_ln < f64::MIN_POSITIVE {
             return None;
         }
