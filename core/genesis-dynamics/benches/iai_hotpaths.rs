@@ -44,6 +44,11 @@ fn kuramoto_fixture() -> QuantumKuramotoNetwork {
     build_network(2_048, 8, 0.01)
 }
 
+thread_local! {
+    static SYNCHRONY_FIXTURE: RefCell<Option<QuantumKuramotoNetwork>> = const { RefCell::new(None) };
+    static KURAMOTO_FIXTURE: RefCell<Option<QuantumKuramotoNetwork>> = const { RefCell::new(None) };
+}
+
 fn vfe_fixture() -> &'static (VFEMinimizer, Vec<NodeId>) {
     static FIXTURE: OnceLock<(VFEMinimizer, Vec<NodeId>)> = OnceLock::new();
     FIXTURE.get_or_init(|| build_vfe(4_096))
