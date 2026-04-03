@@ -1598,3 +1598,31 @@ Remaining risk:
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
 - `scripts/check_english_only.sh`
+
+## 1.15 CRATE-000 semantic/type unification follow-up (2026-04-03)
+
+### Root cause
+
+- Phase-semantics primitive enums/records are defined only in `genesis-dynamics`, so CRATE-000 is not the single source of truth for shared semantic types.
+- Core G(1,3) cardinality constants are re-declared as local literals in math modules instead of flowing from `genesis-types` constants.
+- Workspace-wide clippy policy is not centrally configured, so lint strictness can drift across crates.
+
+### File-level actions
+
+1. `shared/genesis-types/src/phase_semantics.rs` + `shared/genesis-types/src/lib.rs`
+   - Introduce canonical primitive phase-semantic types (`PhaseRegion`, `SemanticMarker`, `MetaState`, `NodeSemanticState`, `CognitiveFieldState`, `SemanticTensionEdge`, `SemanticTrace`, `SemanticCluster`, `NetworkSemanticState`) in CRATE-000 with `#[repr(C)]` for HPC-friendly ABI layout.
+   - Re-export these types from crate root.
+2. `core/genesis-dynamics/src/phase_semantics.rs` + `core/genesis-dynamics/src/lib.rs`
+   - Remove duplicated primitive type definitions and import canonical types from `genesis-types`.
+   - Keep `PhaseSemanticsEngine` implementation in dynamics unchanged semantically.
+3. `core/genesis-math/src/sign.rs` + `core/genesis-math/src/basis.rs`
+   - Replace duplicated G(1,3) literal cardinality constants with `genesis-types` constants to reinforce single-source Clifford dimensions.
+4. `Cargo.toml`
+   - Add `[workspace.lints.clippy]` and set `all`, `pedantic`, and `nursery` to `deny`.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo clippy --workspace --all-targets`

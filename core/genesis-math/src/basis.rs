@@ -18,16 +18,20 @@
 //! - `CANONICAL_G13` is baked into `.rodata` at compile time.
 //! - No runtime construction. Use `&CANONICAL_G13`.
 
+use genesis_types::{CLIFFORD_BASIS_SIZE, MAX_CLIFFORD_GRADE};
+
 // ── Dimensional constants ─────────────────────────────────────────────────────
 
 /// Number of basis vectors in G(1,3).
-pub const DIM: usize = 4;
+pub const DIM: usize = MAX_CLIFFORD_GRADE;
 
 /// Total blade count: 2^DIM = 16.
-pub const TOTAL_BLADES: usize = 1 << DIM;
+pub const TOTAL_BLADES: usize = CLIFFORD_BASIS_SIZE;
 
 /// Maximum blade bitmask for G(1,3): 0b1111 = 15.
 pub const MAX_BLADE_MASK: usize = TOTAL_BLADES - 1;
+
+const _: () = assert!(DIM == 4);
 
 // ── Precomputed immutable tables (baked into .rodata) ─────────────────────────
 

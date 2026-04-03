@@ -46,6 +46,7 @@ pub mod constants;
 pub mod error;
 pub mod fisher_edge;
 mod multivector_types;
+pub mod phase_semantics;
 pub mod proof;
 pub mod signal;
 
@@ -106,6 +107,11 @@ pub use fisher_edge::FisherEdgeMetric;
 pub use multivector_types::DerivedMetadata;
 // — Proof System —
 pub use proof::{AxiomGuard, AxiomID, Mutation, Proof, WitnessBuilder};
+// — Phase semantics primitives —
+pub use phase_semantics::{
+    CognitiveFieldState, MetaState, NetworkSemanticState, NodeSemanticState, PhaseRegion,
+    SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
+};
 // — Signals —
 pub use signal::{
     BladeIndex, Certified, CognitiveDomain, ConsciousnessDomain, DomainConsolidationSignal,

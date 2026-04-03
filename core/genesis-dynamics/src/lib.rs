@@ -85,10 +85,11 @@ pub use criticality::{
     SOC_R_SYNC_MIN,
 };
 pub use free_energy::{Belief, FisherEdgeMetric, FisherInfo, VFEMinimizer};
+pub use genesis_types::{
+    CognitiveFieldState, MetaState, NetworkSemanticState, NodeSemanticState, PhaseRegion,
+    SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
+};
 pub use kuramoto::QuantumKuramotoNetwork;
 pub use oscillator::QuantumOscillator;
-pub use phase_semantics::{
-    CognitiveFieldState, MetaState, NetworkSemanticState, NodeSemanticState, PhaseRegion,
-    PhaseSemanticsEngine, SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
-};
+pub use phase_semantics::PhaseSemanticsEngine;
 pub use synchrony::{synchronized_cluster, synchrony_order, synchrony_order_fast};
