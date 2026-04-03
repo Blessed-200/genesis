@@ -31,7 +31,7 @@
 //! - `FlatSparseVector` — merged into this type (this type IS the DAX layout).
 //! - `from_sorted_components` — replaced by `from_dense_buf`.
 
-use genesis_types::constants::COGNITIVE_PLANCK_CONSTANT;
+use genesis_types::constants::{COGNITIVE_PLANCK_CONSTANT, METRIC_WEIGHTS};
 use genesis_types::error::{GenesisError, SignatureViolationCode};
 use genesis_types::DerivedMetadata;
 
@@ -662,34 +662,6 @@ impl crate::GeometricProduct for SparseCliffordVector {
 /// produce higher curvature at boundaries between distinct semantic grades.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
-/// Grade-weighted metric on G(1,3) blade coefficients.
-///
-/// Derived **at compile time** from `GRADE_TABLE` to guarantee consistency:
-/// `M`ETRIC_WEIGHTS[i]` = GRADE_WEIGHTS[`GRADE_TABLE[i]`]`
-///
-/// Grade semantics (AXIOMA-001, H_structure):
-/// - Grade 0 (scalar):      2.0 — global orientation, highest weight
-/// - Grade 1 (vectors):     1.5 — primary semantic content (4 blades)
-/// - Grade 2 (bivectors):   1.0 — geometric relations (6 blades)
-/// - Grade 3 (trivectors):  0.5 — oriented volume (4 blades)
-/// - Grade 4 (pseudoscalar):0.3 — global orientation (1 blade)
-///
-/// The previous manually-listed version had 4 incorrect assignments
-/// (blades 3, 7, 8, 12 were assigned the wrong grade's weight due to
-/// non-sequential blade-to-grade mapping). This version is provably correct.
-///
-/// AX-ID: AXIOMA-001, H_estructura (LEY_FUNDACIONAL §3.1)
-pub(crate) const METRIC_WEIGHTS: [f64; TOTAL_BLADES] = {
-    const GRADE_WEIGHTS: [f64; 5] = [2.0, 1.5, 1.0, 0.5, 0.3];
-    let mut w = [0.0f64; TOTAL_BLADES];
-    let mut i = 0;
-    while i < TOTAL_BLADES {
-        w[i] = GRADE_WEIGHTS[crate::basis::GRADE_TABLE[i] as usize];
-        i += 1;
-    }
-    w
-};
-
 /// Grade-differentiated squared semantic distance in G(1,3).
 ///
 /// ```text

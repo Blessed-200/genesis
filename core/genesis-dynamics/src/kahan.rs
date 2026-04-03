@@ -19,7 +19,7 @@ impl KahanAccumulator {
     /// Creates a zero-initialized accumulator.
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
-    #[inline(always)]
+    #[inline]
     pub const fn new() -> Self {
         Self {
             sum: 0.0,
@@ -30,7 +30,7 @@ impl KahanAccumulator {
     /// Adds one value using Kahan compensation.
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
-    #[inline(always)]
+    #[inline]
     pub fn add(&mut self, value: f64) {
         let y = value - self.compensation;
         let t = self.sum + y;
@@ -41,7 +41,7 @@ impl KahanAccumulator {
     /// Merges another partial accumulator preserving compensation quality.
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
-    #[inline(always)]
+    #[inline]
     pub fn merge(&mut self, other: Self) {
         self.add(other.sum);
         self.add(-other.compensation);
@@ -50,7 +50,7 @@ impl KahanAccumulator {
     /// Returns the accumulated sum with compensation applied.
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
-    #[inline(always)]
+    #[inline]
     pub fn total(self) -> f64 {
         self.sum - self.compensation
     }
@@ -58,7 +58,7 @@ impl KahanAccumulator {
     /// Returns the accumulated sum with compensation applied.
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
-    #[inline(always)]
+    #[inline]
     pub fn sum(self) -> f64 {
         self.total()
     }
@@ -66,7 +66,7 @@ impl KahanAccumulator {
     /// Returns the absolute compensation magnitude for precision diagnostics.
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
-    #[inline(always)]
+    #[inline]
     pub fn compensation_abs(self) -> f64 {
         self.compensation.abs()
     }

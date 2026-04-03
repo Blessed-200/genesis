@@ -4,64 +4,64 @@ use core::cell::{Cell, UnsafeCell};
 
 use genesis_types::NodeId;
 
-/// Oscilador cuántico por nodo con amplitudes complejas por grado de Clifford.
+/// Per-node quantum oscillator with complex amplitudes per Clifford grade.
 ///
-/// # Estructura de estado
+/// # State structure
 ///
-/// Cada nodo `i` tiene 5 grados de Clifford (0=escalar…4=pseudoescalar).
-/// Para cada grado `g`, el estado cuántico complejo es:
+/// Each node `i` carries 5 Clifford grades (`0 = scalar` … `4 = pseudoscalar`).
+/// For each grade `g`, the complex quantum state is:
 ///
 /// ```text
 /// ψ_{i,g} = amplitude[g] · e^{iφ_{i,g}}
 /// ```
 ///
-/// donde:
-/// - `phases[g]` — ángulo en radianes, acumulado libremente (sin wrapping)
-/// - `amplitudes[g]` — módulo ∈ [0.0, 1.0], certeza inferencial del oscilador
+/// where:
+/// - `phases[g]` — phase angle in radians, accumulated without wrapping
+/// - `amplitudes[g]` — modulus in `[0.0, 1.0]`, oscillator inferential certainty
 ///
-/// # Amplitudes: semántica y acoplamiento Fisher
+/// # Amplitudes: semantics and Fisher coupling
 ///
-/// `amplitudes[g]` inicializa en `1.0` para todos los grados.
-/// Con esta inicialización, el comportamiento de Kuramoto es **idéntico al anterior**:
-/// el parámetro de orden `r_sync` reproduce exactamente los valores previos.
+/// `amplitudes[g]` initializes to `1.0` for all grades.
+/// With this initialization, Kuramoto behavior is **identical to the previous version**:
+/// the `r_sync` order parameter reproduces prior values exactly.
 ///
-/// Cuando `VFEMinimizer` actualiza un nodo, el sistema externo (CRATE-003 pipeline)
-/// acopla la amplitud con `FisherInfo::trace` normalizado:
+/// When `VFEMinimizer` updates a node, the external CRATE-003 pipeline
+/// couples amplitude to normalized `FisherInfo::trace`:
 ///
 /// ```text
 /// amplitude[g] = (FisherInfo::trace / TRACE_INITIAL).clamp(0.0, 1.0)
 /// ```
 ///
-/// - Nodo con **alta VFE** (alta sorpresa, dominio no aprendido):
-///   `FisherInfo::trace ≈ 1.0` → `amplitude ≈ 1.0` → contribuye plenamente a `r_sync`
-/// - Nodo con **baja VFE** (dominio saturado, AXIOMA-008):
-///   `FisherInfo::trace → 0` → `amplitude → 0` → contribución a `r_sync` suprimida
+/// - Node with **high VFE** (high surprise, not yet learned):
+///   `FisherInfo::trace ≈ 1.0` → `amplitude ≈ 1.0` → full `r_sync` contribution
+/// - Node with **low VFE** (saturated domain, AXIOMA-008):
+///   `FisherInfo::trace → 0` → `amplitude → 0` → suppressed `r_sync` contribution
 ///
-/// Esto hace que `r_sync` mida **coherencia angular ponderada por certeza inferencial**,
-/// no solo coherencia angular bruta. Un nodo que ha consolidado conocimiento reduce
-/// su peso en la dinámica colectiva, análogo a la mielinización (AXIOMA-015).
+/// This makes `r_sync` measure **angular coherence weighted by inferential certainty**,
+/// not only raw angular coherence. A node that has consolidated knowledge reduces
+/// its weight in collective dynamics, analogous to myelination (AXIOMA-015).
 ///
-/// # Preparación para CRATE-004
-/// `DiscreteRicciFlow` puede leer `complex_state(g)` por nodo para calcular
-/// la amplitud colectiva del cluster antes de aplicar curvatura Ollivier-Ricci.
-/// Clusters con amplitud media alta → alta VFE → candidatos para colapso de wormhole.
+/// # Preparation for CRATE-004
+/// `DiscreteRicciFlow` can read `complex_state(g)` per node to compute
+/// cluster-level amplitude before applying Ollivier-Ricci curvature.
+/// Clusters with high mean amplitude imply high VFE and are wormhole-collapse candidates.
 ///
-/// # Retrocompatibilidad
-/// `phases`, `frequencies`, `node_id`, `state`: campo, firma y semántica idénticos.
-/// `new()` y `with_phases()`: añaden campo `amplitudes = [1.0; 5]` (sin cambio de comportamiento).
+/// # Backward compatibility
+/// `phases`, `frequencies`, `node_id`, `state`: unchanged fields, signatures, and semantics.
+/// `new()` and `with_phases()`: add `amplitudes = [1.0; 5]` with no behavior change.
 ///
 /// AX-ID: AXIOMA-006, AXIOMA-008, `H_dinámica` (LEY_FUNDACIONAL §3.2)
 #[derive(Debug, Clone, Copy)]
 pub struct QuantumOscillator {
-    /// φ_{i,g} — fases por grado Clifford (g = 0..=4), en radianes.
+    /// φ_{i,g} — phases per Clifford grade (`g = 0..=4`), in radians.
     pub phases: [f64; 5],
-    /// A_{i,g} — amplitud por grado Clifford (g = 0..=4), ∈ [0.0, 1.0].
+    /// A_{i,g} — amplitude per Clifford grade (`g = 0..=4`), in `[0.0, 1.0]`.
     ///
-    /// Inicializa en `1.0` para todos los grados (prior de máxima certeza /
-    /// máxima contribución a `r_sync`).
+    /// Initializes to `1.0` for all grades (maximum-certainty prior /
+    /// maximum `r_sync` contribution).
     ///
-    /// Decrece cuando `FisherInfo::trace` del nodo decrece (aprendizaje activo).
-    /// Vuelve a subir si el nodo entra en zona de alta VFE (exploración nueva).
+    /// Decreases when node `FisherInfo::trace` decreases (active learning).
+    /// Increases again when the node re-enters a high-VFE regime (new exploration).
     ///
     /// El decaimiento es **responsabilidad del sistema externo** que llama
     /// `update_amplitude_from_fisher()` tras cada `VFEMinimizer::update()`.
@@ -343,7 +343,7 @@ impl OscillatorSlab {
             let lanes = &*self.lanes.get();
             let blocks = &mut *self.blocks.get();
             let n = lanes.len();
-            let block_count = (n + 7) / 8;
+            let block_count = n.div_ceil(8);
             let old_len = blocks.len();
             if block_count <= old_len {
                 for block in &mut blocks[..block_count] {
@@ -382,11 +382,10 @@ impl OscillatorSlab {
         unsafe {
             let lanes = &mut *self.lanes.get();
             let blocks = &*self.blocks.get();
-            for idx in 0..lanes.len() {
+            for (idx, osc) in lanes.iter_mut().enumerate() {
                 let b = idx / 8;
                 let lane = idx % 8;
                 let block = &blocks[b];
-                let osc = &mut lanes[idx];
                 osc.node_id = block.node_ids[lane];
                 osc.state = block.states[lane];
                 for g in 0..5 {
@@ -428,7 +427,7 @@ impl OscillatorSlab {
         self.rebuild_count.set(self.rebuild_count.get() + 1);
         let lanes = &*self.lanes.get();
         let blocks = &mut *self.blocks.get();
-        let block_count = (lanes.len() + 7) / 8;
+        let block_count = lanes.len().div_ceil(8);
         let old_len = blocks.len();
         if block_count <= old_len {
             for block in &mut blocks[..block_count] {
@@ -457,11 +456,10 @@ impl OscillatorSlab {
     unsafe fn sync_lanes_from_blocks_cells(&self) {
         let lanes = &mut *self.lanes.get();
         let blocks = &*self.blocks.get();
-        for idx in 0..lanes.len() {
+        for (idx, osc) in lanes.iter_mut().enumerate() {
             let b = idx / 8;
             let lane = idx % 8;
             let block = &blocks[b];
-            let osc = &mut lanes[idx];
             osc.node_id = block.node_ids[lane];
             osc.state = block.states[lane];
             for g in 0..5 {
@@ -545,14 +543,14 @@ impl QuantumOscillator {
         OscillatorState::Active
     }
 
-    /// Traza inicial de Fisher (prior no informativo).
-    /// Usada para normalizar amplitudes: `amplitude = trace / FISHER_TRACE_INITIAL`.
+    /// Initial Fisher trace (uninformative prior).
+    /// Used to normalize amplitudes: `amplitude = trace / FISHER_TRACE_INITIAL`.
     pub const FISHER_TRACE_INITIAL: f64 = 1.0;
 
-    /// Constructor canónico: fases y amplitudes iniciales máximas (1.0), frecuencias dadas.
+    /// Canonical constructor: zero phases, maximum initial amplitudes (1.0), provided frequencies.
     ///
-    /// Amplitudes `[1.0; 5]` ← prior de máxima certeza. Kuramoto se comporta
-    /// exactamente igual que antes de esta extensión.
+    /// Amplitudes `[1.0; 5]` encode maximum-certainty prior. Kuramoto behaves
+    /// exactly as before this extension.
     #[inline]
     pub const fn new(node_id: NodeId, frequencies: [f64; 5]) -> Self {
         Self {
@@ -576,18 +574,18 @@ impl QuantumOscillator {
         }
     }
 
-    /// Estado cuántico complejo del oscilador en el grado Clifford `g`.
+    /// Complex quantum oscillator state at Clifford grade `g`.
     ///
     /// ```text
     /// ψ_{i,g} = amplitude[g] · (cos(φ_{i,g}), sin(φ_{i,g}))
     /// ```
     ///
-    /// Retornado como `(re, im)` en lugar de `Complex64` para evitar
-    /// dependencia de `num-complex` en el tipo público — los callers en
-    /// CRATE-004 pueden construir `Complex64::new(re, im)` directamente.
+    /// Returned as `(re, im)` instead of `Complex64` to avoid exposing
+    /// `num-complex` in the public type; CRATE-004 callers can construct
+    /// `Complex64::new(re, im)` directly.
     ///
-    /// # Parámetro
-    /// `g` ∈ [0, 4]. Panics en debug si `g > 4`; comportamiento indefinido en release.
+    /// # Parameter
+    /// `g` ∈ `[0, 4]`. Panics in debug if `g > 4`; release requires valid caller input.
     ///
     /// # Uso en CRATE-004
     /// ```
@@ -596,7 +594,7 @@ impl QuantumOscillator {
     ///
     /// let node = NodeId::try_new(0).unwrap();
     /// let osc = QuantumOscillator::new(node, [0.0; 5]);
-    /// let (re, im) = osc.complex_state(0); // grado 0
+    /// let (re, im) = osc.complex_state(0); // grade 0
     /// let amplitude: f64 = re.hypot(im);
     /// assert!(amplitude >= 0.0);
     /// ```
@@ -604,20 +602,20 @@ impl QuantumOscillator {
     /// AX-ID: AXIOMA-006, LEY_FUNDACIONAL §3.2
     #[inline]
     pub fn complex_state(&self, g: usize) -> (f64, f64) {
-        debug_assert!(g < 5, "grado {g} fuera de rango [0,4]");
+        debug_assert!(g < 5, "grade {g} out of range [0,4]");
         let a = self.amplitudes[g];
         let (sin, cos) = self.phases[g].sin_cos();
         (a * cos, a * sin)
     }
 
-    /// Amplitud total del oscilador: norma euclidiana del vector de amplitudes.
+    /// Total oscillator amplitude: Euclidean norm of the amplitude vector.
     ///
     /// ```text
     /// |A_i| = √(Σ_g amplitudes[g]²) / √5  ∈ [0.0, 1.0]
     /// ```
     ///
-    /// Normalizado por √5 para que el máximo (todos grades = 1.0) sea 1.0.
-    /// Usado en `r_sync` ponderado para detectar certeza inferencial global del nodo.
+    /// Normalized by √5 so the maximum (`all grades = 1.0`) equals `1.0`.
+    /// Used by weighted `r_sync` to detect global inferential certainty.
     ///
     /// AX-ID: AXIOMA-006, AXIOMA-008
     #[inline]
@@ -630,23 +628,23 @@ impl QuantumOscillator {
         (sq * 0.2_f64).sqrt()
     }
 
-    /// Actualiza las amplitudes del oscilador desde la traza de Fisher actual.
+    /// Updates oscillator amplitudes from the current Fisher trace.
     ///
     /// ```text
     /// amplitude[g] = (fisher_trace / FISHER_TRACE_INITIAL).clamp(0.0, 1.0)
     /// ```
     ///
-    /// Todos los grados reciben la misma amplitud porque la traza de Fisher
-    /// en `FisherInfo` es escalar (isótropa). Cuando CRATE-004 tenga métricas
-    /// de Fisher por grado, este método puede extenderse para amplitudes por grado.
+    /// All grades receive the same amplitude because `FisherInfo` currently exposes
+    /// an isotropic scalar trace. When CRATE-004 introduces per-grade Fisher metrics,
+    /// this method can be extended to grade-specific amplitudes.
     ///
-    /// # Llamada correcta
-    /// Este método debe llamarse **inmediatamente después** de `VFEMinimizer::update()`
-    /// para un nodo, pasando `vfe.fisher_info(id).trace` como argumento.
+    /// # Correct call site
+    /// This method should be called **immediately after** `VFEMinimizer::update()`
+    /// for a node, passing `vfe.fisher_info(id).trace` as input.
     ///
-    /// # Retrocompatibilidad
-    /// Con `fisher_trace = FISHER_TRACE_INITIAL = 1.0` (prior), todas las amplitudes
-    /// permanecen en 1.0 y el comportamiento de Kuramoto es idéntico al anterior.
+    /// # Backward compatibility
+    /// With `fisher_trace = FISHER_TRACE_INITIAL = 1.0` (prior), all amplitudes
+    /// remain `1.0` and Kuramoto behavior is unchanged.
     ///
     /// AX-ID: AXIOMA-006, AXIOMA-008, LEY_FUNDACIONAL §3.2
     #[inline]
@@ -673,21 +671,21 @@ impl QuantumOscillator {
         1.0 - self.amplitude_norm()
     }
 
-    /// Fase primaria del oscilador (grado 0, escalar).
-    /// Usada para calcular `r_sync` en `synchrony.rs`.
+    /// Primary oscillator phase (grade 0 scalar).
+    /// Used to compute `r_sync` in `synchrony.rs`.
     #[inline]
     pub const fn primary_phase(&self) -> f64 {
         self.phases[0]
     }
 
-    /// Marca el oscilador como saturado. Idempotente si ya está saturado o podado.
+    /// Marks the oscillator as saturated. Idempotent if already saturated or pruned.
     pub const fn mark_saturated(&mut self, now_ns: u64) {
         if matches!(self.state, OscillatorState::Active) {
             self.state = OscillatorState::Saturated { since_ns: now_ns };
         }
     }
 
-    /// Marca el oscilador como podado. Solo desde Active o Saturated.
+    /// Marks the oscillator as pruned. Valid from Active or Saturated states.
     pub const fn mark_pruned(&mut self, now_ns: u64) {
         if !matches!(self.state, OscillatorState::Pruned { .. }) {
             self.state = OscillatorState::Pruned { at_ns: now_ns };
@@ -755,7 +753,7 @@ mod tests {
         assert!(im.abs() < 1e-15, "im debe ser 0.0 con φ=0, got {im}");
     }
 
-    /// Con amplitud 0.0, complex_state debe ser (0.0, 0.0) para cualquier fase.
+    /// With amplitude `0.0`, `complex_state` must be `(0.0, 0.0)` for any phase.
     #[test]
     fn complex_state_zero_amplitude_gives_zero() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -810,12 +808,12 @@ mod tests {
         assert_eq!(osc.amplitude_norm(), 0.0);
     }
 
-    /// amplitude_norm está en [0,1] para amplitudes en [0,1].
+    /// `amplitude_norm` stays in `[0,1]` for amplitudes in `[0,1]`.
     #[test]
     fn amplitude_norm_bounded_in_unit_interval() {
         let id = NodeId::try_new(0).expect("NodeId válido");
         let mut osc = QuantumOscillator::new(id, [0.0; 5]);
-        // Probar varios valores intermedios
+        // Validate several intermediate values.
         for v in [0.0, 0.2, 0.5, 0.7, 1.0] {
             osc.amplitudes = [v; 5];
             let n = osc.amplitude_norm();
@@ -852,7 +850,7 @@ mod tests {
         );
     }
 
-    /// La amplitud está clampeada en [0,1] incluso con valores fuera de rango.
+    /// Amplitude is clamped to `[0,1]` even for out-of-range inputs.
     #[test]
     fn update_amplitude_clamps_to_unit_interval() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -869,7 +867,7 @@ mod tests {
         }
     }
 
-    /// Verifica comportamiento monotónico: más aprendizaje → menor amplitud.
+    /// Verifies monotonic behavior: more learning implies lower amplitude.
     #[test]
     fn update_amplitude_monotone_with_fisher_trace() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -883,7 +881,7 @@ mod tests {
         osc.update_amplitude_from_fisher(0.5);
         let a_mid = osc.amplitudes[0];
 
-        // trace bajo (dominio saturado) → amplitud baja
+        // Low trace (saturated domain) -> low amplitude.
         osc.update_amplitude_from_fisher(0.1);
         let a_low = osc.amplitudes[0];
 
@@ -894,28 +892,28 @@ mod tests {
     }
 }
 
-/// Estado de vida de un oscilador cuántico.
+/// Lifecycle state of a quantum oscillator.
 ///
-/// La transición es unidireccional: Active → Saturated → Pruned.
-/// Un oscilador Pruned no participa en el cálculo de Kuramoto ni en VFE.
+/// Transition is one-way: `Active -> Saturated -> Pruned`.
+/// A pruned oscillator does not participate in Kuramoto or VFE updates.
 ///
 /// AX-ID: AXIOMA-008 (Saturated), AXIOMA-016 (Pruned)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OscillatorState {
-    /// Oscilador activo: participa en Kuramoto y VFE.
+    /// Active oscillator: participates in Kuramoto and VFE.
     #[default]
     Active,
-    /// Fisher saturado: ΔG < ε durante FISHER_SATIATION_WINDOW iteraciones.
-    /// El oscilador no acepta nuevos inputs de aprendizaje pero sigue
-    /// contribuyendo al parámetro de orden r_sync.
-    /// `since_ns`: timestamp en nanosegundos del momento de saturación.
+    /// Fisher-saturated: `ΔG < ε` for `FISHER_SATIATION_WINDOW` iterations.
+    /// The oscillator stops accepting new learning inputs but still contributes
+    /// to the `r_sync` order parameter.
+    /// `since_ns`: nanosecond timestamp when saturation occurred.
     Saturated {
         /// Timestamp in nanoseconds when the oscillator entered the Saturated state.
         since_ns: u64,
     },
-    /// Podado por la ecuación de calor (AXIOMA-016).
-    /// El oscilador es inactivo: sus fases no se actualizan y no contribuye a Ω.
-    /// `at_ns`: timestamp del momento de poda.
+    /// Pruned by heat-equation dynamics (AXIOMA-016).
+    /// The oscillator is inactive: phases are not updated and it contributes no Ω signal.
+    /// `at_ns`: timestamp of pruning.
     Pruned {
         /// Timestamp in nanoseconds when the oscillator was pruned.
         at_ns: u64,
@@ -923,14 +921,14 @@ pub enum OscillatorState {
 }
 
 impl OscillatorState {
-    /// Retorna true si el oscilador puede recibir inputs de aprendizaje.
+    /// Returns true if the oscillator can receive learning inputs.
     #[inline]
     pub const fn is_active(self) -> bool {
         matches!(self, Self::Active)
     }
 
-    /// Retorna true si el oscilador contribuye al parámetro de orden r_sync.
-    /// Los saturados SÍ contribuyen; los podados NO.
+    /// Returns true if the oscillator contributes to `r_sync`.
+    /// Saturated oscillators do contribute; pruned oscillators do not.
     #[inline]
     pub const fn contributes_to_sync(self) -> bool {
         !matches!(self, Self::Pruned { .. })
