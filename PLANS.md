@@ -182,7 +182,7 @@
 
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `! cargo check --workspace 2>&1 | grep -q '^warning:'`
 - `cargo test --release -p genesis-topology -- invariant --nocapture`
 - `cargo test --release -p genesis-dynamics -- invariant --nocapture`
 
@@ -210,7 +210,7 @@
 ### Validation
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `! cargo check --workspace 2>&1 | grep -q '^warning:'`
 
 ### Complexity/cache target
 - Preserve asymptotic complexity while increasing key-density in binary-search cache lines by separating hot search keys from payload vectors/ids.
@@ -1651,3 +1651,30 @@ Remaining risk:
 - `cargo test --workspace`
 - `cargo clippy --workspace --all-targets`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.17 CRATE-000 review round-2 closure (2026-04-03)
+
+### Root cause
+
+- Cluster dedup in dynamics compared pre-canonical node slices rather than canonical fixed-storage identity.
+- `SemanticCluster::from_nodes` accepted unsorted/duplicate/invalid node sequences and `nodes()` could panic on malformed public `node_count`.
+- Two recent validation blocks in `PLANS.md` used warning checks that do not fail on warnings.
+
+### File-level actions
+
+1. `shared/genesis-types/src/phase_semantics.rs`
+   - Add canonicalization + validation for cluster nodes (strictly increasing, unique, no invalid sentinel, bounded by fixed capacity).
+   - Add checked cluster-key accessor and change `nodes()` to `Result<&[NodeId], GenesisError>`.
+   - Add dedicated tests for valid input, oversize rejection, and non-monotonic/duplicate rejection.
+2. `core/genesis-dynamics/src/phase_semantics.rs`
+   - Use canonicalized cluster key for deduplication.
+   - Apply explicit truncation policy for oversized candidates and emit explicit error logs on rejected candidates.
+3. `PLANS.md`
+   - Invert warning-scan command in the two targeted validation sections to fail when warnings are present.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo clippy --workspace --all-targets`
+- `! cargo check --workspace 2>&1 | grep -q '^warning:'`

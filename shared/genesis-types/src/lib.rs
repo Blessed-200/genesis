@@ -111,6 +111,7 @@ pub use proof::{AxiomGuard, AxiomID, Mutation, Proof, WitnessBuilder};
 pub use phase_semantics::{
     CognitiveFieldState, MetaState, NetworkSemanticState, NodeSemanticState, PhaseRegion,
     SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
+    SEMANTIC_CLUSTER_MAX_NODES,
 };
 // — Signals —
 pub use signal::{

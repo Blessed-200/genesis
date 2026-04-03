@@ -10,6 +10,7 @@ use core::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 use genesis_types::{
     CognitiveFieldState, MetaState, NetworkSemanticState, NodeId, NodeSemanticState, PhaseRegion,
     SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
+    SEMANTIC_CLUSTER_MAX_NODES,
 };
 use smallvec::SmallVec;
 
@@ -334,17 +335,39 @@ impl PhaseSemanticsEngine {
             if let Some(assignment) =
                 assign_node_to_cluster(entry, &network.coupling, &self.entries)
             {
-                if !self
-                    .clusters
-                    .iter()
-                    .any(|cluster| cluster.nodes() == assignment.nodes.as_slice())
-                {
+                let candidate_nodes = if assignment.nodes.len() > SEMANTIC_CLUSTER_MAX_NODES {
+                    eprintln!(
+                        "phase_semantics: truncating cluster candidate from {} to {} nodes",
+                        assignment.nodes.len(),
+                        SEMANTIC_CLUSTER_MAX_NODES
+                    );
+                    &assignment.nodes[..SEMANTIC_CLUSTER_MAX_NODES]
+                } else {
+                    assignment.nodes.as_slice()
+                };
+
+                let Some(candidate_key) = SemanticCluster::canonicalize_nodes(candidate_nodes)
+                else {
+                    eprintln!(
+                        "phase_semantics: rejecting non-canonical cluster candidate \
+                         (unsorted, duplicate, or invalid NodeId)"
+                    );
+                    continue;
+                };
+
+                if !self.clusters.iter().any(|cluster| {
+                    cluster
+                        .canonical_key()
+                        .is_ok_and(|existing_key| existing_key == candidate_key)
+                }) {
                     if let Some(cluster) = SemanticCluster::from_nodes(
-                        assignment.nodes.as_slice(),
+                        candidate_nodes,
                         assignment.marker,
                         assignment.coherence,
                     ) {
                         self.clusters.push(cluster);
+                    } else {
+                        eprintln!("phase_semantics: rejecting cluster candidate after canonicalization failure");
                     }
                 }
             }

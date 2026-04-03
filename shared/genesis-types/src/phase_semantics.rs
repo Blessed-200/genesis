@@ -157,6 +157,43 @@ pub struct NetworkSemanticState {
 }
 
 impl SemanticCluster {
+    /// Canonicalizes a candidate node slice into fixed-capacity storage.
+    ///
+    /// The input must satisfy all of the following:
+    /// - length `<= SEMANTIC_CLUSTER_MAX_NODES`
+    /// - strictly increasing `NodeId` order
+    /// - no `NodeId::INVALID` sentinel entries
+    ///
+    /// Returns `None` when any invariant is violated.
+    ///
+    /// AX-ID: AXIOMA-004, AXIOMA-006
+    #[must_use]
+    pub fn canonicalize_nodes(
+        nodes: &[NodeId],
+    ) -> Option<([NodeId; SEMANTIC_CLUSTER_MAX_NODES], u8)> {
+        if nodes.len() > SEMANTIC_CLUSTER_MAX_NODES {
+            return None;
+        }
+
+        let mut previous: Option<NodeId> = None;
+        for &node in nodes {
+            if node == NodeId::INVALID {
+                return None;
+            }
+            if let Some(prev) = previous {
+                if node <= prev {
+                    return None;
+                }
+            }
+            previous = Some(node);
+        }
+
+        let mut fixed = [NodeId::INVALID; SEMANTIC_CLUSTER_MAX_NODES];
+        fixed[..nodes.len()].copy_from_slice(nodes);
+
+        Some((fixed, nodes.len() as u8))
+    }
+
     /// Builds a semantic cluster from an ordered node slice.
     ///
     /// Returns `None` when the slice exceeds `SEMANTIC_CLUSTER_MAX_NODES`.
@@ -164,26 +201,95 @@ impl SemanticCluster {
     /// AX-ID: AXIOMA-004, AXIOMA-006
     #[must_use]
     pub fn from_nodes(nodes: &[NodeId], marker: SemanticMarker, coherence: f64) -> Option<Self> {
-        if nodes.len() > SEMANTIC_CLUSTER_MAX_NODES {
-            return None;
-        }
-
-        let mut fixed = [NodeId::INVALID; SEMANTIC_CLUSTER_MAX_NODES];
-        fixed[..nodes.len()].copy_from_slice(nodes);
+        let (fixed, node_count) = Self::canonicalize_nodes(nodes)?;
 
         Some(Self {
             nodes: fixed,
-            node_count: nodes.len() as u8,
+            node_count,
             marker,
             coherence,
         })
     }
 
-    /// Returns active cluster members as a slice.
+    /// Returns the canonical fixed-storage key used for deterministic identity
+    /// checks and deduplication.
+    ///
+    /// # Errors
+    /// Returns `GenesisError::InvariantViolation` when `node_count` exceeds the
+    /// fixed node storage length.
     ///
     /// AX-ID: AXIOMA-004, AXIOMA-006
-    #[must_use]
-    pub fn nodes(&self) -> &[NodeId] {
-        &self.nodes[..usize::from(self.node_count)]
+    pub fn canonical_key(
+        &self,
+    ) -> Result<([NodeId; SEMANTIC_CLUSTER_MAX_NODES], u8), crate::GenesisError> {
+        if usize::from(self.node_count) > self.nodes.len() {
+            return Err(crate::GenesisError::InvariantViolation { axiom_id: 4 });
+        }
+        Ok((self.nodes, self.node_count))
+    }
+
+    /// Returns active cluster members as a slice.
+    ///
+    /// # Errors
+    /// Returns `GenesisError::InvariantViolation` when `node_count` exceeds the
+    /// fixed node storage length.
+    ///
+    /// AX-ID: AXIOMA-004, AXIOMA-006
+    pub fn nodes(&self) -> Result<&[NodeId], crate::GenesisError> {
+        let node_count = usize::from(self.node_count);
+        if node_count > self.nodes.len() {
+            return Err(crate::GenesisError::InvariantViolation { axiom_id: 4 });
+        }
+        Ok(&self.nodes[..node_count])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SemanticCluster, SemanticMarker, SEMANTIC_CLUSTER_MAX_NODES};
+    use crate::NodeId;
+
+    #[test]
+    fn semantic_cluster_from_nodes_valid_slice_roundtrips() {
+        let input = [
+            NodeId::try_new(1).expect("1 is inside the valid NodeId range"),
+            NodeId::try_new(4).expect("4 is inside the valid NodeId range"),
+            NodeId::try_new(9).expect("9 is inside the valid NodeId range"),
+        ];
+        let cluster = SemanticCluster::from_nodes(&input, SemanticMarker::Exploration, 0.75)
+            .expect("valid sorted unique input must produce a cluster");
+
+        assert_eq!(usize::from(cluster.node_count), input.len());
+        assert_eq!(
+            cluster.nodes().expect("node_count is valid"),
+            input.as_slice()
+        );
+        assert_eq!(
+            cluster.nodes().expect("node_count is valid").len(),
+            input.len()
+        );
+    }
+
+    #[test]
+    fn semantic_cluster_from_nodes_rejects_oversized_input() {
+        let oversized = [NodeId::INVALID; SEMANTIC_CLUSTER_MAX_NODES + 1];
+        assert!(SemanticCluster::from_nodes(&oversized, SemanticMarker::Certainty, 1.0).is_none());
+    }
+
+    #[test]
+    fn semantic_cluster_from_nodes_rejects_non_monotonic_or_duplicate_input() {
+        let duplicate = [
+            NodeId::try_new(2).expect("2 is inside the valid NodeId range"),
+            NodeId::try_new(2).expect("2 is inside the valid NodeId range"),
+        ];
+        assert!(SemanticCluster::from_nodes(&duplicate, SemanticMarker::Conflict, 0.2).is_none());
+
+        let non_monotonic = [
+            NodeId::try_new(5).expect("5 is inside the valid NodeId range"),
+            NodeId::try_new(3).expect("3 is inside the valid NodeId range"),
+        ];
+        assert!(
+            SemanticCluster::from_nodes(&non_monotonic, SemanticMarker::Conflict, 0.2).is_none()
+        );
     }
 }
