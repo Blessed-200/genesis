@@ -2312,6 +2312,18 @@ mod tests {
     }
 
     #[test]
+    fn benchmark_distance_helpers_are_finite_and_batch_matches_scalar() {
+        let query = make_vec(1.25);
+        let candidates = [make_vec(0.1), make_vec(0.2), make_vec(0.3), make_vec(0.4)];
+
+        let scalar = benchmark_scalar_distance_4x(&query, &candidates);
+        assert!(scalar.iter().all(|d| d.is_finite()));
+
+        let batch = benchmark_batch_distance_4(&query, &candidates);
+        assert_eq!(batch, scalar);
+    }
+
+    #[test]
     fn layer0_soa_preserves_layer0_cardinality() {
         let mut graph = HnswGraph::new(16);
         for i in 0..16_u64 {

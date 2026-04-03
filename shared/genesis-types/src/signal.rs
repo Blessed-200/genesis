@@ -327,6 +327,58 @@ static_assertions::const_assert_eq!(core::mem::align_of::<SpikeComponents>(), 64
 pub const SPIKE_EVENT_LAYOUT_VERSION: u32 = 2;
 
 impl SpikeComponents {
+    /// Aggregates duplicate blade contributions before top-K selection.
+    ///
+    /// Two-pass behavior:
+    /// 1. Scan all incoming pairs and sum coefficients by blade index.
+    /// 2. Drop non-finite/Planck-level merged coefficients and return compacted pairs.
+    #[inline]
+    fn aggregate_coefficients<I>(iter: I) -> Vec<(u16, f64)>
+    where
+        I: IntoIterator<Item = (u16, f64)>,
+    {
+        let mut pairs: Vec<(u16, f64)> = iter
+            .into_iter()
+            .filter(|(_, coef)| coef.is_finite())
+            .collect();
+        pairs.sort_unstable_by_key(|(idx, _)| *idx);
+
+        let mut aggregated: Vec<(u16, f64)> = Vec::with_capacity(pairs.len());
+        let mut read = 0usize;
+        while read < pairs.len() {
+            let idx = pairs[read].0;
+            let mut acc = pairs[read].1;
+            read += 1;
+            while read < pairs.len() && pairs[read].0 == idx {
+                acc += pairs[read].1;
+                read += 1;
+            }
+            aggregated.push((idx, acc));
+        }
+        aggregated.retain(|(_, coef)| coef.is_finite() && coef.abs() > COGNITIVE_PLANCK_CONSTANT);
+        aggregated
+    }
+
+    #[inline]
+    #[cfg(feature = "serde")]
+    fn indices_are_canonical(indices: &[u16; SPIKE_MAX_COMPONENTS], count: u8) -> bool {
+        let n = count as usize;
+        if n > SPIKE_MAX_COMPONENTS {
+            return false;
+        }
+        if n == 0 {
+            return true;
+        }
+        let mut i = 1usize;
+        while i < n {
+            if indices[i - 1] >= indices[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
     /// Returns `true` if all explicit padding fields are zeroed.
     ///
     /// Used to verify the DAX layout contract after construction or
@@ -379,49 +431,8 @@ impl SpikeComponents {
         let mut min_abs: f64 = 0.0; // abs of weakest slot in buf
         let mut min_slot: usize = 0; // index of weakest slot
 
-        for (idx, coef) in iter {
-            // Thermal noise gate — AXIOMA-001.
+        for (idx, coef) in Self::aggregate_coefficients(iter) {
             let abs = coef.abs();
-            if !coef.is_finite() || abs <= COGNITIVE_PLANCK_CONSTANT {
-                continue;
-            }
-
-            // Merge repeated blade contributions before top-K eviction (O(K), stack-only).
-            let mut existing_slot = None;
-            let mut scan = 0usize;
-            while scan < filled {
-                if buf[scan].1 == idx {
-                    existing_slot = Some(scan);
-                    break;
-                }
-                scan += 1;
-            }
-            if let Some(slot) = existing_slot {
-                let merged_coef = buf[slot].2 + coef;
-                if merged_coef.is_finite() && merged_coef.abs() > COGNITIVE_PLANCK_CONSTANT {
-                    buf[slot] = (merged_coef.abs(), idx, merged_coef);
-                } else {
-                    filled -= 1;
-                    buf[slot] = buf[filled];
-                    buf[filled] = (0.0, u16::MAX, 0.0);
-                }
-                if filled == K {
-                    min_abs = f64::INFINITY;
-                    let mut weakest_ix = u16::MAX;
-                    let mut i = 0usize;
-                    while i < K {
-                        let (a, ix, _) = buf[i];
-                        if a < min_abs || (a == min_abs && ix > weakest_ix) {
-                            min_abs = a;
-                            min_slot = i;
-                            weakest_ix = ix;
-                        }
-                        i += 1;
-                    }
-                }
-                continue;
-            }
-
             if filled < K {
                 // Buffer not full yet — insert directly.
                 buf[filled] = (abs, idx, coef);
@@ -728,6 +739,11 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                 if count as usize > SPIKE_MAX_COMPONENTS {
                     return Err(de::Error::custom("count out of range"));
                 }
+                if !SpikeComponents::indices_are_canonical(&indices, count) {
+                    return Err(de::Error::custom(
+                        "indices must be strictly increasing, unique, and within bounds",
+                    ));
+                }
 
                 Ok(SpikeComponents {
                     values,
@@ -770,10 +786,16 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                 if count as usize > SPIKE_MAX_COMPONENTS {
                     return Err(de::Error::custom("count out of range"));
                 }
+                let indices = indices.ok_or_else(|| de::Error::missing_field("indices"))?;
+                if !SpikeComponents::indices_are_canonical(&indices, count) {
+                    return Err(de::Error::custom(
+                        "indices must be strictly increasing, unique, and within bounds",
+                    ));
+                }
 
                 Ok(SpikeComponents {
                     values: values.ok_or_else(|| de::Error::missing_field("values"))?,
-                    indices: indices.ok_or_else(|| de::Error::missing_field("indices"))?,
+                    indices,
                     count,
                     pad: [0u8; 7],
                     tail_pad: [0u8; 24],

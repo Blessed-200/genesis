@@ -308,6 +308,7 @@ impl QuantumKuramotoNetwork {
         self.amp_scratch.push(1.0);
         self.sat_scratch.push(0.0);
         self.dirty = true;
+        self.sync_dirty = true;
 
         Ok(node_id)
     }
@@ -634,7 +635,19 @@ impl QuantumKuramotoNetwork {
     ///  φᵢg(t+dt) = φᵢg(t) + [ωᵢg + Σⱼ Γᵢⱼ sin(φⱼg(t) - φᵢg(t))] · dt
     ///              + η · √(2 kT dt)
     ///
-    /// `η ~ N(0,1)` via LCG Box-Muller. `step` performs no heap allocation.
+    /// `η ~ N(0,1)` via LCG Box-Muller.
+    ///
+    /// Allocation and complexity contract:
+    /// - `step()` first calls [`Self::rebuild_if_dirty`].
+    /// - In the steady-state hot path (no topology mutation since the previous rebuild),
+    ///   `step()` is allocation-free and runs in `O(N + E)` with contiguous scratch reuse.
+    /// - After topology mutations (for example [`Self::add_oscillator`], edge updates, or
+    ///   removals), `rebuild_if_dirty()` may perform `Vec` resize/allocation work to
+    ///   materialize coupling/scratch buffers before integration; that rebuild phase is
+    ///   `O(N + E)` and may allocate.
+    /// - Once rebuild is complete, subsequent `step()` calls return to amortized
+    ///   allocation-free execution with cache-friendly block iteration.
+    ///
     /// Forbidden: deterministic collapse (AXIOMA-006).
     pub fn step(&mut self, dt: f64) {
         self.rebuild_if_dirty();
@@ -799,13 +812,18 @@ impl QuantumKuramotoNetwork {
 
     /// Kuramoto order parameter `r = |Σ e^{iφ}| / N ∈ [0,1]`.
     ///
-    /// Cached result: recomputed only when `step()` has been called since the
-    /// previous invocation. In control loops that do not step between reads,
-    /// cost is O(1).
+    /// Cached result: recomputed only when `sync_dirty == true`.
+    ///
+    /// Invalidation contract:
+    /// - `step()` sets `sync_dirty = true`.
+    /// - Any mutator that changes oscillator membership or state used by synchrony
+    ///   (for example `add_oscillator()` and mutators that alter oscillators/amplitudes/phases)
+    ///   must set `sync_dirty = true`.
+    /// - Repeated calls to `synchrony_order_cached()` without intermediate invalidation are O(1).
     ///
     /// # Cost
-    /// - First call after `step()`: O(N)
-    /// - Subsequent calls without an intermediate `step()`: O(1)
+    /// - First call after invalidation: O(N)
+    /// - Subsequent calls without intermediate invalidation: O(1)
     ///
     /// AX-ID: AXIOMA-006
     pub fn synchrony_order_cached(&mut self) -> f64 {

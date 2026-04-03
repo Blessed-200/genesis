@@ -36,6 +36,9 @@ use genesis_types::NodeId;
 ///   `FisherInfo::trace ≈ 1.0` → `amplitude ≈ 1.0` → full `r_sync` contribution
 /// - Node with **low VFE** (saturated domain, AXIOMA-008):
 ///   `FisherInfo::trace → 0` → `amplitude → 0` → suppressed `r_sync` contribution
+/// - After lifecycle transition to `OscillatorState::Saturated`, the oscillator does
+///   not re-enter active learning; amplitude remains a non-increasing certainty gate
+///   until eventual pruning (`Active -> Saturated -> Pruned`).
 ///
 /// This makes `r_sync` measure **angular coherence weighted by inferential certainty**,
 /// not only raw angular coherence. A node that has consolidated knowledge reduces
@@ -60,8 +63,9 @@ pub struct QuantumOscillator {
     /// Initializes to `1.0` for all grades (maximum-certainty prior /
     /// maximum `r_sync` contribution).
     ///
-    /// Decreases when node `FisherInfo::trace` decreases (active learning).
-    /// Increases again when the node re-enters a high-VFE regime (new exploration).
+    /// Decreases when node `FisherInfo::trace` decreases during active learning.
+    /// Once the lifecycle reaches `Saturated`, the oscillator does not resume
+    /// active-learning updates.
     ///
     /// Amplitude decay is the responsibility of the external pipeline that calls
     /// `update_amplitude_from_fisher()` after each `VFEMinimizer::update()`.
@@ -562,7 +566,10 @@ impl QuantumOscillator {
         }
     }
 
-    /// Constructor con fases iniciales explícitas. Amplitudes inicializan en `1.0`.
+    /// Constructor with explicit initial phases.
+    ///
+    /// Amplitudes initialize to `1.0` in every grade to preserve backward-compatible
+    /// Kuramoto behavior at initialization.
     #[inline]
     pub const fn with_phases(node_id: NodeId, phases: [f64; 5], frequencies: [f64; 5]) -> Self {
         Self {
@@ -587,7 +594,7 @@ impl QuantumOscillator {
     /// # Parameter
     /// `g` ∈ `[0, 4]`. Panics in debug if `g > 4`; release requires valid caller input.
     ///
-    /// # Uso en CRATE-004
+    /// # Usage in CRATE-004
     /// ```
     /// use genesis_dynamics::QuantumOscillator;
     /// use genesis_types::NodeId;
@@ -649,7 +656,7 @@ impl QuantumOscillator {
     /// AX-ID: AXIOMA-006, AXIOMA-008, LEY_FUNDACIONAL §3.2
     #[inline]
     pub fn update_amplitude_from_fisher(&mut self, fisher_trace: f64) {
-        let a = fisher_trace.clamp(0.0, 1.0);
+        let a = (fisher_trace / Self::FISHER_TRACE_INITIAL).clamp(0.0, 1.0);
         self.amplitudes = [a; 5];
     }
 
@@ -744,7 +751,7 @@ mod tests {
 
     // ── complex_state tests ───────────────────────────────────────────────────
 
-    /// Con amplitud 1.0 y fase 0.0, complex_state debe ser (1.0, 0.0).
+    /// With amplitude 1.0 and phase 0.0, `complex_state` must be `(1.0, 0.0)`.
     #[test]
     fn complex_state_unit_amplitude_zero_phase() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -770,7 +777,7 @@ mod tests {
         }
     }
 
-    /// Verifica que |complex_state(g)| = amplitude[g].
+    /// Verifies that `|complex_state(g)| = amplitude[g]`.
     #[test]
     fn complex_state_norm_equals_amplitude() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -792,7 +799,7 @@ mod tests {
 
     // ── amplitude_norm tests ──────────────────────────────────────────────────
 
-    /// Con amplitudes = [1.0; 5], amplitude_norm debe ser 1.0.
+    /// With amplitudes `[1.0; 5]`, `amplitude_norm` must be 1.0.
     #[test]
     fn amplitude_norm_all_ones_is_one() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -803,7 +810,7 @@ mod tests {
         );
     }
 
-    /// Con amplitudes = [0.0; 5], amplitude_norm debe ser 0.0.
+    /// With amplitudes `[0.0; 5]`, `amplitude_norm` must be 0.0.
     #[test]
     fn amplitude_norm_all_zeros_is_zero() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -830,7 +837,7 @@ mod tests {
 
     // ── update_amplitude_from_fisher tests ────────────────────────────────────
 
-    /// Con fisher_trace = FISHER_TRACE_INITIAL, amplitudes no cambian de 1.0.
+    /// With `fisher_trace = FISHER_TRACE_INITIAL`, amplitudes stay at 1.0.
     #[test]
     fn update_amplitude_fisher_prior_stays_one() {
         let id = NodeId::try_new(0).expect("NodeId válido");
@@ -842,7 +849,7 @@ mod tests {
         );
     }
 
-    /// Con fisher_trace = 0.0 (dominio completamente saturado), amplitudes → 0.0.
+    /// With `fisher_trace = 0.0` (fully saturated domain), amplitudes become 0.0.
     #[test]
     fn update_amplitude_fisher_saturated_gives_zero() {
         let id = NodeId::try_new(0).expect("NodeId válido");

@@ -184,6 +184,7 @@ mod integration_tests {
         let _ = JL_RESIDUAL_EXPANSION_DELTA;
         let _ = HEAT_DIFFUSION_CONVERGENCE_EPSILON;
         let _ = SPIKE_MAX_COMPONENTS;
+        let _ = METRIC_WEIGHTS;
 
         // Proof system constants
         let _ = LAMBDA2_MIN;

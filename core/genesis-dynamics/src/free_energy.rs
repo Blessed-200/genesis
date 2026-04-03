@@ -871,6 +871,7 @@ mod tests {
             }
         }
     }
+    #[test]
     fn add_node_rejects_non_finite_prior_mean() {
         let mut vfe = VFEMinimizer::new();
         let id_nan = NodeId::try_new(0).expect("NodeId válido por construcción");
@@ -955,6 +956,30 @@ mod tests {
                 trace
             );
         }
+    }
+
+    #[test]
+    fn precision_sum_matches_diagonal_total_and_differs_from_fisher_trace() {
+        let belief = Belief {
+            mean_full: [0.0; 16],
+            precision_full: [
+                0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75,
+                4.0,
+            ],
+            node_id: NodeId::try_new(0).expect("valid NodeId"),
+        };
+        let fisher = FisherInfo {
+            trace: 7.0,
+            delta_g: 0.0,
+        };
+
+        let explicit_sum: f64 = belief.precision_full.iter().sum();
+        let computed = belief.precision_sum();
+        assert!((computed - explicit_sum).abs() < 1e-12);
+        assert!(
+            (computed - fisher.trace).abs() > 1e-12,
+            "precision_sum must remain distinct from FisherInfo::trace"
+        );
     }
 
     #[test]
