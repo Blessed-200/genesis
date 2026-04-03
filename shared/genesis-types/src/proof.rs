@@ -202,7 +202,7 @@ impl AxiomID {
     const unsafe fn from_u8_unchecked(value: u8) -> Self {
         debug_assert!(value <= 6);
         // SAFETY: Callers must guarantee `value` is within the valid discriminant range [0, 6].
-        unsafe { core::mem::transmute::<u8, AxiomID>(value) }
+        unsafe { core::mem::transmute::<u8, Self>(value) }
     }
 }
 
