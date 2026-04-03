@@ -1467,6 +1467,38 @@ impl HnswGraph {
         current
     }
 
+    #[cfg(test)]
+    fn greedy_search_layer_with_work_count(
+        &self,
+        query: &SparseCliffordVector,
+        start: usize,
+        layer: usize,
+        work_count: &mut usize,
+    ) -> usize {
+        let mut current = start;
+        let mut current_dist = self.distance_to_node_sq(query, current, layer);
+        *work_count += 1;
+        loop {
+            let mut improved = false;
+            if layer < self.nodes[current].max_layer + 1 {
+                for nb_idx_u32 in self.node_neighbors_iter(current, layer) {
+                    let nb_idx = nb_idx_u32 as usize;
+                    let d = self.distance_to_node_sq(query, nb_idx, layer);
+                    *work_count += 1;
+                    if d < current_dist {
+                        current = nb_idx;
+                        current_dist = d;
+                        improved = true;
+                    }
+                }
+            }
+            if !improved {
+                break;
+            }
+        }
+        current
+    }
+
     /// Beam search at a given layer returning (`internal_idx`, dist) sorted by distance.
     #[allow(clippy::too_many_lines)]
     fn search_layer(
@@ -1573,6 +1605,114 @@ impl HnswGraph {
         })
     }
 
+    #[cfg(test)]
+    #[allow(clippy::too_many_lines)]
+    fn search_layer_with_work_count(
+        &self,
+        query: &SparseCliffordVector,
+        entry_idx: usize,
+        ef: usize,
+        layer: usize,
+        work_count: &mut usize,
+    ) -> Vec<(usize, f64)> {
+        SEARCH_SCRATCH.with(|cell| {
+            let mut scratch = cell.borrow_mut();
+            scratch.out.clear();
+            let search_epoch = self.next_search_epoch();
+            VISITED_EPOCH.with(|visited_cell| {
+                let mut visited = visited_cell.borrow_mut();
+                let needed = self.nodes.len();
+                if visited.len() < needed {
+                    let grown_len = needed.next_power_of_two();
+                    visited.resize(grown_len, 0);
+                }
+                if search_epoch == 1 {
+                    visited.fill(0);
+                }
+
+                let limit = ef.min(MAX_FIXED_HEAP_CAPACITY);
+                let mut candidates = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
+                let mut results = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
+                let query_f32 = Self::dense_to_query_f32(query);
+                let slab_ptr = self.layer0_slab_ptr();
+                let slab_blocks = self.layer0_soa.blocks.len();
+
+                let d0 = self.distance_to_node_sq(query, entry_idx, layer) as f32;
+                *work_count += 1;
+                visited[entry_idx] = search_epoch;
+                candidates.push_or_replace(d0, entry_idx as u32);
+                results.push_or_replace(d0, entry_idx as u32);
+
+                while let Some((c_dist, c_idx_u32)) = candidates.pop_best() {
+                    if results.len() >= limit && c_dist > results.worst() {
+                        break;
+                    }
+
+                    let c_idx = c_idx_u32 as usize;
+                    if layer > self.nodes[c_idx].max_layer {
+                        continue;
+                    }
+                    if layer == 0 && !slab_ptr.is_null() {
+                        for group in self.node_layer0_groups(c_idx) {
+                            let block = group.block as usize;
+                            let base = block * SLAB_LANES;
+                            let mut effective_mask = group.lane_mask;
+                            let mut m = effective_mask;
+                            while m != 0 {
+                                let lane_u8 = m.trailing_zeros() as u8;
+                                let nb_idx = base + usize::from(lane_u8);
+                                if nb_idx >= self.nodes.len() || visited[nb_idx] == search_epoch {
+                                    effective_mask &= !(1_u8 << lane_u8);
+                                }
+                                m &= m - 1;
+                            }
+                            if effective_mask == 0 {
+                                continue;
+                            }
+                            debug_assert!(block < slab_blocks, "block in bounds");
+                            debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
+                            let distances = slab_distance(slab_ptr, block, &query_f32);
+                            let mut m = effective_mask;
+                            while m != 0 {
+                                let lane = m.trailing_zeros() as usize;
+                                let nb_idx = base + lane;
+                                if nb_idx >= self.nodes.len() {
+                                    break;
+                                }
+                                visited[nb_idx] = search_epoch;
+                                let d = distances[lane];
+                                *work_count += 1;
+                                if results.push_or_replace(d, nb_idx as u32) {
+                                    candidates.push_or_replace(d, nb_idx as u32);
+                                }
+                                m &= m - 1;
+                            }
+                        }
+                    } else {
+                        for nb_idx_u32 in self.node_neighbors_iter(c_idx, layer) {
+                            let nb_idx = nb_idx_u32 as usize;
+                            if visited[nb_idx] == search_epoch {
+                                continue;
+                            }
+                            visited[nb_idx] = search_epoch;
+                            let d = self.distance_to_node_sq(query, nb_idx, layer) as f32;
+                            *work_count += 1;
+                            if results.push_or_replace(d, nb_idx as u32) {
+                                candidates.push_or_replace(d, nb_idx as u32);
+                            }
+                        }
+                    }
+                }
+
+                scratch.out.reserve(results.len());
+                for &(dist_sq, idx) in results.as_slice() {
+                    scratch.out.push((idx as usize, f64::from(dist_sq)));
+                }
+                std::mem::take(&mut scratch.out)
+            })
+        })
+    }
+
     /// Search for the k nearest neighbours to query.
     ///
     /// Distance metric: Clifford grade-weighted L2 in G(1,3).
@@ -1599,6 +1739,23 @@ impl HnswGraph {
             .take(k)
             .map(|&(idx, _)| self.nodes[idx].id)
             .collect()
+    }
+
+    #[cfg(test)]
+    fn search_nearest_work_count(&self, query: &SparseCliffordVector, k: usize) -> usize {
+        let Some(entry_idx) = self.entry else {
+            return 0;
+        };
+
+        let mut work_count = 0usize;
+        let mut current = entry_idx;
+        for lc in (1..=self.entry_layer).rev() {
+            current = self.greedy_search_layer_with_work_count(query, current, lc, &mut work_count);
+        }
+
+        let ef = k.max(self.ef_construction);
+        let _ = self.search_layer_with_work_count(query, current, ef, 0, &mut work_count);
+        work_count
     }
 
     /// Iterate over neighbours of a node at all layers (union, deduplicated).
@@ -3513,7 +3670,7 @@ mod scaling_tests {
     /// AX-ID: AXIOMA-013 — O(log N) semantic search
     #[test]
     fn hnsw_search_scaling_is_sublinear() {
-        fn build_and_time_search(n: usize, repetitions: u32) -> std::time::Duration {
+        fn build_and_count_work(n: usize, repetitions: u32) -> f64 {
             let mut graph = HnswGraph::new(16);
             for i in 0..n {
                 let id = NodeId::try_new(i as u64).unwrap();
@@ -3523,23 +3680,23 @@ mod scaling_tests {
                 });
             }
             let query = make_scaling_vec(999_999);
-            let start = std::time::Instant::now();
+            let mut total_work = 0usize;
             for _ in 0..repetitions {
-                let _ = graph.search_nearest(&query, 10);
+                total_work += graph.search_nearest_work_count(&query, 10);
             }
-            start.elapsed() / repetitions
+            total_work as f64 / repetitions as f64
         }
 
         // Use larger N to reduce constant-factor inflation on sandbox VMs.
         // N=1000 vs N=10000: 10× more nodes.
         // O(log N) theoretical ratio: log(10000)/log(1000) = 4/3 ≈ 1.33
         // O(N) ratio would be: 10.0
-        // We allow ≤ 6.0 to handle sandbox CPU variance while still catching O(N) regressions.
+        // We allow ≤ 6.0 to handle topology variance while still catching O(N) regressions.
         let reps = 30u32;
-        let t_small = build_and_time_search(500, reps);
-        let t_large = build_and_time_search(5000, reps);
+        let w_small = build_and_count_work(500, reps);
+        let w_large = build_and_count_work(5000, reps);
 
-        let ratio = t_large.as_nanos() as f64 / t_small.as_nanos().max(1) as f64;
+        let ratio = w_large / w_small.max(1.0);
 
         assert!(
             ratio <= 6.0,
@@ -3551,7 +3708,7 @@ mod scaling_tests {
         // Also assert we didn't degrade below O(1) (ratio should be > 0.3)
         assert!(
             ratio > 0.1,
-            "ratio={ratio:.2} suspiciously small — benchmark noise"
+            "ratio={ratio:.2} suspiciously small — work-count noise"
         );
     }
 
@@ -3664,6 +3821,21 @@ mod scaling_tests {
                 }
             }
         }
+
+        // Recompute undirected layer-0 edge count to keep fixture bookkeeping consistent.
+        let directed_layer0_edges: usize = graph
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.id != NodeId::INVALID)
+            .map(|(idx, _)| graph.layer_neighbors[idx].neighbors_len(0))
+            .sum();
+        assert_eq!(
+            directed_layer0_edges % 2,
+            0,
+            "layer-0 directed edge count must be even in a bidirectional fixture"
+        );
+        graph.edge_count_layer0_undirected = directed_layer0_edges / 2;
 
         // Create a NeighborIter and exhaust it, tracking the maximum seen.len()
         let iter = NeighborIter {
