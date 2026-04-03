@@ -381,6 +381,7 @@ fn nearest_neighbors_by_metric(graph: &HnswGraph, center: NodeId) -> Vec<NodeId>
     ranked.into_iter().map(|(id, _)| id).collect()
 }
 
+#[allow(clippy::similar_names)]
 fn local_hyperbolic_delta(graph: &HnswGraph, nodes: [NodeId; 4]) -> Option<f64> {
     let [first_id, second_id, third_id, fourth_id] = nodes;
     let first_vec = graph.vector(first_id)?;
