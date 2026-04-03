@@ -1,7 +1,13 @@
 pub(super) use super::{
-    geometric_product_dispatch_by_mask, geometric_product_scalar_dense,
-    geometric_product_scalar_sparse, TOTAL_BLADES,
+    geometric_product_dispatch_by_mask, geometric_product_scalar_sparse, TOTAL_BLADES,
 };
+
+#[cfg(all(
+    target_arch = "x86_64",
+    feature = "avx512",
+    not(feature = "deterministic_strict")
+))]
+pub(super) use super::geometric_product_scalar_dense;
 
 #[cfg(all(
     target_arch = "x86_64",

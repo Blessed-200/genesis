@@ -26,7 +26,7 @@
 
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `! cargo check --workspace 2>&1 | grep "^warning:"`
 - `cargo bench -p genesis-types --bench hash_bench --no-run`
 
 ## 1.7 Compensated and pairwise summation hardening (2026-03-31)
@@ -56,7 +56,7 @@
 - `cargo test --release -p genesis-topology -- invariant --nocapture`
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `! cargo check --workspace 2>&1 | grep "^warning:"`
 
 ## 1.6 Repository professionalization phase (2026-03-30)
 
@@ -1406,3 +1406,82 @@ Remaining risk:
 - `cargo check --workspace`
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.9 Restore constants contract and resolve `cargo check` regressions (2026-04-02)
+
+### Root cause
+
+- `shared/genesis-types/src/constants.rs` was reduced to a single constant, breaking crate-wide constant exports and imports.
+- Compile-time size checks in `shared/genesis-types/src/signal.rs` currently use `assert_eq_size!` in contexts that trigger transmute-based layout failures.
+
+### File-level actions
+
+1. `shared/genesis-types/src/constants.rs`
+   - Restore the complete constants module from the latest known-good contract version and keep AX-ID annotations.
+   - Preserve `NonZeroUsize` const-safety comments and compile-time/runtimes invariant checks.
+2. `shared/genesis-types/src/signal.rs`
+   - Replace fragile `assert_eq_size!` calls with `const_assert_eq!(size_of::<...>(), size_of::<...>())`-style checks.
+   - Keep explicit alignment assertions unchanged.
+
+### Validation
+
+- `cargo fmt --all -- --check`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `! cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.10 Address review findings for HNSW scaling tests and AVX-512 test visibility (2026-04-02)
+
+### Root cause
+
+- `geometric_product_scalar_dense` visibility was reduced in test re-exports, breaking AVX-512 test import expectations.
+- The HNSW worst-case neighbor fixture used packed inserts that bypassed adjacency invariants (`layer0_groups`) and could generate invalid fixture state.
+- Scaling test helper generation masked constructor failures and used suboptimal bit extraction.
+- `FISHER_SATIATION_WINDOW` retained duplicate SAFETY commentary.
+
+### File-level actions
+
+1. `core/genesis-math/src/product/arch_specific_tests.rs`
+   - Restore AVX-512 gated re-export for `geometric_product_scalar_dense` while avoiding non-AVX warnings.
+2. `core/genesis-topology/src/hnsw.rs`
+   - Route fixture adjacency construction through `NodeAdj::add_neighbor` using real slab indices.
+   - Reset controlled fixture adjacency before injecting worst-case neighbors.
+3. `core/genesis-topology/src/hnsw_scaling_test_support.rs`
+   - Move scaling helper generators into a test-support file.
+   - Use 32-bit extraction (`rng >> 32`) and fail-fast constructor handling with explicit panic context.
+4. `shared/genesis-types/src/constants.rs`
+   - Remove duplicated SAFETY comment for `FISHER_SATIATION_WINDOW`.
+
+### Validation
+
+- `cargo fmt --all -- --check`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `! cargo check --workspace 2>&1 | grep "^warning:"`
+- `scripts/check_english_only.sh`
+
+## 1.9 Review-followup: branch update for prior PR findings (2026-04-03)
+
+### Root cause
+
+- The last PR left three follow-up findings unresolved: an inconsistent fixture edge-count assignment in HNSW tests, a redundant SmallVec budget assertion, and an unsafe enum transmute pattern in witness replay.
+- A hot-path helper in `fisher_edge.rs` used `#[inline(always)]` without demonstrated need, which conflicts with pedantic lint expectations for forced inlining.
+
+### File-level actions
+
+1. `core/genesis-topology/src/hnsw.rs`
+   - Keep fixture bookkeeping aligned with internal semantics by assigning the directed layer-0 edge total directly to `edge_count_layer0_undirected` in the worst-case fixture setup.
+   - Remove the redundant `<=` budget assertion once exact-boundary assertions are already enforced.
+2. `shared/genesis-types/src/fisher_edge.rs`
+   - Remove forced inlining from `increment_degree`.
+3. `shared/genesis-types/src/proof.rs`
+   - Add `AxiomID::from_u8_unchecked` with explicit `// SAFETY:` invariants.
+   - Replace direct `transmute` in `replay_witness` with range check + helper call.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo clippy -p genesis-types --all-targets -- -D clippy::pedantic`
+- `scripts/check_english_only.sh`

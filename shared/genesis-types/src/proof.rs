@@ -197,6 +197,15 @@ pub enum AxiomID {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct AxiomSet(pub u8);
 
+impl AxiomID {
+    #[inline]
+    const unsafe fn from_u8_unchecked(value: u8) -> Self {
+        debug_assert!(value <= 6);
+        // SAFETY: Callers must guarantee `value` is within the valid discriminant range [0, 6].
+        unsafe { core::mem::transmute::<u8, Self>(value) }
+    }
+}
+
 impl AxiomSet {
     const VALID_BITS: u8 = 0b0111_1111;
 
@@ -764,7 +773,10 @@ impl AxiomGuard {
             }
 
             let axiom = match axiom_raw {
-                0..=6 => unsafe { core::mem::transmute::<u8, AxiomID>(axiom_raw) },
+                0..=6 => {
+                    // SAFETY: The match guard enforces `axiom_raw` in the valid discriminant range.
+                    unsafe { AxiomID::from_u8_unchecked(axiom_raw) }
+                }
                 _ => return false,
             };
 

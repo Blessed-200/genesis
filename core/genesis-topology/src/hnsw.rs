@@ -514,6 +514,7 @@ pub(crate) const M: usize = 16;
 /// `pub(crate)` for manifold.rs stack-allocated neighbour buffers (BN-02).
 pub(crate) const M0: usize = M * 2;
 pub(crate) const MAX_UNIQUE_NEIGHBOR_BUDGET: usize = M0 + (MAX_LAYERS - 1) * M;
+const _: () = assert!(M0 <= genesis_types::constants::SINKHORN_MAX_LOCAL_DEGREE);
 
 /// Per-node adjacency storage for one HNSW layer set.
 ///
@@ -856,10 +857,10 @@ pub fn fast_metric_distance_f16(stored: &[u16; 16], query: &SparseCliffordVector
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.1
 pub fn fast_metric_distance_f16_sq(stored: &[u16; 16], query: &SparseCliffordVector) -> f64 {
     // ARCHITECTURAL NOTE:
-    // It usa compile-time dispatch instead of runtime dispatch for avoid
+    // It uses compile-time dispatch instead of runtime dispatch to avoid
     // loss of inlining and `vzeroupper` penalties in the hot loop.
-    // En x86_64, compilar with RUSTFLAGS="-C target-cpu=native" for activer AVX2.
-    // Target primario: Genesis Edge (ARM + NEON).
+    // On x86_64, compile with RUSTFLAGS="-C target-cpu=native" to activate AVX2.
+    // Primary target: Genesis Edge (ARM + NEON).
     let mut decompressed = [0.0_f64; 16];
 
     #[cfg(all(
@@ -926,8 +927,8 @@ pub struct HnswGraph {
     entry_layer: usize,
     /// `ef_construction` parameter.
     ef_construction: usize,
-    /// Mapa directo `NodeId.get()` → `internal_idx` when `NodeIds` are consecutivos.
-    /// Dynamic layercity: expands when inserting `NodeIds` mayores.
+    /// Direct map `NodeId.get()` → `internal_idx` when `NodeIds` are consecutive.
+    /// Dynamic capacity: expands when inserting larger `NodeIds`.
     direct_index: Vec<u32>, // u32::MAX = no presente
     /// Secondary index state `id_index`.
     state: GraphState,
@@ -1133,7 +1134,7 @@ impl HnswGraph {
     /// Lookup internal index by `NodeId`. O(1) average with direct index, fallback O(log N).
     fn idx(&self, id: NodeId) -> Option<usize> {
         // Contract CRATE-002: NodeIds are consecutive from 0. N < 2^32 in any
-        // GENESIS deployment (physical memory limit). u64 → usize is seguro.
+        // GENESIS deployment (physical memory limit). u64 → usize is safe.
         #[allow(clippy::cast_possible_truncation)]
         let raw = id.get() as usize;
         if raw < self.direct_index.len() {
@@ -1184,7 +1185,7 @@ impl HnswGraph {
             .get()
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1_442_695_040_888_963_407);
-        // uniform u in (0, 1): usa 53 bits and shifts by half an ULP to avoid exact 0.
+        // Uniform u in (0, 1): uses 53 bits and shifts by half an ULP to avoid exact 0.
         // x >> 11 ∈ [0, 2^53). Conversions are exact in f64 for 53 bits.
         #[allow(clippy::cast_precision_loss)]
         let mut u = (((x >> 11) as f64) + 0.5) * (1.0 / ((1_u64 << 53) as f64));
@@ -1466,6 +1467,38 @@ impl HnswGraph {
         current
     }
 
+    #[cfg(test)]
+    fn greedy_search_layer_with_work_count(
+        &self,
+        query: &SparseCliffordVector,
+        start: usize,
+        layer: usize,
+        work_count: &mut usize,
+    ) -> usize {
+        let mut current = start;
+        let mut current_dist = self.distance_to_node_sq(query, current, layer);
+        *work_count += 1;
+        loop {
+            let mut improved = false;
+            if layer < self.nodes[current].max_layer + 1 {
+                for nb_idx_u32 in self.node_neighbors_iter(current, layer) {
+                    let nb_idx = nb_idx_u32 as usize;
+                    let d = self.distance_to_node_sq(query, nb_idx, layer);
+                    *work_count += 1;
+                    if d < current_dist {
+                        current = nb_idx;
+                        current_dist = d;
+                        improved = true;
+                    }
+                }
+            }
+            if !improved {
+                break;
+            }
+        }
+        current
+    }
+
     /// Beam search at a given layer returning (`internal_idx`, dist) sorted by distance.
     #[allow(clippy::too_many_lines)]
     fn search_layer(
@@ -1572,6 +1605,114 @@ impl HnswGraph {
         })
     }
 
+    #[cfg(test)]
+    #[allow(clippy::too_many_lines)]
+    fn search_layer_with_work_count(
+        &self,
+        query: &SparseCliffordVector,
+        entry_idx: usize,
+        ef: usize,
+        layer: usize,
+        work_count: &mut usize,
+    ) -> Vec<(usize, f64)> {
+        SEARCH_SCRATCH.with(|cell| {
+            let mut scratch = cell.borrow_mut();
+            scratch.out.clear();
+            let search_epoch = self.next_search_epoch();
+            VISITED_EPOCH.with(|visited_cell| {
+                let mut visited = visited_cell.borrow_mut();
+                let needed = self.nodes.len();
+                if visited.len() < needed {
+                    let grown_len = needed.next_power_of_two();
+                    visited.resize(grown_len, 0);
+                }
+                if search_epoch == 1 {
+                    visited.fill(0);
+                }
+
+                let limit = ef.min(MAX_FIXED_HEAP_CAPACITY);
+                let mut candidates = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
+                let mut results = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
+                let query_f32 = Self::dense_to_query_f32(query);
+                let slab_ptr = self.layer0_slab_ptr();
+                let slab_blocks = self.layer0_soa.blocks.len();
+
+                let d0 = self.distance_to_node_sq(query, entry_idx, layer) as f32;
+                *work_count += 1;
+                visited[entry_idx] = search_epoch;
+                candidates.push_or_replace(d0, entry_idx as u32);
+                results.push_or_replace(d0, entry_idx as u32);
+
+                while let Some((c_dist, c_idx_u32)) = candidates.pop_best() {
+                    if results.len() >= limit && c_dist > results.worst() {
+                        break;
+                    }
+
+                    let c_idx = c_idx_u32 as usize;
+                    if layer > self.nodes[c_idx].max_layer {
+                        continue;
+                    }
+                    if layer == 0 && !slab_ptr.is_null() {
+                        for group in self.node_layer0_groups(c_idx) {
+                            let block = group.block as usize;
+                            let base = block * SLAB_LANES;
+                            let mut effective_mask = group.lane_mask;
+                            let mut m = effective_mask;
+                            while m != 0 {
+                                let lane_u8 = m.trailing_zeros() as u8;
+                                let nb_idx = base + usize::from(lane_u8);
+                                if nb_idx >= self.nodes.len() || visited[nb_idx] == search_epoch {
+                                    effective_mask &= !(1_u8 << lane_u8);
+                                }
+                                m &= m - 1;
+                            }
+                            if effective_mask == 0 {
+                                continue;
+                            }
+                            debug_assert!(block < slab_blocks, "block in bounds");
+                            debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
+                            let distances = slab_distance(slab_ptr, block, &query_f32);
+                            let mut m = effective_mask;
+                            while m != 0 {
+                                let lane = m.trailing_zeros() as usize;
+                                let nb_idx = base + lane;
+                                if nb_idx >= self.nodes.len() {
+                                    break;
+                                }
+                                visited[nb_idx] = search_epoch;
+                                let d = distances[lane];
+                                *work_count += 1;
+                                if results.push_or_replace(d, nb_idx as u32) {
+                                    candidates.push_or_replace(d, nb_idx as u32);
+                                }
+                                m &= m - 1;
+                            }
+                        }
+                    } else {
+                        for nb_idx_u32 in self.node_neighbors_iter(c_idx, layer) {
+                            let nb_idx = nb_idx_u32 as usize;
+                            if visited[nb_idx] == search_epoch {
+                                continue;
+                            }
+                            visited[nb_idx] = search_epoch;
+                            let d = self.distance_to_node_sq(query, nb_idx, layer) as f32;
+                            *work_count += 1;
+                            if results.push_or_replace(d, nb_idx as u32) {
+                                candidates.push_or_replace(d, nb_idx as u32);
+                            }
+                        }
+                    }
+                }
+
+                scratch.out.reserve(results.len());
+                for &(dist_sq, idx) in results.as_slice() {
+                    scratch.out.push((idx as usize, f64::from(dist_sq)));
+                }
+                std::mem::take(&mut scratch.out)
+            })
+        })
+    }
+
     /// Search for the k nearest neighbours to query.
     ///
     /// Distance metric: Clifford grade-weighted L2 in G(1,3).
@@ -1598,6 +1739,23 @@ impl HnswGraph {
             .take(k)
             .map(|&(idx, _)| self.nodes[idx].id)
             .collect()
+    }
+
+    #[cfg(test)]
+    fn search_nearest_work_count(&self, query: &SparseCliffordVector, k: usize) -> usize {
+        let Some(entry_idx) = self.entry else {
+            return 0;
+        };
+
+        let mut work_count = 0usize;
+        let mut current = entry_idx;
+        for lc in (1..=self.entry_layer).rev() {
+            current = self.greedy_search_layer_with_work_count(query, current, lc, &mut work_count);
+        }
+
+        let ef = k.max(self.ef_construction);
+        let _ = self.search_layer_with_work_count(query, current, ef, 0, &mut work_count);
+        work_count
     }
 
     /// Iterate over neighbours of a node at all layers (union, deduplicated).
@@ -2063,7 +2221,7 @@ mod tests {
     }
 
     fn make_id(v: u64) -> NodeId {
-        NodeId::try_new(v).expect("NodeId válido por construcción")
+        NodeId::try_new(v).expect("NodeId valid by construction")
     }
 
     fn expected_keep_and_drop(
@@ -2402,7 +2560,7 @@ mod tests {
     #[test]
     fn hnsw_insert_duplicate_id_is_idempotent() {
         let mut g = HnswGraph::new(16);
-        let id = NodeId::try_new(7).expect("NodeId válido por construcción");
+        let id = NodeId::try_new(7).expect("NodeId valid by construction");
         let first = make_vec(0.8);
         let second = make_vec(1.9);
 
@@ -2462,7 +2620,7 @@ mod tests {
             .unwrap();
             vecs.push(v);
             g.insert(
-                NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+                NodeId::try_new(i as u64).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2568,7 +2726,7 @@ mod tests {
             let v = SparseCliffordVector::from_iter((0..4).map(|b| (b, coeff * (b as f64 + 1.0))))
                 .unwrap();
             g.insert(
-                NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+                NodeId::try_new(i as u64).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2596,7 +2754,7 @@ mod tests {
         for i in 0..n {
             let v = make_vec((i as f64).mul_add(0.01, 0.1));
             g.insert(
-                NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+                NodeId::try_new(i as u64).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2621,14 +2779,8 @@ mod tests {
         #[allow(clippy::cast_precision_loss)]
         let p1 = level_1 as f64 / n as f64;
 
-        assert!(
-            (0.90..=0.97).contains(&p0),
-            "P(level=0) fuera de rango: {p0}"
-        );
-        assert!(
-            (0.03..=0.08).contains(&p1),
-            "P(level=1) fuera de rango: {p1}"
-        );
+        assert!((0.90..=0.97).contains(&p0), "P(level=0) out of range: {p0}");
+        assert!((0.03..=0.08).contains(&p1), "P(level=1) out of range: {p1}");
 
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let expected_max = (10_000_f64).log(16_f64).floor() as usize;
@@ -2647,7 +2799,7 @@ mod tests {
         for i in 0..n {
             let v = make_vec((i as f64).mul_add(0.05, 0.1));
             g.insert(
-                NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+                NodeId::try_new(i as u64).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2671,7 +2823,7 @@ mod tests {
         for i in 0..20u64 {
             let v = make_vec((i as f64).mul_add(0.1, 0.1));
             g.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2696,7 +2848,7 @@ mod tests {
         for i in 0..50u64 {
             let v = make_vec((i as f64).mul_add(0.05, 0.1));
             g.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2777,7 +2929,7 @@ mod tests {
         for i in 0..50u64 {
             let v = make_vec((i as f64).mul_add(0.05, 0.1));
             g.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2806,7 +2958,7 @@ mod tests {
             )
             .unwrap();
             g.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -2963,7 +3115,7 @@ mod tests {
         let mut g = HnswGraph::new(16);
         let v0 = make_vec(0.4);
         g.insert(
-            NodeId::try_new(0).expect("NodeId válido por construcción"),
+            NodeId::try_new(0).expect("NodeId valid by construction"),
             &v0,
         )
         .unwrap();
@@ -2972,7 +3124,7 @@ mod tests {
         let v1 = make_vec(0.5);
         let err = g
             .insert(
-                NodeId::try_new(1).expect("NodeId válido por construcción"),
+                NodeId::try_new(1).expect("NodeId valid by construction"),
                 &v1,
             )
             .unwrap_err();
@@ -2988,7 +3140,7 @@ mod tests {
         for i in [5_u64, 2, 9, 1, 7] {
             let v = make_vec((i as f64).mul_add(0.1, 0.2));
             g.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &v,
             )
             .unwrap();
@@ -3002,11 +3154,11 @@ mod tests {
 
         for id in [1_u64, 2, 5, 7, 9] {
             assert!(g
-                .idx(NodeId::try_new(id).expect("NodeId válido por construcción"))
+                .idx(NodeId::try_new(id).expect("NodeId valid by construction"))
                 .is_some());
         }
         assert!(g
-            .idx(NodeId::try_new(3).expect("NodeId válido por construcción"))
+            .idx(NodeId::try_new(3).expect("NodeId valid by construction"))
             .is_none());
     }
     #[cfg(feature = "hnsw-f16")]
@@ -3494,10 +3646,14 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "hnsw_scaling_test_support.rs"]
+mod scaling_test_support;
+
+#[cfg(test)]
 mod scaling_tests {
-    use genesis_math::SparseCliffordVector;
     use genesis_types::NodeId;
 
+    use super::scaling_test_support::{make_neighbor_vec, make_scaling_vec};
     use super::*;
 
     /// Empirically verify HNSW search scales as O(log N) not O(N).
@@ -3514,42 +3670,33 @@ mod scaling_tests {
     /// AX-ID: AXIOMA-013 — O(log N) semantic search
     #[test]
     fn hnsw_search_scaling_is_sublinear() {
-        fn make_vec(seed: u64) -> SparseCliffordVector {
-            let mut coeffs = [0.0f64; 16];
-            let mut rng = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-            for c in &mut coeffs {
-                rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-                *c = ((rng >> 33) as f64 / u32::MAX as f64).mul_add(2.0, -1.0);
-            }
-            SparseCliffordVector::from_dense(&coeffs)
-                .unwrap_or_else(|_| SparseCliffordVector::zero())
-        }
-
-        fn build_and_time_search(n: usize, repetitions: u32) -> std::time::Duration {
+        fn build_and_count_work(n: usize, repetitions: u32) -> f64 {
             let mut graph = HnswGraph::new(16);
             for i in 0..n {
                 let id = NodeId::try_new(i as u64).unwrap();
-                let v = make_vec(i as u64 * 31337);
-                let _ = graph.insert(id, &v);
+                let v = make_scaling_vec(i as u64 * 31337);
+                graph.insert(id, &v).unwrap_or_else(|_| {
+                    panic!("insert failed in scaling benchmark for id={}", id.get())
+                });
             }
-            let query = make_vec(999_999);
-            let start = std::time::Instant::now();
+            let query = make_scaling_vec(999_999);
+            let mut total_work = 0usize;
             for _ in 0..repetitions {
-                let _ = graph.search_nearest(&query, 10);
+                total_work += graph.search_nearest_work_count(&query, 10);
             }
-            start.elapsed() / repetitions
+            total_work as f64 / repetitions as f64
         }
 
         // Use larger N to reduce constant-factor inflation on sandbox VMs.
         // N=1000 vs N=10000: 10× more nodes.
         // O(log N) theoretical ratio: log(10000)/log(1000) = 4/3 ≈ 1.33
         // O(N) ratio would be: 10.0
-        // We allow ≤ 6.0 to handle sandbox CPU variance while still catching O(N) regressions.
+        // We allow ≤ 6.0 to handle topology variance while still catching O(N) regressions.
         let reps = 30u32;
-        let t_small = build_and_time_search(500, reps);
-        let t_large = build_and_time_search(5000, reps);
+        let w_small = build_and_count_work(500, reps);
+        let w_large = build_and_count_work(5000, reps);
 
-        let ratio = t_large.as_nanos() as f64 / t_small.as_nanos().max(1) as f64;
+        let ratio = w_large / w_small.max(1.0);
 
         assert!(
             ratio <= 6.0,
@@ -3561,7 +3708,7 @@ mod scaling_tests {
         // Also assert we didn't degrade below O(1) (ratio should be > 0.3)
         assert!(
             ratio > 0.1,
-            "ratio={ratio:.2} suspiciously small — benchmark noise"
+            "ratio={ratio:.2} suspiciously small — work-count noise"
         );
     }
 
@@ -3586,7 +3733,7 @@ mod scaling_tests {
 
         // Create a central node with max layers
         let central_id = NodeId::try_new(0).unwrap();
-        let central_vec = make_vec(0.0);
+        let central_vec = make_neighbor_vec(0.0);
         graph.insert(central_id, &central_vec).unwrap();
 
         // Force the central node to have max_layer = MAX_LAYERS - 1
@@ -3595,36 +3742,100 @@ mod scaling_tests {
 
         // Allocate upper layers storage
         let upper_layers = vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1];
-        graph.nodes[central_idx].adj.upper = Some(upper_layers.into_boxed_slice());
+        graph.layer_neighbors[central_idx].upper = Some(upper_layers.into_boxed_slice());
 
         // Insert neighbor nodes
         for i in 1..=num_neighbors {
             let neighbor_id = NodeId::try_new(i as u64).unwrap();
-            let neighbor_vec = make_vec(i as f64 * 0.01);
+            let neighbor_vec = make_neighbor_vec(i as f64 * 0.01);
             graph.insert(neighbor_id, &neighbor_vec).unwrap();
+        }
+
+        // Reset central adjacency so this fixture remains fully controlled.
+        graph.layer_neighbors[central_idx].clear_layer(0);
+        graph.layer_neighbors[central_idx].upper =
+            Some(vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1].into_boxed_slice());
+        for neighbor_idx in 1..=num_neighbors {
+            graph.layer_neighbors[neighbor_idx].clear_layer(0);
+            graph.layer_neighbors[neighbor_idx].upper =
+                Some(vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1].into_boxed_slice());
+            graph.nodes[neighbor_idx].max_layer = 0;
         }
 
         // Manually populate adjacency lists to create worst-case scenario
         // Layer 0: M0 neighbors
+        let central_internal_idx = central_idx as u32;
+        let central_slab_idx = graph.layer0_soa.node_to_slab[central_idx];
         for i in 1..=M0 {
             let neighbor_idx = i as u32;
-            let packed = NodeAdj::pack_layer0(neighbor_idx, 0);
-            graph.nodes[central_idx].adj.layer0.push(packed);
+            let slab_idx = graph.layer0_soa.node_to_slab[neighbor_idx as usize];
+            let inserted =
+                graph.layer_neighbors[central_idx].add_neighbor(0, neighbor_idx, slab_idx, M0);
+            assert!(
+                inserted,
+                "fixture insertion failed for layer0 neighbor={neighbor_idx}"
+            );
+            let reverse_inserted = graph.layer_neighbors[neighbor_idx as usize].add_neighbor(
+                0,
+                central_internal_idx,
+                central_slab_idx,
+                M0,
+            );
+            assert!(
+                reverse_inserted,
+                "fixture reverse insertion failed for layer0 neighbor={neighbor_idx}"
+            );
         }
 
         // Upper layers: M neighbors each
-        if let Some(ref mut upper) = graph.nodes[central_idx].adj.upper {
-            for layer_idx in 0..(MAX_LAYERS - 1) {
-                for i in 0..M {
-                    // Use unique neighbor IDs across layers to maximize deduplication work
-                    let neighbor_offset = M0 + layer_idx * M + i;
-                    if neighbor_offset < num_neighbors {
-                        let neighbor_idx = (neighbor_offset + 1) as u32;
-                        upper[layer_idx].push(neighbor_idx);
-                    }
+        for layer_idx in 0..(MAX_LAYERS - 1) {
+            for i in 0..M {
+                // Use unique neighbor IDs across layers to maximize deduplication work
+                let neighbor_offset = M0 + layer_idx * M + i;
+                if neighbor_offset < num_neighbors {
+                    let neighbor_idx = (neighbor_offset + 1) as u32;
+                    let slab_idx = graph.layer0_soa.node_to_slab[neighbor_idx as usize];
+                    let inserted = graph.layer_neighbors[central_idx].add_neighbor(
+                        layer_idx + 1,
+                        neighbor_idx,
+                        slab_idx,
+                        M,
+                    );
+                    assert!(
+                        inserted,
+                        "fixture insertion failed for upper layer={} neighbor={neighbor_idx}",
+                        layer_idx + 1
+                    );
+                    let neighbor_internal_idx = neighbor_idx as usize;
+                    graph.nodes[neighbor_internal_idx].max_layer = graph.nodes
+                        [neighbor_internal_idx]
+                        .max_layer
+                        .max(layer_idx + 1);
+                    let reverse_inserted = graph.layer_neighbors[neighbor_internal_idx]
+                        .add_neighbor(layer_idx + 1, central_internal_idx, central_slab_idx, M);
+                    assert!(
+                        reverse_inserted,
+                        "fixture reverse insertion failed for upper layer={} neighbor={neighbor_idx}",
+                        layer_idx + 1
+                    );
                 }
             }
         }
+
+        // Recompute undirected layer-0 edge count to keep fixture bookkeeping consistent.
+        let directed_layer0_edges: usize = graph
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.id != NodeId::INVALID)
+            .map(|(idx, _)| graph.layer_neighbors[idx].neighbors_len(0))
+            .sum();
+        assert_eq!(
+            directed_layer0_edges % 2,
+            0,
+            "layer-0 directed edge count must be even in a bidirectional fixture"
+        );
+        graph.edge_count_layer0_undirected = directed_layer0_edges;
 
         // Create a NeighborIter and exhaust it, tracking the maximum seen.len()
         let iter = NeighborIter {
@@ -3665,22 +3876,15 @@ mod scaling_tests {
             max_seen_len = final_seen_len;
         }
 
-        // Assert we never exceeded the budget
-        assert!(
-            max_seen_len <= MAX_UNIQUE_NEIGHBOR_BUDGET,
-            "SmallVec spilled! max_seen_len={}, budget={}. \
-             Check M={}, M0={}, MAX_LAYERS={}",
-            max_seen_len,
+        // Assert we exercised the exact worst-case budget boundary.
+        assert_eq!(
+            neighbors.len(),
             MAX_UNIQUE_NEIGHBOR_BUDGET,
-            M,
-            M0,
-            MAX_LAYERS
+            "Fixture must emit exactly MAX_UNIQUE_NEIGHBOR_BUDGET unique neighbors"
         );
-
-        // Also verify we actually tested a meaningful case
-        assert!(
-            neighbors.len() > 0,
-            "Test is trivial: no neighbors were emitted"
+        assert_eq!(
+            max_seen_len, MAX_UNIQUE_NEIGHBOR_BUDGET,
+            "Seen set must hit the exact inline budget boundary"
         );
 
         // Verify the SmallVec never allocated on the heap by checking spilled() method
