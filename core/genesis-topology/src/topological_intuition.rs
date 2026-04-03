@@ -382,27 +382,30 @@ fn nearest_neighbors_by_metric(graph: &HnswGraph, center: NodeId) -> Vec<NodeId>
 }
 
 fn local_hyperbolic_delta(graph: &HnswGraph, nodes: [NodeId; 4]) -> Option<f64> {
-    let [a_id, b_id, c_id, d_id] = nodes;
-    let a = graph.vector(a_id)?;
-    let b = graph.vector(b_id)?;
-    let c = graph.vector(c_id)?;
-    let d = graph.vector(d_id)?;
+    let [first_id, second_id, third_id, fourth_id] = nodes;
+    let first_vec = graph.vector(first_id)?;
+    let second_vec = graph.vector(second_id)?;
+    let third_vec = graph.vector(third_id)?;
+    let fourth_vec = graph.vector(fourth_id)?;
     // loop-invariant, hoisted
     // CRYSTAL: O61, O62, O63, O64, FO44 — inevitable
 
-    let mut x = geometric_distance(a, b) + geometric_distance(c, d);
-    let mut y = geometric_distance(a, c) + geometric_distance(b, d);
-    let mut z = geometric_distance(a, d) + geometric_distance(b, c);
-    if x.total_cmp(&y).is_gt() {
-        core::mem::swap(&mut x, &mut y);
+    let mut dist_ab_plus_cd =
+        geometric_distance(first_vec, second_vec) + geometric_distance(third_vec, fourth_vec);
+    let mut dist_ac_plus_bd =
+        geometric_distance(first_vec, third_vec) + geometric_distance(second_vec, fourth_vec);
+    let mut dist_ad_plus_bc =
+        geometric_distance(first_vec, fourth_vec) + geometric_distance(second_vec, third_vec);
+    if dist_ab_plus_cd.total_cmp(&dist_ac_plus_bd).is_gt() {
+        core::mem::swap(&mut dist_ab_plus_cd, &mut dist_ac_plus_bd);
     }
-    if y.total_cmp(&z).is_gt() {
-        core::mem::swap(&mut y, &mut z);
+    if dist_ac_plus_bd.total_cmp(&dist_ad_plus_bc).is_gt() {
+        core::mem::swap(&mut dist_ac_plus_bd, &mut dist_ad_plus_bc);
     }
-    if x.total_cmp(&y).is_gt() {
-        core::mem::swap(&mut x, &mut y);
+    if dist_ab_plus_cd.total_cmp(&dist_ac_plus_bd).is_gt() {
+        core::mem::swap(&mut dist_ab_plus_cd, &mut dist_ac_plus_bd);
     }
-    Some(((z - y) * 0.5).max(0.0))
+    Some(((dist_ad_plus_bc - dist_ac_plus_bd) * 0.5).max(0.0))
 }
 
 fn local_triangle_density(graph: &HnswGraph, neighbors: &[NodeId]) -> f64 {

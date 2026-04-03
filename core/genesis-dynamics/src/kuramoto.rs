@@ -27,8 +27,7 @@ const INV_2POW53: f64 = 1.0 / ((1u64 << 53) as f64);
 ///
 /// AX-ID: AXIOMA-006 — thermal decoherence required in Euler-Maruyama.
 // Hot path: invoked 5 times per node per integration step.
-#[allow(clippy::inline_always)]
-#[inline(always)]
+#[inline]
 fn gaussian_noise(rng: &mut u64) -> f64 {
     // Deterministic Box-Muller implementation to preserve E[η]≈0 and Var[η]≈1
     // (see test `gaussian_noise_mean_and_variance`).
@@ -67,8 +66,7 @@ fn gaussian_noise(rng: &mut u64) -> f64 {
 ///
 /// Circular-shift invariant: `wrap(φ + 2πk) = wrap(φ)` for all `k ∈ ℤ`.
 // Hot path for angular differences used in phase metrics and coupling.
-#[allow(clippy::inline_always)]
-#[inline(always)]
+#[inline]
 pub(crate) fn wrap_phase(x: f64) -> f64 {
     const INV_TAU: f64 = 1.0 / core::f64::consts::TAU;
     let turns = x.mul_add(INV_TAU, 0.5).floor();
@@ -80,8 +78,7 @@ pub(crate) fn wrap_phase(x: f64) -> f64 {
     }
 }
 
-#[allow(clippy::inline_always)]
-#[inline(always)]
+#[inline]
 fn wrap_phase_diff(d: f64) -> f64 {
     wrap_phase(d)
 }
@@ -94,7 +91,7 @@ fn wrap_phase_diff(d: f64) -> f64 {
 /// - Scalar fallback: default portable build path when SIMD flags are absent.
 ///
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
-#[inline(always)]
+#[inline]
 fn accumulate_grades_simd(sums: &mut [f64; 5], gamma: f64, contrib: &[f64; 5]) {
     #[cfg(all(
         target_arch = "x86_64",
@@ -560,13 +557,12 @@ impl QuantumKuramotoNetwork {
                 let adaptive_gamma =
                     (gamma_0 * amp_factor * orient_factor * habituate).max(KURAMOTO_COUPLING_FLOOR);
 
-                for g in 0..5usize {
-                    coupling_sums[g] = adaptive_gamma
-                        .mul_add((phi_j[g] - phi_i[g] + gauge).sin(), coupling_sums[g]);
+                for (g, sum) in coupling_sums.iter_mut().enumerate() {
+                    *sum = adaptive_gamma.mul_add((phi_j[g] - phi_i[g] + gauge).sin(), *sum);
                 }
             }
 
-            for g in 0..5 {
+            for (g, coupling_sum) in coupling_sums.iter().enumerate() {
                 let omega = self.oscillators[i].frequencies[g];
                 let eta = if noise_enabled {
                     self.next_gaussian() * sqrt_2k_t_dt
@@ -574,7 +570,7 @@ impl QuantumKuramotoNetwork {
                     0.0
                 };
                 let new_phase =
-                    dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]) + eta;
+                    dt.mul_add(omega + coupling_sum, self.oscillators[i].phases[g]) + eta;
                 self.oscillators.set_phase_mirrored(i, g, new_phase);
             }
         }
@@ -632,13 +628,13 @@ impl QuantumKuramotoNetwork {
     }
 
     // ── Integration ──────────────────────────────────────────────────────────
-    /// Un paso of integration Euler-Maruyama, `dt` segundos.
+    /// Performs one Euler-Maruyama integration step with time increment `dt` (seconds).
     ///
     /// For each oscillator i and grade g:
     ///  φᵢg(t+dt) = φᵢg(t) + [ωᵢg + Σⱼ Γᵢⱼ sin(φⱼg(t) - φᵢg(t))] · dt
     ///              + η · √(2 kT dt)
     ///
-    /// `η ~ N(0,1)` via LCG Box-Muller. Sin heap by `step`.
+    /// `η ~ N(0,1)` via LCG Box-Muller. `step` performs no heap allocation.
     /// Forbidden: deterministic collapse (AXIOMA-006).
     pub fn step(&mut self, dt: f64) {
         self.rebuild_if_dirty();
@@ -647,7 +643,7 @@ impl QuantumKuramotoNetwork {
             return;
         }
 
-        // Snapshot of phases previas in scratch (Euler-Maruyama: usa φ(t), no φ(t+dt)).
+        // Snapshot previous phases into scratch (Euler-Maruyama uses φ(t), not φ(t+dt)).
         for i in 0..n {
             self.phase_scratch[i] = self.oscillators[i].phases;
         }
@@ -666,8 +662,7 @@ impl QuantumKuramotoNetwork {
         self.sync_dirty = true;
     }
 
-    #[allow(clippy::inline_always)]
-    #[inline(always)]
+    #[inline]
     fn next_gaussian(&mut self) -> f64 {
         let spare = self.spare_gaussian;
         if !spare.is_nan() {
@@ -735,7 +730,7 @@ impl QuantumKuramotoNetwork {
 
     fn step_inner_deterministic(&mut self, dt: f64) {
         let n = self.oscillators.len();
-        let block_count = (n + 7) / 8;
+        let block_count = n.div_ceil(8);
         for b in 0..block_count {
             let base = b * 8;
             let limit = (n - base).min(8);
@@ -756,10 +751,9 @@ impl QuantumKuramotoNetwork {
                     &self.contrib_buf,
                     i,
                 );
-                for g in 0..5 {
+                for (g, coupling_sum) in coupling_sums.iter().enumerate() {
                     let omega = self.oscillators[i].frequencies[g];
-                    let new_phase =
-                        dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]);
+                    let new_phase = dt.mul_add(omega + coupling_sum, self.oscillators[i].phases[g]);
                     self.oscillators.set_phase_mirrored(i, g, new_phase);
                 }
             }
@@ -768,7 +762,7 @@ impl QuantumKuramotoNetwork {
 
     fn step_inner_noisy(&mut self, dt: f64, sqrt_2k_t_dt: f64) {
         let n = self.oscillators.len();
-        let block_count = (n + 7) / 8;
+        let block_count = n.div_ceil(8);
         for b in 0..block_count {
             let base = b * 8;
             let limit = (n - base).min(8);
@@ -791,11 +785,11 @@ impl QuantumKuramotoNetwork {
                     self.next_gaussian(),
                     self.next_gaussian(),
                 ];
-                for g in 0..5 {
+                for (g, coupling_sum) in coupling_sums.iter().enumerate() {
                     let omega = self.oscillators[i].frequencies[g];
                     let new_phase = sqrt_2k_t_dt.mul_add(
                         noise_buf[g],
-                        dt.mul_add(omega + coupling_sums[g], self.oscillators[i].phases[g]),
+                        dt.mul_add(omega + coupling_sum, self.oscillators[i].phases[g]),
                     );
                     self.oscillators.set_phase_mirrored(i, g, new_phase);
                 }
@@ -803,15 +797,15 @@ impl QuantumKuramotoNetwork {
         }
     }
 
-    /// Parameter of order of Kuramoto r = |Σ e^{iφ}| / N ∈ `[0,1]`.
+    /// Kuramoto order parameter `r = |Σ e^{iφ}| / N ∈ [0,1]`.
     ///
-    /// Result cached: recompute only if `step()` was called from the
-    ///last invocation. In control loops that call this method without
-    /// llamar `step()` between medias, cost = O(1).
+    /// Cached result: recomputed only when `step()` has been called since the
+    /// previous invocation. In control loops that do not step between reads,
+    /// cost is O(1).
     ///
-    /// # Costo
-    /// - Primera llamada tras `step()`: O(N)
-    /// - Llamadas subsecuentes without `step()` intermedio: O(1)
+    /// # Cost
+    /// - First call after `step()`: O(N)
+    /// - Subsequent calls without an intermediate `step()`: O(1)
     ///
     /// AX-ID: AXIOMA-006
     pub fn synchrony_order_cached(&mut self) -> f64 {

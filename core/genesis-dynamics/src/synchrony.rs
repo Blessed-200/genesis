@@ -152,107 +152,137 @@ const fn cos_kernel(_y: f64, y2: f64) -> f64 {
 /// r ∈ [0.0, 1.0]. AX-ID: AXIOMA-006, AXIOMA-008, H_dinámica (LEY_FUNDACIONAL §4)
 pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
     let blocks = network.oscillators.blocks();
-    let n = network.node_count();
-    if n == 0 {
+    let node_count = network.node_count();
+    if node_count == 0 {
         return 0.0;
     }
 
+    const RAYON_THRESHOLD: usize = 4096;
+    const DETERMINISTIC_BLOCK_CHUNK: usize = 16;
+    let grade_totals = if node_count < RAYON_THRESHOLD {
+        reduce_blocks_serial(blocks, node_count, DETERMINISTIC_BLOCK_CHUNK)
+    } else {
+        reduce_blocks_parallel(blocks, node_count, DETERMINISTIC_BLOCK_CHUNK)
+    };
+    finalize_grade_totals(&grade_totals)
+}
+
+#[inline]
+fn merge_grade_totals(
+    dst: &mut [(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5],
+    src: &[(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5],
+) {
+    for (left, right) in dst.iter_mut().zip(src.iter()) {
+        left.0.merge(right.0);
+        left.1.merge(right.1);
+        left.2.merge(right.2);
+    }
+}
+
+#[inline]
+fn reduce_blocks(
+    blocks: &[crate::oscillator::OscillatorBlock],
+    valid_lanes: usize,
+) -> [(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5] {
+    let mut acc = [(
+        KahanAccumulator::new(),
+        KahanAccumulator::new(),
+        KahanAccumulator::new(),
+    ); 5];
+    for (block_index, block) in blocks.iter().enumerate() {
+        let block_start = block_index * 8;
+        let remaining = valid_lanes.saturating_sub(block_start);
+        let lane_limit = remaining.min(8);
+        for lane in 0..lane_limit {
+            if !block.states[lane].contributes_to_sync() {
+                continue;
+            }
+            for (grade, grade_acc) in acc.iter_mut().enumerate() {
+                let amplitude = block.amplitudes[grade][lane];
+                let phase = block.phases[grade][lane];
+                #[cfg(feature = "poly_trig")]
+                {
+                    grade_acc.0.add(amplitude * poly_cos(phase));
+                    grade_acc.1.add(amplitude * poly_sin(phase));
+                }
+                #[cfg(not(feature = "poly_trig"))]
+                {
+                    let (sin_phase, cos_phase) = phase.sin_cos();
+                    grade_acc.0.add(amplitude * cos_phase);
+                    grade_acc.1.add(amplitude * sin_phase);
+                }
+                grade_acc.2.add(amplitude);
+            }
+        }
+    }
+    acc
+}
+
+fn reduce_blocks_serial(
+    blocks: &[crate::oscillator::OscillatorBlock],
+    node_count: usize,
+    chunk_size: usize,
+) -> [(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5] {
+    let mut totals = [(
+        KahanAccumulator::new(),
+        KahanAccumulator::new(),
+        KahanAccumulator::new(),
+    ); 5];
+    let mut lanes_before = 0usize;
+    for block_chunk in blocks.chunks(chunk_size) {
+        let remaining = node_count.saturating_sub(lanes_before);
+        let valid = remaining.min(block_chunk.len() * 8);
+        let partial = reduce_blocks(block_chunk, valid);
+        merge_grade_totals(&mut totals, &partial);
+        lanes_before += chunk_size * 8;
+    }
+    totals
+}
+
+fn reduce_blocks_parallel(
+    blocks: &[crate::oscillator::OscillatorBlock],
+    node_count: usize,
+    chunk_size: usize,
+) -> [(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5] {
+    let mut partials: Vec<_> = blocks
+        .par_chunks(chunk_size)
+        .enumerate()
+        .map(|(chunk_idx, block_chunk)| {
+            let lanes_before = chunk_idx * chunk_size * 8;
+            let remaining = node_count.saturating_sub(lanes_before);
+            let valid = remaining.min(block_chunk.len() * 8);
+            reduce_blocks(block_chunk, valid)
+        })
+        .collect();
+    let chunk_count = partials.len();
+    let mut stride = 1usize;
+    while stride < chunk_count {
+        let step = stride * 2;
+        let mut base = 0usize;
+        while base + stride < chunk_count {
+            let (head, tail) = partials.split_at_mut(base + stride);
+            merge_grade_totals(&mut head[base], &tail[0]);
+            base += step;
+        }
+        stride = step;
+    }
+    if chunk_count == 0 {
+        [(
+            KahanAccumulator::new(),
+            KahanAccumulator::new(),
+            KahanAccumulator::new(),
+        ); 5]
+    } else {
+        partials[0]
+    }
+}
+
+#[inline]
+fn finalize_grade_totals(
+    grade_totals: &[(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5],
+) -> f64 {
     const N_GRADES: usize = 5;
     const EPS: f64 = 1e-30;
-    const RAYON_THRESHOLD: usize = 4096;
-    /// Fixed chunk size in units of blocks (8 lanes each).
-    const DETERMINISTIC_BLOCK_CHUNK: usize = 16;
-
-    /// Inner reduction over a slice with deterministic local iteration order.
-    #[inline]
-    fn reduce_blocks(
-        blocks: &[crate::oscillator::OscillatorBlock],
-        valid_lanes: usize,
-    ) -> [(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5] {
-        let mut acc = [(
-            KahanAccumulator::new(),
-            KahanAccumulator::new(),
-            KahanAccumulator::new(),
-        ); 5];
-        for (bi, block) in blocks.iter().enumerate() {
-            let block_start = bi * 8;
-            let remaining = valid_lanes.saturating_sub(block_start);
-            let lane_limit = remaining.min(8);
-            for lane in 0..lane_limit {
-                if !block.states[lane].contributes_to_sync() {
-                    continue;
-                }
-                for (g, grade_acc) in acc.iter_mut().enumerate() {
-                    let a = block.amplitudes[g][lane];
-                    let phase = block.phases[g][lane];
-                    #[cfg(feature = "poly_trig")]
-                    {
-                        grade_acc.0.add(a * poly_cos(phase));
-                        grade_acc.1.add(a * poly_sin(phase));
-                    }
-                    #[cfg(not(feature = "poly_trig"))]
-                    {
-                        let (sin_phase, cos_phase) = phase.sin_cos();
-                        grade_acc.0.add(a * cos_phase);
-                        grade_acc.1.add(a * sin_phase);
-                    }
-                    grade_acc.2.add(a);
-                }
-            }
-        }
-        acc
-    }
-
-    let mut grade_totals = [(
-        KahanAccumulator::new(),
-        KahanAccumulator::new(),
-        KahanAccumulator::new(),
-    ); N_GRADES];
-    if n < RAYON_THRESHOLD {
-        let mut lanes_before = 0usize;
-        for block_chunk in blocks.chunks(DETERMINISTIC_BLOCK_CHUNK) {
-            let remaining = n.saturating_sub(lanes_before);
-            let valid = remaining.min(block_chunk.len() * 8);
-            let partial = reduce_blocks(block_chunk, valid);
-            for (dst, src) in grade_totals.iter_mut().zip(partial.iter()) {
-                dst.0.merge(src.0);
-                dst.1.merge(src.1);
-                dst.2.merge(src.2);
-            }
-            lanes_before += DETERMINISTIC_BLOCK_CHUNK * 8;
-        }
-    } else {
-        let mut partials: Vec<_> = blocks
-            .par_chunks(DETERMINISTIC_BLOCK_CHUNK)
-            .enumerate()
-            .map(|(chunk_idx, block_chunk)| {
-                let lanes_before = chunk_idx * DETERMINISTIC_BLOCK_CHUNK * 8;
-                let remaining = n.saturating_sub(lanes_before);
-                let valid = remaining.min(block_chunk.len() * 8);
-                reduce_blocks(block_chunk, valid)
-            })
-            .collect();
-        let chunk_count = partials.len();
-        let mut stride = 1usize;
-        while stride < chunk_count {
-            let step = stride * 2;
-            let mut base = 0usize;
-            while base + stride < chunk_count {
-                let (head, tail) = partials.split_at_mut(base + stride);
-                for (left, right) in head[base].iter_mut().zip(tail[0].iter()) {
-                    left.0.merge(right.0);
-                    left.1.merge(right.1);
-                    left.2.merge(right.2);
-                }
-                base += step;
-            }
-            stride = step;
-        }
-        if chunk_count > 0 {
-            grade_totals = partials[0];
-        }
-    }
-
     let r_total: f64 = grade_totals
         .iter()
         .map(|(sc, ss, sa)| {

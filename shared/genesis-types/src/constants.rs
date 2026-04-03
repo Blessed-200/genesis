@@ -80,6 +80,29 @@ pub const MAX_CLIFFORD_GRADE: usize = 4;
 pub const CLIFFORD_BASIS_SIZE: usize = 1 << MAX_CLIFFORD_GRADE;
 
 // ============================================================================
+// CLIFFORD METRIC WEIGHTS (GRADE-DIFFERENTIATED)
+// ============================================================================
+
+/// Canonical per-blade metric weights for G(1,3).
+///
+/// This table is the single source of truth for all grade-weighted distances
+/// and VFE terms across the workspace.
+///
+/// Grade mapping:
+/// - Grade 0 (scalar):       2.0
+/// - Grade 1 (vectors):      1.5
+/// - Grade 2 (bivectors):    1.0
+/// - Grade 3 (trivectors):   0.5
+/// - Grade 4 (pseudoscalar): 0.3
+///
+/// Blade order follows the canonical bitmask ordering used by G(1,3).
+///
+/// AX-ID: AXIOMA-001, AXIOMA-014, H_estructura (LEY_FUNDACIONAL §3.1)
+pub const METRIC_WEIGHTS: [f64; CLIFFORD_BASIS_SIZE] = [
+    2.0, 1.5, 1.5, 1.0, 1.5, 1.0, 1.0, 0.5, 1.5, 1.0, 1.0, 0.5, 1.0, 0.5, 0.5, 0.3,
+];
+
+// ============================================================================
 // SATIATION PARAMETERS
 // ============================================================================
 

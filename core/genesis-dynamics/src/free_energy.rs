@@ -11,44 +11,23 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use genesis_math::SparseCliffordVector;
-use genesis_types::{GenesisError, NodeId};
+use genesis_types::{GenesisError, NodeId, METRIC_WEIGHTS};
 
 use crate::kahan::KahanAccumulator;
 
-/// Signatura Minkowski (+,−,−,−) for G(1,3).
-/// Index 0 = temporal (positivo), indices 1..3 = spatial (negativos).
-/// AX-ID: AXIOMA-001, `LEY_FUNDACIONAL` §2
+/// Trace clamping floor and ceiling used for Fisher-driven amplitude updates.
+///
+/// AX-ID: AXIOMA-008, H_información (LEY_FUNDACIONAL §3.3)
 const TRACE_MIN: f64 = 1.0e-12;
 const TRACE_MAX: f64 = 1.0e12;
 
-/// Per-blade norm weights in G(1,3) for 16D VFE computation.
+/// Canonical per-blade weights used by 16D VFE.
 ///
-/// Provided so that `VFE_16D = Σ_i precision_full[i] * (mean_full[i] - target_full[i])²`
-/// is sensitive to the real geometry of G(1,3). Weights reflect importance
-/// semantic of each grade (ver `METRIC_WEIGHTS` in genesis-math).
-///
-/// | Grade | Blades   | Weight |
-/// |-------|----------|------|
-/// | 0     | {0}      | 2.0  |
-/// | 1     | {1,2,4,8}| 1.5  |
-/// | 2     | {3,5,6,9,10,12} | 1.0 |
-/// | 3     | {7,11,13,14} | 0.5 |
-/// | 4     | {15}     | 0.3  |
-///
-/// Consistent with `METRIC_WEIGHTS` in `genesis-math` so that the distance
-/// is inferentially coherent with the topological distance in HNSW.
+/// This aliases `genesis_types::METRIC_WEIGHTS` to guarantee a single source
+/// of truth across distance computation, topology, and free-energy terms.
 ///
 /// AX-ID: AXIOMA-014, LEY_FUNDACIONAL §3.3
-pub(crate) const VFE_BLADE_WEIGHTS: [f64; 16] = [
-    // blade 0 (grade 0: climb)
-    2.0, // blades 1,2,4,8 (grado 1: vectores — semántica primaria)
-    1.5, 1.5, 1.0, // 1(e0), 2(e1), 3(e01)
-    1.5, 1.0, 1.0, // 4(e2), 5(e02), 6(e12)
-    0.5, 1.5, // 7(e012), 8(e3)
-    // blades 9..14 (grados 2 and 3)
-    1.0, 1.0, 0.5, 1.0, 0.5, 0.5, // blade 15 (grado 4: pseudoescalar)
-    0.3,
-];
+pub(crate) const VFE_BLADE_WEIGHTS: [f64; 16] = METRIC_WEIGHTS;
 
 /// Indices blade of the vectors grade 1 in G(1,3): e₀, e₁, e₂, e₃.
 /// Used to initialize `mean_full` from the prior of 4 components
@@ -80,7 +59,7 @@ fn target_from_sparse_obs(obs: Option<&SparseCliffordVector>) -> Option<[f64; 16
     })
 }
 
-// ── Tipos of creencias ────────────────────────────────────────────────────────
+// ── Belief types ─────────────────────────────────────────────────────────────
 
 /// Full inferential state of a node over the G(1,3) multivector.
 ///
@@ -164,10 +143,14 @@ impl Belief {
         core::array::from_fn(|k| self.mean_full[GRADE1_BLADE_INDICES[k]])
     }
 
-    /// Trace of Fisher (para FisherGate, AXIOMA-008).
-    /// Sums of the precisions over the 16 blades.
+    /// Sum of diagonal precisions across all 16 blades.
+    ///
+    /// This is not the scalar Fisher gate trace (`FisherInfo::trace`); it is
+    /// the belief-local precision aggregate.
+    ///
+    /// AX-ID: AXIOMA-003
     #[inline]
-    pub fn fisher_trace(&self) -> f64 {
+    pub fn precision_sum(&self) -> f64 {
         self.precision_full.iter().sum()
     }
 
@@ -203,8 +186,7 @@ impl FisherInfo {
 /// AX-ID: LEY_FUNDACIONAL §3.6, §5.6
 pub use genesis_types::FisherEdgeMetric;
 
-/// Function helper canonical of edge — kept internally for compatibility
-/// with tests that the reference directly dentro of this module.
+/// Canonical edge ordering helper kept internal for module-local tests.
 #[inline]
 const fn canonical_edge(i: NodeId, j: NodeId) -> (NodeId, NodeId) {
     if i.get() <= j.get() {
@@ -476,13 +458,15 @@ impl VFEMinimizer {
         (vfe, grad4)
     }
 
-    /// Drive internal: returns the `NodeId` with mayor VFE 16D bajo prior empty.
+    /// Internal drive: returns the `NodeId` with maximum 16D VFE under zero prior.
     ///
     /// The VFE 16D covers all the degrees of G(1,3), so the node with
     /// biggest surprise can be one with high discrepancy in bivectors or
     ///trivectors, not only in the vector component.
     ///
-    /// Without external stimulus the system minimizes F internally. (AXIOM-003)
+    /// Without external stimulus, the system minimizes F internally.
+    ///
+    /// AX-ID: AXIOMA-003
     pub fn internal_drive(&mut self) -> Option<NodeId> {
         if self.beliefs.is_empty() {
             return None;
@@ -514,7 +498,7 @@ impl VFEMinimizer {
     /// Updates beliefs of grade 1 after observation — backward compatibility.
     ///
     /// Same behavior as in v1.0: only updates the 4 blades of grade 1
-    /// (`mean_full[GRADE1_BLADE_INDICES]`). Para updatesr all the 16 blades,
+    /// (`mean_full[GRADE1_BLADE_INDICES]`). For updates across all 16 blades,
     /// use `update_full()`.
     ///
     /// AX-ID: AXIOMA-003, AXIOMA-008
@@ -789,7 +773,7 @@ mod tests {
 
     #[test]
     fn vfe_delta_g_has_correct_frobenius_scale() {
-        // Para Fisher isotropic 4x4 with trace T: ‖ΔG‖_F = |ΔT|/2.
+        // For isotropic 4x4 Fisher with trace T: ‖ΔG‖_F = |ΔT|/2.
         // Verify that delta_g == 0.5 * |ΔTr| after an update.
         let mut vfe = VFEMinimizer::new();
         let id = NodeId::try_new(0).expect("NodeId válido por construcción");
@@ -882,7 +866,7 @@ mod tests {
                 );
                 assert!(
                     product <= 1.0 + f64::EPSILON,
-                    "step*trace debe ser <= 1 para dt={dt:e}, trace={trace:e}: {product:e}"
+                    "step*trace must be <= 1 for dt={dt:e}, trace={trace:e}: {product:e}"
                 );
             }
         }

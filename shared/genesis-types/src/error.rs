@@ -432,16 +432,16 @@ pub enum GenesisError {
     /// A structural mutation attempted to execute without generating a valid Proof.
     ///
     /// AX-ID: `LEY_FUNDACIONAL` §5.5 (`ProofGuard`)
-    #[error("Proof violation: '{mutation_name}' sin Proof válido")]
+    #[error("Proof violation: '{mutation_name}' lacks a valid Proof")]
     ProofMissing {
         /// Name of the mutation that violated the protocol.
         mutation_name: &'static str,
     },
 
-    /// A Proof failed verifiestion (corrupt hash or missing axiom).
+    /// A Proof failed verification (corrupt hash or missing axiom).
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §2.4
-    #[error("Proof inválido: hash o axioma {axiom_id} fallido")]
+    #[error("Invalid Proof: hash or axiom {axiom_id} verification failed")]
     ProofInvalid {
         /// ID of the axiom that failed (0-6 according to `AxiomID`).
         axiom_id: u8,
@@ -450,7 +450,7 @@ pub enum GenesisError {
     /// An axiom was verified before the mutation and evaluated false.
     ///
     /// AX-ID: `GENESIS_PROOF_SPEC` §3
-    #[error("Invariante violado: axioma {axiom_id} falló pre-mutación")]
+    #[error("Invariant violation: axiom {axiom_id} failed pre-mutation")]
     InvariantViolation {
         /// ID of the violated axiom (0-6 according to `AxiomID`).
         axiom_id: u8,
