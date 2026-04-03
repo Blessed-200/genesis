@@ -150,6 +150,7 @@ const fn cos_kernel(_y: f64, y2: f64) -> f64 {
 /// Numerically identical regardless of path.
 ///
 /// r ∈ [0.0, 1.0]. AX-ID: AXIOMA-006, AXIOMA-008, H_dinámica (LEY_FUNDACIONAL §4)
+#[allow(clippy::too_many_lines)]
 pub fn synchrony_order_fast(network: &QuantumKuramotoNetwork) -> f64 {
     let blocks = network.oscillators.blocks();
     let n = network.node_count();

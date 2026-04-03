@@ -139,8 +139,8 @@ impl From<SparseCliffordVector> for SparseDualVector {
             value: 0.0,
             grad: 0.0,
         }; TOTAL_BLADES];
-        for i in 0..TOTAL_BLADES {
-            coeffs[i] = Dual {
+        for (i, coeff) in coeffs.iter_mut().enumerate() {
+            *coeff = Dual {
                 value: value.coeffs[i],
                 grad: 0.0,
             };

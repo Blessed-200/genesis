@@ -56,7 +56,7 @@ impl RipsComplex {
     /// neighbourhood structure at the given scale.
     ///
     /// AX-ID: AXIOMA-007
-    #[allow(clippy::similar_names)]
+    #[allow(clippy::similar_names, clippy::too_many_lines)]
     pub fn build(graph: &HnswGraph, epsilon: f64) -> Self {
         let node_ids: Vec<NodeId> = graph.nodes().collect();
         let node_count = node_ids.len();

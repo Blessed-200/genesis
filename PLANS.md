@@ -1485,3 +1485,43 @@ Remaining risk:
 - `cargo check --workspace 2>&1 | grep "^warning:"`
 - `cargo clippy -p genesis-types --all-targets -- -D clippy::pedantic`
 - `scripts/check_english_only.sh`
+
+## 1.9 Benchmark target recovery + pedantic hygiene sweep (2026-04-03)
+
+### Root cause
+
+- `core/genesis-dynamics/benches/iai_hotpaths.rs` stores `QuantumKuramotoNetwork` in a `static OnceLock`, but the network contains `UnsafeCell`/`Cell` through `OscillatorSlab`, so it is `!Sync` and cannot be used in shared statics.
+- `core/genesis-topology/benches/manifold.rs` imports `benchmark_batch_distance_4` and `benchmark_scalar_distance_4x`, but these symbols are not currently exposed from `hnsw`.
+- Manual `#[inline(always)]` attributes in hot numeric kernels (`kahan`, `kuramoto`) trigger pedantic lint noise and can fight LLVM/LTO inlining heuristics.
+- Pedantic lints request iterator-first loops in selected SIMD-prep paths (`dual`, `oscillator`) and clearer variable naming in `topological_intuition`.
+
+### File-level actions
+
+1. `core/genesis-dynamics/benches/iai_hotpaths.rs`
+   - Remove `OnceLock<QuantumKuramotoNetwork>` static fixture.
+   - Keep lock-free benchmark execution by building the synchrony fixture per invocation (local stack/heap ownership, no shared mutable static).
+   - Retain `OnceLock` only for `VFEMinimizer` fixture (it is `Sync`).
+2. `core/genesis-topology/src/hnsw.rs`
+   - Re-expose `benchmark_batch_distance_4` and `benchmark_scalar_distance_4x` with the visibility required by benches.
+   - Keep behavior identical to internal batch/scalar distance kernels.
+3. `core/genesis-dynamics/src/kahan.rs` and `core/genesis-dynamics/src/kuramoto.rs`
+   - Remove `#[inline(always)]` attributes from Kahan methods and Kuramoto helpers flagged by pedantic.
+   - Preserve existing semantics and hot-path comments.
+4. `core/genesis-math/src/dual.rs` and `core/genesis-dynamics/src/oscillator.rs`
+   - Replace targeted index-range loops with iterator/enumerate forms where required by pedantic while keeping bounds-safe, allocation-free behavior.
+5. `core/genesis-topology/src/topological_intuition.rs`
+   - Rename single-letter temporaries (`a,b,c,d,x,y,z`) in the Gromov product branch to semantic names.
+
+### Validation
+
+- `cargo check --workspace --all-targets`
+- `cargo test --workspace`
+- `cargo test --workspace --benches --no-run`
+- `cargo clippy --all-targets`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
+### Completion milestone
+
+- Production-grade stability milestone: the deterministic weakest-slot tie-break
+  fix in `shared/genesis-types/src/signal.rs` is now treated as a locked
+  integrity guarantee for spike top-K selection under input permutation.
