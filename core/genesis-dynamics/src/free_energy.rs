@@ -143,10 +143,14 @@ impl Belief {
         core::array::from_fn(|k| self.mean_full[GRADE1_BLADE_INDICES[k]])
     }
 
-    /// Fisher trace used by `FisherGate` (AXIOMA-008).
-    /// Sums diagonal precisions across all 16 blades.
+    /// Sum of diagonal precisions across all 16 blades.
+    ///
+    /// This is not the scalar Fisher gate trace (`FisherInfo::trace`); it is
+    /// the belief-local precision aggregate.
+    ///
+    /// AX-ID: AXIOMA-003
     #[inline]
-    pub fn fisher_trace(&self) -> f64 {
+    pub fn precision_sum(&self) -> f64 {
         self.precision_full.iter().sum()
     }
 
@@ -460,7 +464,9 @@ impl VFEMinimizer {
     /// biggest surprise can be one with high discrepancy in bivectors or
     ///trivectors, not only in the vector component.
     ///
-    /// Without external stimulus the system minimizes F internally. (AXIOM-003)
+    /// Without external stimulus, the system minimizes F internally.
+    ///
+    /// AX-ID: AXIOMA-003
     pub fn internal_drive(&mut self) -> Option<NodeId> {
         if self.beliefs.is_empty() {
             return None;

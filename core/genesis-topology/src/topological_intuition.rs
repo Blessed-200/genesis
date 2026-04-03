@@ -383,17 +383,20 @@ fn nearest_neighbors_by_metric(graph: &HnswGraph, center: NodeId) -> Vec<NodeId>
 
 #[allow(clippy::similar_names)]
 fn local_hyperbolic_delta(graph: &HnswGraph, nodes: [NodeId; 4]) -> Option<f64> {
-    let [node_a_id, node_b_id, node_c_id, node_d_id] = nodes;
-    let vec_a = graph.vector(node_a_id)?;
-    let vec_b = graph.vector(node_b_id)?;
-    let vec_c = graph.vector(node_c_id)?;
-    let vec_d = graph.vector(node_d_id)?;
+    let [first_id, second_id, third_id, fourth_id] = nodes;
+    let first_vec = graph.vector(first_id)?;
+    let second_vec = graph.vector(second_id)?;
+    let third_vec = graph.vector(third_id)?;
+    let fourth_vec = graph.vector(fourth_id)?;
     // loop-invariant, hoisted
     // CRYSTAL: O61, O62, O63, O64, FO44 — inevitable
 
-    let mut dist_ab_plus_cd = geometric_distance(vec_a, vec_b) + geometric_distance(vec_c, vec_d);
-    let mut dist_ac_plus_bd = geometric_distance(vec_a, vec_c) + geometric_distance(vec_b, vec_d);
-    let mut dist_ad_plus_bc = geometric_distance(vec_a, vec_d) + geometric_distance(vec_b, vec_c);
+    let mut dist_ab_plus_cd =
+        geometric_distance(first_vec, second_vec) + geometric_distance(third_vec, fourth_vec);
+    let mut dist_ac_plus_bd =
+        geometric_distance(first_vec, third_vec) + geometric_distance(second_vec, fourth_vec);
+    let mut dist_ad_plus_bc =
+        geometric_distance(first_vec, fourth_vec) + geometric_distance(second_vec, third_vec);
     if dist_ab_plus_cd.total_cmp(&dist_ac_plus_bd).is_gt() {
         core::mem::swap(&mut dist_ab_plus_cd, &mut dist_ac_plus_bd);
     }

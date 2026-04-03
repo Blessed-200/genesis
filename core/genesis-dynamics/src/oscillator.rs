@@ -63,16 +63,16 @@ pub struct QuantumOscillator {
     /// Decreases when node `FisherInfo::trace` decreases (active learning).
     /// Increases again when the node re-enters a high-VFE regime (new exploration).
     ///
-    /// El decaimiento es **responsabilidad del sistema externo** que llama
-    /// `update_amplitude_from_fisher()` tras cada `VFEMinimizer::update()`.
+    /// Amplitude decay is the responsibility of the external pipeline that calls
+    /// `update_amplitude_from_fisher()` after each `VFEMinimizer::update()`.
     ///
     /// AX-ID: AXIOMA-006, AXIOMA-008
     pub amplitudes: [f64; 5],
-    /// ω_{i,g} — frecuencias naturales (rad/s), una por grado.
+    /// ω_{i,g} — natural frequencies (rad/s), one per grade.
     pub frequencies: [f64; 5],
-    /// Identificador del nodo en el manifold.
+    /// Node identifier in the manifold.
     pub node_id: NodeId,
-    /// Estado de vida del oscilador (Active, Saturated, Pruned).
+    /// Oscillator lifecycle state (`Active`, `Saturated`, `Pruned`).
     pub state: OscillatorState,
 }
 
@@ -679,6 +679,8 @@ impl QuantumOscillator {
     }
 
     /// Marks the oscillator as saturated. Idempotent if already saturated or pruned.
+    ///
+    /// AX-ID: AXIOMA-008
     pub const fn mark_saturated(&mut self, now_ns: u64) {
         if matches!(self.state, OscillatorState::Active) {
             self.state = OscillatorState::Saturated { since_ns: now_ns };
@@ -686,6 +688,8 @@ impl QuantumOscillator {
     }
 
     /// Marks the oscillator as pruned. Valid from Active or Saturated states.
+    ///
+    /// AX-ID: AXIOMA-016
     pub const fn mark_pruned(&mut self, now_ns: u64) {
         if !matches!(self.state, OscillatorState::Pruned { .. }) {
             self.state = OscillatorState::Pruned { at_ns: now_ns };
@@ -922,6 +926,8 @@ pub enum OscillatorState {
 
 impl OscillatorState {
     /// Returns true if the oscillator can receive learning inputs.
+    ///
+    /// AX-ID: AXIOMA-008
     #[inline]
     pub const fn is_active(self) -> bool {
         matches!(self, Self::Active)
@@ -929,6 +935,8 @@ impl OscillatorState {
 
     /// Returns true if the oscillator contributes to `r_sync`.
     /// Saturated oscillators do contribute; pruned oscillators do not.
+    ///
+    /// AX-ID: AXIOMA-006
     #[inline]
     pub const fn contributes_to_sync(self) -> bool {
         !matches!(self, Self::Pruned { .. })

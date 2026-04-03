@@ -386,6 +386,42 @@ impl SpikeComponents {
                 continue;
             }
 
+            // Merge repeated blade contributions before top-K eviction (O(K), stack-only).
+            let mut existing_slot = None;
+            let mut scan = 0usize;
+            while scan < filled {
+                if buf[scan].1 == idx {
+                    existing_slot = Some(scan);
+                    break;
+                }
+                scan += 1;
+            }
+            if let Some(slot) = existing_slot {
+                let merged_coef = buf[slot].2 + coef;
+                if merged_coef.is_finite() && merged_coef.abs() > COGNITIVE_PLANCK_CONSTANT {
+                    buf[slot] = (merged_coef.abs(), idx, merged_coef);
+                } else {
+                    filled -= 1;
+                    buf[slot] = buf[filled];
+                    buf[filled] = (0.0, u16::MAX, 0.0);
+                }
+                if filled == K {
+                    min_abs = f64::INFINITY;
+                    let mut weakest_ix = u16::MAX;
+                    let mut i = 0usize;
+                    while i < K {
+                        let (a, ix, _) = buf[i];
+                        if a < min_abs || (a == min_abs && ix > weakest_ix) {
+                            min_abs = a;
+                            min_slot = i;
+                            weakest_ix = ix;
+                        }
+                        i += 1;
+                    }
+                }
+                continue;
+            }
+
             if filled < K {
                 // Buffer not full yet — insert directly.
                 buf[filled] = (abs, idx, coef);
@@ -689,6 +725,9 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                 let count: u8 = seq
                     .next_element()?
                     .ok_or_else(|| de::Error::invalid_length(2, &self))?;
+                if count as usize > SPIKE_MAX_COMPONENTS {
+                    return Err(de::Error::custom("count out of range"));
+                }
 
                 Ok(SpikeComponents {
                     values,
@@ -727,10 +766,15 @@ impl<'de> serde::Deserialize<'de> for SpikeComponents {
                     }
                 }
 
+                let count = count.ok_or_else(|| de::Error::missing_field("count"))?;
+                if count as usize > SPIKE_MAX_COMPONENTS {
+                    return Err(de::Error::custom("count out of range"));
+                }
+
                 Ok(SpikeComponents {
                     values: values.ok_or_else(|| de::Error::missing_field("values"))?,
                     indices: indices.ok_or_else(|| de::Error::missing_field("indices"))?,
-                    count: count.ok_or_else(|| de::Error::missing_field("count"))?,
+                    count,
                     pad: [0u8; 7],
                     tail_pad: [0u8; 24],
                 })

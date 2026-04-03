@@ -494,15 +494,15 @@ impl SparseCliffordVector {
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
-    pub fn dot_bivectors(&self, rhs: &Self) -> f64 {
+    pub const fn dot_bivectors(&self, rhs: &Self) -> f64 {
         // Grade-2 blade bitmasks in G(1,3): 3, 5, 6, 9, 10, 12.
         let mut sum = 0.0f64;
-        sum = self.coeffs[3].mul_add(rhs.coeffs[3], sum);
-        sum = self.coeffs[5].mul_add(rhs.coeffs[5], sum);
-        sum = self.coeffs[6].mul_add(rhs.coeffs[6], sum);
-        sum = self.coeffs[9].mul_add(rhs.coeffs[9], sum);
-        sum = self.coeffs[10].mul_add(rhs.coeffs[10], sum);
-        sum = self.coeffs[12].mul_add(rhs.coeffs[12], sum);
+        sum += self.coeffs[3] * rhs.coeffs[3];
+        sum += self.coeffs[5] * rhs.coeffs[5];
+        sum += self.coeffs[6] * rhs.coeffs[6];
+        sum += self.coeffs[9] * rhs.coeffs[9];
+        sum += self.coeffs[10] * rhs.coeffs[10];
+        sum += self.coeffs[12] * rhs.coeffs[12];
         sum
     }
 

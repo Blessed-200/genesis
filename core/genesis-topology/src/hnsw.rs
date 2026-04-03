@@ -264,6 +264,7 @@ unsafe fn slab_distance_avx2(
     let mut acc1 = _mm256_setzero_ps();
     let mut acc2 = _mm256_setzero_ps();
     let mut acc3 = _mm256_setzero_ps();
+    const _: [(); CLIFFORD_BASIS_SIZE] = [(); 16];
     fused_dim4!(block_base, 0, 1, 2, 3, acc0, acc1, acc2, acc3);
     fused_dim4!(block_base, 4, 5, 6, 7, acc0, acc1, acc2, acc3);
     fused_dim4!(block_base, 8, 9, 10, 11, acc0, acc1, acc2, acc3);

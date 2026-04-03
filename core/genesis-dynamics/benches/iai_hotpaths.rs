@@ -1,6 +1,5 @@
 #![allow(clippy::cast_precision_loss)]
 
-use std::cell::RefCell;
 use std::hint::black_box;
 use std::sync::OnceLock;
 
@@ -55,23 +54,23 @@ fn vfe_fixture() -> &'static (VFEMinimizer, Vec<NodeId>) {
     FIXTURE.get_or_init(|| build_vfe(4_096))
 }
 
-#[library_benchmark]
-fn synchrony_order_hotpath() -> f64 {
-    SYNCHRONY_FIXTURE.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        let net = slot.get_or_insert_with(|| build_network(2_048, 8, 0.0));
-        black_box(synchrony_order(black_box(net)))
-    })
+fn setup_synchrony_fixture() -> QuantumKuramotoNetwork {
+    build_network(2_048, 8, 0.0)
 }
 
-#[library_benchmark]
-fn kuramoto_step_hotpath() {
-    KURAMOTO_FIXTURE.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        let net = slot.get_or_insert_with(kuramoto_fixture);
-        net.step(black_box(0.01));
-        black_box(net.node_count());
-    });
+fn setup_kuramoto_fixture() -> QuantumKuramotoNetwork {
+    kuramoto_fixture()
+}
+
+#[library_benchmark(setup = setup_synchrony_fixture)]
+fn synchrony_order_hotpath(net: QuantumKuramotoNetwork) -> f64 {
+    black_box(synchrony_order(black_box(&net)))
+}
+
+#[library_benchmark(setup = setup_kuramoto_fixture)]
+fn kuramoto_step_hotpath(mut net: QuantumKuramotoNetwork) {
+    net.step(black_box(0.01));
+    black_box(net.node_count());
 }
 
 #[library_benchmark]

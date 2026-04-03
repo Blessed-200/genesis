@@ -628,13 +628,13 @@ impl QuantumKuramotoNetwork {
     }
 
     // ── Integration ──────────────────────────────────────────────────────────
-    /// Un paso of integration Euler-Maruyama, `dt` segundos.
+    /// Performs one Euler-Maruyama integration step with time increment `dt` (seconds).
     ///
     /// For each oscillator i and grade g:
     ///  φᵢg(t+dt) = φᵢg(t) + [ωᵢg + Σⱼ Γᵢⱼ sin(φⱼg(t) - φᵢg(t))] · dt
     ///              + η · √(2 kT dt)
     ///
-    /// `η ~ N(0,1)` via LCG Box-Muller. Sin heap by `step`.
+    /// `η ~ N(0,1)` via LCG Box-Muller. `step` performs no heap allocation.
     /// Forbidden: deterministic collapse (AXIOMA-006).
     pub fn step(&mut self, dt: f64) {
         self.rebuild_if_dirty();
@@ -643,7 +643,7 @@ impl QuantumKuramotoNetwork {
             return;
         }
 
-        // Snapshot of phases previas in scratch (Euler-Maruyama: usa φ(t), no φ(t+dt)).
+        // Snapshot previous phases into scratch (Euler-Maruyama uses φ(t), not φ(t+dt)).
         for i in 0..n {
             self.phase_scratch[i] = self.oscillators[i].phases;
         }
@@ -797,15 +797,15 @@ impl QuantumKuramotoNetwork {
         }
     }
 
-    /// Parameter of order of Kuramoto r = |Σ e^{iφ}| / N ∈ `[0,1]`.
+    /// Kuramoto order parameter `r = |Σ e^{iφ}| / N ∈ [0,1]`.
     ///
-    /// Result cached: recompute only if `step()` was called from the
-    ///last invocation. In control loops that call this method without
-    /// llamar `step()` between medias, cost = O(1).
+    /// Cached result: recomputed only when `step()` has been called since the
+    /// previous invocation. In control loops that do not step between reads,
+    /// cost is O(1).
     ///
-    /// # Costo
-    /// - Primera llamada tras `step()`: O(N)
-    /// - Llamadas subsecuentes without `step()` intermedio: O(1)
+    /// # Cost
+    /// - First call after `step()`: O(N)
+    /// - Subsequent calls without an intermediate `step()`: O(1)
     ///
     /// AX-ID: AXIOMA-006
     pub fn synchrony_order_cached(&mut self) -> f64 {
