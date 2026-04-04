@@ -1,5 +1,34 @@
 # PLANS
 
+## 1.9 SIMD geometric-product hardening for GEN-7 (2026-04-04)
+
+### Root cause
+
+- `SparseCliffordVector` defaults to 32-byte alignment, so AVX-512-capable hosts can still receive non-64B-aligned cacheline placement in mixed feature builds.
+- Dense geometric-product kernels still rely on unaligned vector loads (`loadu`) for hot-path coefficient reads, leaving potential throughput on the table even when 64-byte alignment is guaranteed.
+- Throughput-focused benchmarking for dense geometric product is mixed into the general geometry benchmark; GEN-7 requires an explicit operations/second benchmark target file for SIMD regressions.
+
+### File-level actions
+
+1. `core/genesis-math/src/multivector.rs`
+   - Make `SparseCliffordVector` unconditionally `#[repr(C, align(64))]`.
+   - Normalize explicit tail padding and compile-time layout assertions for mandatory 64-byte alignment mode.
+2. `core/genesis-math/src/product.rs`
+   - Update dense AVX2/AVX-512 kernels to consume aligned loads for multivector coefficients where invariants guarantee 64-byte alignment.
+   - Preserve branchless inner-loop arithmetic and runtime dispatch order (AVX-512 -> AVX2+FMA -> AVX2 -> scalar).
+   - Document unsafe invariants for aligned loads.
+3. `core/genesis-math/benches/clifford_ops.rs` + `core/genesis-math/Cargo.toml`
+   - Add a dedicated Criterion benchmark that reports dense geometric-product throughput (ops/s) across deterministic dense inputs.
+   - Register the new benchmark target in crate manifest.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-math --bench clifford_ops --no-run`
+
+
 ## 1.8 Non-cryptographic hash table migration to ahash (2026-04-01)
 
 ### Root cause

@@ -20,14 +20,14 @@ criterion = { workspace = true }
 properties = []
 deterministic_strict = []
 avx512 = []  # Enable AVX-512 path (requires nightly or recent stable)
-# Opt-in 64B alignment for SparseCliffordVector; disabled by default.
-# Data (example `cacheline_batches`, release, contiguous sparse batch):
-#   align32/160B: 23.97 Mops/s
-#   align64/192B: 22.99 Mops/s (~4.1% slower, higher cache pressure)
-cacheline64 = []
+cacheline64 = [] # Backward-compatible no-op: 64B alignment is now mandatory.
 
 [[bench]]
 name    = "geometry"
+harness = false
+
+[[bench]]
+name    = "clifford_ops"
 harness = false
 
 [lints]
