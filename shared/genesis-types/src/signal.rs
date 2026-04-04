@@ -391,7 +391,7 @@ impl SpikeComponents {
             arr[2] = 8;
             arr
         };
-        assert!(SpikeComponents::indices_are_canonical(&good, 3));
+        assert!(Self::indices_are_canonical(&good, 3));
 
         let bad = {
             let mut arr = [u16::MAX; SPIKE_MAX_COMPONENTS];
@@ -399,7 +399,7 @@ impl SpikeComponents {
             arr[1] = 4;
             arr
         };
-        assert!(!SpikeComponents::indices_are_canonical(&bad, 2));
+        assert!(!Self::indices_are_canonical(&bad, 2));
     };
 
     /// Returns `true` if all explicit padding fields are zeroed.
