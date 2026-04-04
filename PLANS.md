@@ -25,8 +25,12 @@
 
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo check --workspace 2>&1 | grep -q "^warning:" && exit 1 || true`
 - `cargo bench -p genesis-math --bench clifford_ops --no-run`
+
+Validation policy for this checklist:
+- `cargo test --workspace` must complete with zero failures.
+- Compiler warnings are treated as hard failures; any `^warning:` match fails validation.
 
 
 ## 1.8 Non-cryptographic hash table migration to ahash (2026-04-01)

@@ -2,14 +2,15 @@
 //!
 //! AX-ID: AXIOMA-001, AXIOMA-011, AXIOMA-018
 //!
-//! # Layout (mandated: 192 bytes align 64)
+//! # Layout (mandatory ABI: 192B with 64B alignment)
 //! ```text
 //! Offset  Size  Field               Description
 //!      0   128  coeffs: [f64; 16]   blade coefficients (dense, zeros for inactive)
 //!    128     8  clifford_norm_sq    ⟨A·Ã⟩₀ — Lorentz-invariant, not for CS gate
 //!    136     8  max_abs_coeff       max_i(|`coeffs[i]`|) — ONLY valid for CS gate
 //!    144     2  active_mask: u16    bit i set ↔ |`coeffs[i]`| > PLANCK
-//!    146    14  _pad: [u8; 14]      explicit padding to 160 bytes
+//!    146    14  _pad: [u8; 14]      explicit payload padding before tail region
+//!    160    32  _tail_pad: [u8; 32] explicit tail padding; total serialized byte view = 192B
 //! ```
 //!
 //! # Invariants (guaranteed by all constructors)
@@ -63,9 +64,9 @@ pub struct SparseCliffordVector {
     /// `active_mask.count_ones()` = number of active blades.
     pub active_mask: u16,
 
-    /// Explicit padding to 160 bytes. Not semantically meaningful.
+    /// Explicit payload padding before the tail region. Not semantically meaningful.
     _pad: [u8; 14],
-    /// Trailing explicit padding required for 64-byte alignment mode.
+    /// Explicit tail padding that closes the mandatory 192B byte view.
     _tail_pad: [u8; 32],
 }
 
@@ -532,20 +533,33 @@ impl SparseCliffordVector {
 
     // ── DAX byte view ─────────────────────────────────────────────────────────
 
-    /// View as raw bytes for DAX/NVMe writes. Zero-copy. O(1).
+    /// Returns the canonical 192-byte byte view for zero-copy serialization.
+    ///
+    /// The byte view is native-endian and mirrors the in-memory `repr(C, align(64))`
+    /// layout exactly. Consumers must treat this as an ABI contract: 192B total
+    /// size, 64B alignment requirement when reinterpreting back as
+    /// `SparseCliffordVector`, and IEEE-754 `f64` lane encoding.
+    ///
+    /// This method performs no allocation and no byte reordering.
+    ///
     /// AX-ID: AXIOMA-018
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         bytemuck::bytes_of(self)
     }
 
-    /// Reconstruct from a raw aligned byte slice without panicking.
+    /// Reconstructs a `SparseCliffordVector` view from a raw serialized byte view.
     ///
-    /// Returns `Err` on wrong length (must be 160) or alignment (must be ≡ 0 mod 32).
+    /// Contract:
+    /// - `bytes.len() == 192`
+    /// - `bytes` must satisfy 64-byte alignment for `SparseCliffordVector`
+    /// - payload is interpreted as native-endian IEEE-754 data, without conversion
     ///
     /// # Errors
-    /// Returns `bytemuck::PodCastError` if `bytes` no tiene longitud or alignment
-    /// correcta for `SparseCliffordVector`.
+    /// Returns `bytemuck::PodCastError` if the serialized byte view length or
+    /// alignment is invalid for `SparseCliffordVector`.
+    ///
+    /// AX-ID: AXIOMA-018
     #[inline]
     pub fn try_from_bytes(bytes: &[u8]) -> Result<&Self, bytemuck::PodCastError> {
         bytemuck::try_from_bytes(bytes)
