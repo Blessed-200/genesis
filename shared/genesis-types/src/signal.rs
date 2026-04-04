@@ -383,7 +383,7 @@ impl SpikeComponents {
     ///
     /// AX-ID: AXIOMA-018
     #[cfg(feature = "serde")]
-    const _: () = {
+    const _ASSERT_CANONICAL_CONSISTENCY: () = {
         let good = {
             let mut arr = [u16::MAX; SPIKE_MAX_COMPONENTS];
             arr[0] = 1;

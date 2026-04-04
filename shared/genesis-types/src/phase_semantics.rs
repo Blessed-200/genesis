@@ -243,7 +243,7 @@ impl SemanticCluster {
         let active = &self.nodes[..node_count];
         let (fixed, canonical_count) = Self::canonicalize_nodes(active)?;
 
-        if fixed[node_count..]
+        if self.nodes[node_count..]
             .iter()
             .any(|node| *node != NodeId::INVALID)
         {
@@ -344,6 +344,27 @@ mod tests {
         );
         assert_eq!(
             invalid.nodes(),
+            Err(GenesisError::InvariantViolation { axiom_id: 4 })
+        );
+    }
+
+    #[test]
+    fn semantic_cluster_canonical_key_rejects_non_invalid_tail_slots() {
+        let mut nodes = [NodeId::INVALID; SEMANTIC_CLUSTER_MAX_NODES];
+        nodes[0] = NodeId::try_new(2).expect("2 is inside the valid NodeId range");
+        nodes[1] = NodeId::try_new(7).expect("7 is inside the valid NodeId range");
+        nodes[2] = NodeId::try_new(9).expect("9 is inside the valid NodeId range");
+        nodes[5] = NodeId::try_new(42).expect("42 is inside the valid NodeId range");
+
+        let corrupted = SemanticCluster {
+            nodes,
+            node_count: 3,
+            marker: SemanticMarker::Integration,
+            coherence: 0.9,
+        };
+
+        assert_eq!(
+            corrupted.canonical_key(),
             Err(GenesisError::InvariantViolation { axiom_id: 4 })
         );
     }
