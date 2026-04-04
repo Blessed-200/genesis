@@ -12,7 +12,8 @@ executors:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
       RUST_BACKTRACE: 1
-      RUSTFLAGS: -C target-dir=target
+      # CORRECCIÓN AQUÍ: Cambiamos RUSTFLAGS por CARGO_TARGET_DIR
+      CARGO_TARGET_DIR: target
       RUSTTEST_TIME_UNIT: ms
       RUSTTEST_TIME_THRESHOLD: 100
 
@@ -24,6 +25,8 @@ executors:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
       RUST_BACKTRACE: full
+      # CORRECCIÓN AQUÍ: Cambiamos RUSTFLAGS por CARGO_TARGET_DIR
+      CARGO_TARGET_DIR: target
 
 commands:
   setup-rust:
