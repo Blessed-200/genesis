@@ -342,5 +342,9 @@ mod tests {
             invalid.canonical_key(),
             Err(GenesisError::InvariantViolation { axiom_id: 4 })
         );
+        assert_eq!(
+            invalid.nodes(),
+            Err(GenesisError::InvariantViolation { axiom_id: 4 })
+        );
     }
 }

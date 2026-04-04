@@ -62,6 +62,13 @@ pub enum ClusterRejectionReason {
         /// Constructor failure reason after canonicalization.
         error: GenesisError,
     },
+    /// Existing stored cluster had an invalid canonical key.
+    ExistingClusterKeyInvalid {
+        /// Index of the invalid cluster in `self.clusters`.
+        cluster_index: usize,
+        /// Canonical-key failure reason.
+        error: GenesisError,
+    },
 }
 
 /// Engine that interprets oscillator dynamics as semantic field descriptors.
@@ -387,11 +394,25 @@ impl PhaseSemanticsEngine {
                     }
                 };
 
-                if !self.clusters.iter().any(|cluster| {
-                    cluster
-                        .canonical_key()
-                        .is_ok_and(|existing_key| existing_key == candidate_key)
-                }) {
+                let mut duplicate_exists = false;
+                for (cluster_index, cluster) in self.clusters.iter().enumerate() {
+                    match cluster.canonical_key() {
+                        Ok(existing_key) => {
+                            if existing_key == candidate_key {
+                                duplicate_exists = true;
+                                break;
+                            }
+                        }
+                        Err(error) => self.cluster_rejections.push(
+                            ClusterRejectionReason::ExistingClusterKeyInvalid {
+                                cluster_index,
+                                error,
+                            },
+                        ),
+                    }
+                }
+
+                if !duplicate_exists {
                     match SemanticCluster::from_nodes(
                         candidate_nodes,
                         assignment.marker,
