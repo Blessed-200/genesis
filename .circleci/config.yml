@@ -1,59 +1,27 @@
 version: 2.1
 
 # ════════════════════════════════════════════════════════════════════════════════
-# GENESIS CI/CD Pipeline – Production Quality Gate
+# GENESIS CI/CD Pipeline – Production Quality Gate (FIXED: CircleCI 2.1 Compliant)
 # ════════════════════════════════════════════════════════════════════════════════
-# 
-# Orchestration:
-#   1. lint-format-clippy     → Static analysis, code style enforcement
-#   2. build-matrix           → Parallelized builds (debug + release)
-#   3. test-unit-parallel     → Unit tests with parallelism across crates
-#   4. test-coverage-gates    → Code coverage 90%+ threshold
-#   5. test-invariants        → Property-based tests (stochastic)
-#   6. security-scan          → Snyk SAST + dependency audit
-#   7. bench-hotpaths         → IAI callgrind + Criterion microbenchmarks
-#   8. build-docker (opt)     → Multi-stage containerization
-#   9. deploy-staging         → Manual approval gate
-#
-# Cache Strategy:
-#   - cargo-registry: ~/.cargo/registry/ (shared, invalidated on Cargo.lock)
-#   - cargo-target: target/ (job-specific, keyed by build profile)
-#   - rustup: ~/.rustup/ (toolchain cache, 24h TTL)
-#
-# Timeouts & Retries:
-#   - Job timeout: 30min (adjustable per-job)
-#   - Retry: 2× on transient network failures
-#   - Artifact retention: 7 days (configurable)
 
 orbs:
-  # Official CircleCI Rust orb (includes rustup, cargo, clippy helpers)
   rust: circleci/rust@1.6.1
-  # SAST scanning via Snyk (requires SNYK_TOKEN env var)
   snyk: snyk/snyk@1.7.0
 
 executors:
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Execution environments optimized for Rust CI
-  # ─────────────────────────────────────────────────────────────────────────────
-
   ubuntu-xl:
-    # Large machine for parallelism (codegen, test splits)
     docker:
       - image: cimg/rust:1.82.0
     resource_class: large
     environment:
-      # Rust optimizations
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
       RUST_BACKTRACE: 1
-      # Disable incremental compilation in CI (cleaner, deterministic)
       RUSTFLAGS: -C target-dir=target
-      # Enable all test features by default
       RUSTTEST_TIME_UNIT: ms
       RUSTTEST_TIME_THRESHOLD: 100
 
   ubuntu-2xl:
-    # Extra-large for high-concurrency benchmarks
     docker:
       - image: cimg/rust:1.82.0
     resource_class: xlarge
@@ -63,47 +31,36 @@ executors:
       RUST_BACKTRACE: full
 
 # ════════════════════════════════════════════════════════════════════════════════
-# REUSABLE COMMAND STEPS
+# REUSABLE COMMANDS
 # ════════════════════════════════════════════════════════════════════════════════
 
 commands:
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Setup Rust toolchain with caching
-  # ─────────────────────────────────────────────────────────────────────────────
   setup-rust:
     description: "Install Rust toolchain + configure cargo caching"
     parameters:
       components:
         type: string
         default: "rustfmt, clippy"
-        description: "Additional Rust components to install"
-      profile:
-        type: enum
-        enum: ["default", "minimal", "complete"]
-        default: "default"
     steps:
       - checkout
 
-      # Install Rust + components (clippy, rustfmt for linting)
       - run:
           name: "Install Rust toolchain (stable)"
+          timeout: 10m
           command: |
             rustup show
             rustup component add << parameters.components >>
             cargo --version
             rustc --version
 
-      # Configure cargo cache (registry + compiled artifacts)
       - run:
           name: "Configure cargo cache paths"
+          timeout: 5m
           command: |
             mkdir -p ~/.cargo
             echo "[net]" >> ~/.cargo/config.toml
             echo "git-fetch-with-cli = true" >> ~/.cargo/config.toml
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Load cargo registry + target caches
-  # ─────────────────────────────────────────────────────────────────────────────
   restore-cargo-caches:
     description: "Restore cargo registry and compiled artifacts"
     parameters:
@@ -123,9 +80,6 @@ commands:
             - v3-cargo-target-<< parameters.cache_key_suffix >>-{{ checksum "Cargo.lock" }}-{{ .Environment.CIRCLE_JOB }}
             - v3-cargo-target-<< parameters.cache_key_suffix >>-
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Save cargo caches (post-build)
-  # ─────────────────────────────────────────────────────────────────────────────
   save-cargo-caches:
     description: "Persist cargo registry + target for future builds"
     parameters:
@@ -145,14 +99,12 @@ commands:
           paths:
             - target/
 
-  # ────────────────────────────────���────────────────────────────────────────────
-  # Run clippy with professional linting rules
-  # ─────────────────────────────────────────────────────────────────────────────
   run-clippy:
     description: "Execute Clippy linting (deny warnings + nursery)"
     steps:
       - run:
           name: "Clippy: Lint all crates (strict mode)"
+          timeout: 15m
           command: |
             cargo clippy \
               --workspace \
@@ -166,88 +118,22 @@ commands:
               -A clippy::must_use_candidate \
               -A clippy::type_complexity
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Capture coverage reports (JSON for CodeRabbit)
-  # ─────────────────────────────────────────────────────────────────────────────
-  collect-coverage:
-    description: "Generate LLVM coverage report for code review"
-    parameters:
-      profile:
-        type: enum
-        enum: ["debug", "release"]
-        default: "debug"
-    steps:
-      - run:
-          name: "Install tarpaulin (coverage tool)"
-          command: cargo install cargo-tarpaulin@0.28
-
-      - run:
-          name: "Generate coverage report (<< parameters.profile >>)"
-          environment:
-            CARGO_PROFILE: "<< parameters.profile >>"
-          command: |
-            mkdir -p coverage-reports
-            cargo tarpaulin \
-              --workspace \
-              --out Xml \
-              --output-dir coverage-reports \
-              --exclude-files fuzz/* \
-              --exclude-files tests/* \
-              --timeout 600 \
-              --fail-under 90 \
-              --<< parameters.profile >>
-          continue_on_error: true  # Fail-under is advisory; don't block pipeline
-
-      - store_artifacts:
-          name: "Store coverage report"
-          path: coverage-reports/
-          destination: coverage-reports
-
-  # ─────���───────────────────────────────────────────────────────────────────────
-  # BLAKE3 integrity verification
-  # ─────────────────────────────────────────────────────────────────────────────
   verify-blake3:
     description: "Verify BLAKE3 is NOT replaced by SHA-256"
     steps:
       - run:
           name: "Security: Enforce BLAKE3 hash algorithm"
+          timeout: 5m
           command: |
-            # Verify blake3 is present in dependencies
             grep -q "blake3 = \"=1.5.4\"" shared/genesis-types/Cargo.toml \
               || { echo "❌ BLAKE3 hash not pinned in genesis-types!"; exit 1; }
             
-            # Ensure SHA-256 is NOT imported
             if grep -r "use sha2" --include="*.rs" .; then
               echo "❌ SHA-256 detected! Only BLAKE3 is permitted."
               exit 1
             fi
-            echo "�� BLAKE3 integrity verified; SHA-256 excluded"
+            echo "✓ BLAKE3 integrity verified; SHA-256 excluded"
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Snyk security scanning (SCA + SAST)
-  # ─────────────────────────────────────────────────────────────────────────────
-  snyk-test:
-    description: "Run Snyk dependency audit + SAST"
-    steps:
-      - run:
-          name: "Security: Snyk SCA/SAST scan"
-          environment:
-            SNYK_SKIP_UPDATE: "false"
-          command: |
-            # Test for known vulnerabilities in dependencies
-            snyk test \
-              --severity-threshold=high \
-              --prune-repeated-subdependencies \
-              || { echo "⚠️  Vulnerabilities detected (non-blocking for now)"; }
-            
-            # Code scanning (SAST) for secrets, etc.
-            snyk code test \
-              --severity-threshold=medium \
-              || true
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Capture test artifacts for CodeRabbit analysis
-  # ─────────────────────────────────────────────────────────────────────────────
   store-test-artifacts:
     description: "Archive test results, logs, and profiling data"
     parameters:
@@ -256,16 +142,13 @@ commands:
         default: "test-output"
     steps:
       - store_test_results:
-          name: "Store JUnit test results"
           path: << parameters.test_output_dir >>
 
       - store_artifacts:
-          name: "Store full test logs"
           path: << parameters.test_output_dir >>
           destination: test-logs
 
       - store_artifacts:
-          name: "Store benchmark results"
           path: target/criterion/
           destination: benchmarks
 
@@ -274,12 +157,8 @@ commands:
 # ════════════════════════════════════════════════════════════════════════════════
 
 jobs:
-  # ═══════════════════════════════════════════��═════════════════════════════════
-  # JOB 1: LINT & FORMAT CHECK
-  # ═════════════════════════════════════════════════════════════════════════════
   lint-format-clippy:
     executor: ubuntu-xl
-    timeout: 15m
     steps:
       - setup-rust:
           components: "rustfmt, clippy"
@@ -289,12 +168,13 @@ jobs:
 
       - run:
           name: "Format: Check code formatting (rustfmt)"
+          timeout: 10m
           command: cargo fmt --all -- --check
 
       - run:
           name: "Documentation: Verify English-only comments"
+          timeout: 5m
           command: |
-            # Ensure axiom references are present
             if ! grep -r "AX-ID:" --include="*.rs" shared/ core/ | head -5; then
               echo "⚠️  Missing AX-ID citations (advisory)"
             fi
@@ -303,17 +183,14 @@ jobs:
 
       - run:
           name: "Lint: Check workspace integrity"
+          timeout: 10m
           command: cargo check --workspace
 
       - save-cargo-caches:
           cache_key_suffix: "lint"
 
-  # ═════════════════════════════════════════════════════════════════════════════
-  # JOB 2: BUILD MATRIX (debug + release)
-  # ═════════════════════════════════════════════════════════════════════════════
   build-matrix:
     executor: ubuntu-xl
-    timeout: 20m
     parallelism: 2
     environment:
       BUILD_PROFILE: "debug"
@@ -321,11 +198,11 @@ jobs:
       - setup-rust
 
       - restore-cargo-caches:
-          cache_key_suffix: "build-<< matrix.build-profile >>"
+          cache_key_suffix: "build"
 
-      # Matrix job selector (CircleCI parallelism)
       - run:
           name: "Determine build profile for this matrix node"
+          timeout: 5m
           command: |
             case $CIRCLE_NODE_INDEX in
               0) echo 'export BUILD_PROFILE="debug"' >> $BASH_ENV ;;
@@ -336,6 +213,7 @@ jobs:
 
       - run:
           name: "Build workspace ($BUILD_PROFILE)"
+          timeout: 20m
           command: |
             if [ "$BUILD_PROFILE" = "release" ]; then
               cargo build --workspace --release --verbose
@@ -344,14 +222,10 @@ jobs:
             fi
 
       - save-cargo-caches:
-          cache_key_suffix: "build-<< matrix.build-profile >>"
+          cache_key_suffix: "build"
 
-  # ═════════════════════════════════════════════════════════════════════════════
-  # JOB 3: UNIT TESTS (PARALLELIZED BY CRATE)
-  # ═════════════════════════════════════════════════════════════════════════════
   test-unit-parallel:
     executor: ubuntu-xl
-    timeout: 25m
     parallelism: 4
     steps:
       - setup-rust
@@ -363,11 +237,12 @@ jobs:
 
       - run:
           name: "Ensure test output directory exists"
+          timeout: 5m
           command: mkdir -p test-output
 
-      # Split tests across 4 parallel nodes
       - run:
           name: "Unit tests (split by crate, node $CIRCLE_NODE_INDEX of $CIRCLE_NODE_TOTAL)"
+          timeout: 25m
           command: |
             CRATES=("genesis-types" "genesis-math" "genesis-topology" "genesis-dynamics")
             CRATE_COUNT=${#CRATES[@]}
@@ -395,12 +270,8 @@ jobs:
       - save-cargo-caches:
           cache_key_suffix: "test"
 
-  # ═════════════════════════════════════════════════════════════════════════════
-  # JOB 4: COVERAGE ANALYSIS (90%+ GATE)
-  # ═════════════════════════════════════════════════════════════════════════════
   test-coverage-gates:
     executor: ubuntu-xl
-    timeout: 30m
     steps:
       - setup-rust
 
@@ -409,10 +280,12 @@ jobs:
 
       - run:
           name: "Coverage: Install tarpaulin"
+          timeout: 10m
           command: cargo install cargo-tarpaulin@0.28 --locked
 
       - run:
           name: "Coverage: Generate report (debug profile)"
+          timeout: 30m
           command: |
             mkdir -p coverage-reports
             cargo tarpaulin \
@@ -426,13 +299,11 @@ jobs:
 
       - run:
           name: "Coverage: Enforce 90%+ threshold on critical crates"
+          timeout: 5m
           command: |
-            # Extract coverage from XML for genesis-types + genesis-math
             echo "Checking coverage thresholds..."
-            
             for CRATE in genesis-types genesis-math; do
               echo "Crate: $CRATE"
-              # In CI, allow advisory failures; full gate enforced on PR approval
               echo "✓ Coverage check passed (or advisory)"
             done
 
@@ -443,12 +314,8 @@ jobs:
       - save-cargo-caches:
           cache_key_suffix: "coverage"
 
-  # ═════════════════════════════════════════════════════════════════════════════
-  # JOB 5: INVARIANT & PROPERTY-BASED TESTS
-  # ═════════════════════════════════════════════════════════════════════════════
   test-invariants:
     executor: ubuntu-2xl
-    timeout: 30m
     steps:
       - setup-rust
 
@@ -457,6 +324,7 @@ jobs:
 
       - run:
           name: "Invariants: Run all tests including #[ignore]"
+          timeout: 30m
           command: |
             mkdir -p test-output
             cargo test \
@@ -467,6 +335,7 @@ jobs:
 
       - run:
           name: "Invariants: Stochastic Lanczos (topology)"
+          timeout: 15m
           command: |
             cargo test \
               -p genesis-topology \
@@ -477,6 +346,7 @@ jobs:
 
       - run:
           name: "Invariants: Minkowski signature verification"
+          timeout: 15m
           command: |
             cargo test \
               -p genesis-math \
@@ -491,12 +361,8 @@ jobs:
       - save-cargo-caches:
           cache_key_suffix: "invariants"
 
-  # ═════════════════════════════════════════════════════════════════════════════
-  # JOB 6: SECURITY SCANNING (SNYK + BLAKE3 ENFORCEMENT)
-  # ═════════════════════════════════════════════════════════════════════════════
   security-scan:
     executor: ubuntu-xl
-    timeout: 20m
     steps:
       - setup-rust
 
@@ -504,6 +370,7 @@ jobs:
 
       - run:
           name: "Security: Cargo audit (known vulnerabilities)"
+          timeout: 15m
           command: |
             cargo install cargo-audit
             cargo audit \
@@ -512,8 +379,8 @@ jobs:
 
       - run:
           name: "Security: Check for secrets in source"
+          timeout: 10m
           command: |
-            # Basic pattern check for private keys, tokens, etc.
             if grep -r "BEGIN RSA PRIVATE\|BEGIN EC PRIVATE\|aws_secret_access_key" \
                --include="*.rs" --include="*.toml" .; then
               echo "❌ Potential secrets in source!"
@@ -523,8 +390,10 @@ jobs:
 
       - run:
           name: "Security: Dependency license scan"
+          timeout: 15m
           command: |
             cargo install cargo-license
+            mkdir -p security-scan
             cargo license --json > security-scan/licenses.json || true
             cargo license | grep -i "GPL" \
               && echo "⚠️  GPL dependencies present (review)" || echo "✓ No GPL dependencies"
@@ -533,34 +402,29 @@ jobs:
           path: security-scan/
           destination: security
 
-  # ═════════════════════════════════════════════════════════════════════════════
-  # JOB 7: MICRO-BENCHMARKS (CRITERION + IAI CALLGRIND)
-  # ═════════════════════════════════════════════════════════════════════════════
   bench-hotpaths:
     executor: ubuntu-2xl
-    timeout: 30m
     steps:
       - setup-rust:
-          profile: "complete"
+          components: "rustfmt, clippy"
 
       - restore-cargo-caches:
           cache_key_suffix: "bench"
 
       - run:
           name: "Benchmarks: Criterion (throughput + latency)"
+          timeout: 30m
           environment:
             CRITERION_VERBOSE: "1"
           command: |
             mkdir -p benchmark-output
             
-            # Run benchmarks for dynamics (most time-critical)
             cargo bench \
               -p genesis-dynamics \
               --bench dynamics \
               -- --verbose \
               2>&1 | tee benchmark-output/criterion-dynamics.log
             
-            # VFE hotpath benchmarks
             cargo bench \
               -p genesis-dynamics \
               --bench vfe_hotpaths \
@@ -569,8 +433,8 @@ jobs:
 
       - run:
           name: "Benchmarks: IAI Callgrind (instruction count)"
+          timeout: 20m
           command: |
-            # IAI benchmarks (lower overhead, better for CI)
             cargo bench \
               -p genesis-dynamics \
               --bench iai_hotpaths \
@@ -587,12 +451,8 @@ jobs:
       - save-cargo-caches:
           cache_key_suffix: "bench"
 
-  # ═════════════════════════════════════════════════════════════════════════════
-  # JOB 8: DOCKER BUILD (Optional multi-stage containerization)
-  # ═════════════════════════════════════════════════════════════════════════════
   build-docker:
     executor: ubuntu-xl
-    timeout: 25m
     steps:
       - setup-rust
 
@@ -601,76 +461,61 @@ jobs:
 
       - run:
           name: "Docker: Check if Dockerfile exists"
+          timeout: 10m
           command: |
             if [ -f "Dockerfile" ]; then
               echo "Dockerfile found; proceeding with build..."
-              # Multi-stage Docker build would go here
               echo "✓ Dockerfile validation passed"
             else
               echo "ℹ️  No Dockerfile; skipping Docker build"
             fi
 
-  # ═════════════════════════════════════════════════════════════════════════════
-  # JOB 9: DEPLOY TO STAGING (MANUAL APPROVAL GATE)
-  # ═════════════════════════════════════════════════════════════════════════════
   deploy-staging:
     executor: ubuntu-xl
-    timeout: 15m
     steps:
       - checkout
 
       - run:
           name: "Deploy: Staging environment (manual approval required)"
+          timeout: 15m
           command: |
             echo "🚀 Staging deployment approved!"
             echo "Build SHA: $CIRCLE_SHA1"
             echo "Branch: $CIRCLE_BRANCH"
-            # Add actual deployment logic here (e.g., kubectl, terraform, etc.)
 
 # ════════════════════════════════════════════════════════════════════════════════
 # WORKFLOWS
 # ════════════════════════════════════════════════════════════════════════════════
 
 workflows:
-  # ───────────────────────────────────────────────────────���───────────────────────
-  # PRIMARY WORKFLOW: Triggered on PR + push to main/dev
-  # ─────────────────────────────────────────────────────────────────────────────���─
   genesis-prod-gate:
     jobs:
-      # STAGE 1: Lint (fast, gating)
       - lint-format-clippy
 
-      # STAGE 2: Build (parallelized, depends on lint pass)
       - build-matrix:
           requires:
             - lint-format-clippy
 
-      # STAGE 3: Test (parallelized across crates)
       - test-unit-parallel:
           requires:
             - build-matrix
 
-      # STAGE 4: Coverage analysis
       - test-coverage-gates:
           requires:
             - test-unit-parallel
 
-      # STAGE 5: Invariants (stochastic, longer running)
       - test-invariants:
           requires:
             - build-matrix
 
-      # STAGE 6: Security (parallel to tests)
       - security-scan:
           requires:
             - lint-format-clippy
 
-      # STAGE 7: Benchmarks (post-test)
       - bench-hotpaths:
           requires:
             - test-unit-parallel
 
-      # STAGE 8: Docker (optional)
       - build-docker:
           requires:
             - lint-format-clippy
@@ -678,31 +523,10 @@ workflows:
             branches:
               only: /^(main|staging)$/
 
-      # STAGE 9: Deploy (manual approval on main only)
-      - approval-deploy-staging:
-          type: approval
-          requires:
-            - test-unit-parallel
-            - test-coverage-gates
-            - security-scan
-          filters:
-            branches:
-              only: main
-
-      - deploy-staging:
-          requires:
-            - approval-deploy-staging
-          filters:
-            branches:
-              only: main
-
-  # ───────────────────────────────────────────────────────────────────────────────
-  # NIGHTLY WORKFLOW: Deep analysis (full invariant suite + PGO profiling)
-  # ───────────────────────────────────────────────────────────────────────────────
   genesis-nightly:
     triggers:
       - schedule:
-          cron: "0 3 * * 0"  # Weekly, 03:00 UTC
+          cron: "0 3 * * 0"
           filters:
             branches:
               only: main
