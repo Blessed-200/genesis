@@ -6,7 +6,7 @@ use genesis_topology::{benchmark_incremental_d2_xor_columns, HnswGraph};
 use genesis_types::NodeId;
 
 fn make_vec(seed: u64) -> SparseCliffordVector {
-    let s = seed as f64 * 0.01 + 0.05;
+    let s = (seed as f64).mul_add(0.01, 0.05);
     SparseCliffordVector::from_iter((0..4).map(|b| (b, s * (b as f64 + 1.0))))
         .expect("finite vector")
 }

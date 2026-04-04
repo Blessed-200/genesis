@@ -20,15 +20,17 @@
 //!   bit 3 → e₃  spatial   η₃₃ = −1
 //! ```
 
-use genesis_types::error::GenesisError;
+use genesis_types::{error::GenesisError, CLIFFORD_BASIS_SIZE, MAX_CLIFFORD_GRADE};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Maximum valid blade bitmask for G(1,3): 0b1111 = 15.
-pub const MAX_BLADE_MASK: usize = 0b1111;
+pub const MAX_BLADE_MASK: usize = CLIFFORD_BASIS_SIZE - 1;
 
-/// Total number of basis blades: 2^4 = 16.
-pub const BLADE_COUNT: usize = MAX_BLADE_MASK + 1;
+/// Total number of basis blades: `2^MAX_CLIFFORD_GRADE` in canonical G(1,3).
+pub const BLADE_COUNT: usize = CLIFFORD_BASIS_SIZE;
+
+const _: () = assert!(MAX_CLIFFORD_GRADE == 4);
 
 // ── BladeIndex newtype ────────────────────────────────────────────────────────
 
@@ -46,7 +48,7 @@ impl BladeIndex {
     /// Minimum valid blade index (scalar blade).
     pub const MIN: Self = Self(0);
     /// Maximum valid blade index (pseudoscalar blade e₀₁₂₃).
-    pub const MAX: Self = Self(15);
+    pub const MAX: Self = Self(MAX_BLADE_MASK as u8);
 
     /// Validated constructor. Returns `Err` for `idx > 15`.
     ///
@@ -56,7 +58,7 @@ impl BladeIndex {
     /// Returns `GenesisError::BladeIndexOutOfRange` if `idx >= 16`.
     #[inline]
     pub const fn new(idx: u8) -> Result<Self, GenesisError> {
-        if idx > 15 {
+        if idx as usize > MAX_BLADE_MASK {
             Err(GenesisError::BladeIndexOutOfRange {
                 index: idx as usize,
             })
@@ -66,17 +68,20 @@ impl BladeIndex {
     }
 
     /// Unchecked constructor for sites where the bound is guaranteed by
-    /// construction (e.g., iterating `0u8..16`).
+    /// construction (e.g., iterating `0u8..(1u8 << MAX_CLIFFORD_GRADE)`).
     ///
     /// # Safety
-    /// Caller must ensure `idx ≤ 15`. Violating this causes UB only if
+    /// Caller must ensure `idx <= MAX_BLADE_MASK as u8`. Violating this causes UB only if
     /// the result is used to index `CAYLEY_SIGN` — which is `[_; 16]`,
     /// so the actual UB is an out-of-bounds slice read.
     #[allow(dead_code)]
     #[inline]
     // SAFETY: caller guarantees `idx < 16` (blade count in G(1,3) = 2^4 = 16).
     pub(crate) const unsafe fn new_unchecked(idx: u8) -> Self {
-        debug_assert!(idx <= 15, "BladeIndex::new_unchecked requires idx <= 15");
+        debug_assert!(
+            idx as usize <= MAX_BLADE_MASK,
+            "BladeIndex::new_unchecked requires idx within blade mask range"
+        );
         Self(idx)
     }
 

@@ -1,13 +1,17 @@
-//! Phase Semantics Engine — interpretación cognitiva del campo oscilatorio.
+//! Phase Semantics Engine — cognitive interpretation over the oscillator field.
 //!
-//! Traduce fase/amplitud/gradiente VFE en estados semánticos locales y métricas
-//! globales de campo, sin modificar directamente la dinámica de Kuramoto.
+//! Translates phase/amplitude/VFE-gradient signals into local semantic states
+//! and global field metrics without mutating Kuramoto dynamics directly.
 //!
 //! AX-ID: AXIOMA-003, AXIOMA-004, AXIOMA-006, `H_dinámica`, `H_información`
 
 use core::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
-use genesis_types::NodeId;
+use genesis_types::{
+    CognitiveFieldState, GenesisError, MetaState, NetworkSemanticState, NodeId, NodeSemanticState,
+    PhaseRegion, SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
+    SEMANTIC_CLUSTER_MAX_NODES,
+};
 use smallvec::SmallVec;
 
 use crate::kuramoto::{wrap_phase, QuantumKuramotoNetwork};
@@ -20,139 +24,6 @@ const COLLAPSE_DELTA_G_MIN: f64 = 1.0;
 const TENSION_DIVERGENCE_MIN: f64 = 1.2;
 const STABILITY_VARIANCE_SCALE: f64 = 1.0;
 const RESONANCE_DIVERGENCE_MAX: f64 = 0.35;
-
-/// Semantic partition of wrapped phase `[0, 2π)`.
-///
-/// AX-ID: AXIOMA-006, `H_dinámica`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PhaseRegion {
-    /// `[0, π/4)`
-    Certainty,
-    /// `[π/4, π/2)`
-    Integration,
-    /// `[π/2, π)`
-    Exploration,
-    /// `[π, 3π/2)`
-    Tension,
-    /// `[3π/2, 2π)`
-    Release,
-}
-
-/// Primary semantic interpretation marker per node.
-///
-/// AX-ID: AXIOMA-004, AXIOMA-006
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SemanticMarker {
-    /// Coherent low-surprise regime.
-    Certainty,
-    /// Integration regime with convergent coupling.
-    Integration,
-    /// Broad search / novelty regime.
-    Exploration,
-    /// Divergent neighboring semantics.
-    Conflict,
-    /// Low-amplitude semantic collapse.
-    Collapse,
-}
-
-/// Metastable cognitive regime of the network.
-///
-/// AX-ID: AXIOMA-005, AXIOMA-006
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetaState {
-    /// High stability and coherent semantics.
-    StableMeaning,
-    /// Dynamic exploratory regime.
-    ExploratoryFlux,
-    /// High local semantic tension.
-    CognitiveTension,
-    /// System-wide semantic degradation.
-    SemanticCollapse,
-}
-
-/// Local semantic state for one node.
-///
-/// AX-ID: AXIOMA-004, AXIOMA-006
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NodeSemanticState {
-    /// Node identifier.
-    pub node: NodeId,
-    /// Current semantic marker.
-    pub marker: SemanticMarker,
-    /// Primary phase (grade-0).
-    pub phase: f64,
-    /// Primary amplitude summary (`amplitude_norm`).
-    pub amplitude: f64,
-    /// Stability score in `[0,1]` derived from short-term phase variance.
-    pub stability: f64,
-}
-
-/// Global distributed cognitive field summary.
-///
-/// AX-ID: AXIOMA-004, AXIOMA-006
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CognitiveFieldState {
-    /// Most frequent marker in network.
-    pub dominant_marker: SemanticMarker,
-    /// Mean phase alignment (`r_sync`-like).
-    pub coherence: f64,
-    /// Marker entropy in nats.
-    pub semantic_entropy: f64,
-    /// Mean neighbor divergence.
-    pub tension: f64,
-}
-
-/// Edge-level semantic tension descriptor.
-///
-/// AX-ID: AXIOMA-004, `H_dinámica`
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SemanticTensionEdge {
-    /// First endpoint.
-    pub node_a: NodeId,
-    /// Second endpoint.
-    pub node_b: NodeId,
-    /// Wrapped phase divergence in radians `[0, π]`.
-    pub divergence: f64,
-}
-
-/// Short persistent semantic trace per node.
-///
-/// AX-ID: AXIOMA-004
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SemanticTrace {
-    /// Previous semantic marker.
-    pub previous_marker: SemanticMarker,
-    /// Consecutive duration in same marker.
-    pub duration: u32,
-}
-
-/// Resonant local cluster of semantically aligned nodes.
-///
-/// AX-ID: AXIOMA-004, AXIOMA-006
-#[derive(Debug, Clone, PartialEq)]
-pub struct SemanticCluster {
-    /// Cluster member nodes.
-    pub nodes: SmallVec<[NodeId; 8]>,
-    /// Cluster representative marker.
-    pub marker: SemanticMarker,
-    /// Mean local coherence in `[0,1]`.
-    pub coherence: f64,
-}
-
-/// Network-level semantic state abstraction.
-///
-/// AX-ID: AXIOMA-004, AXIOMA-006
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NetworkSemanticState {
-    /// Dominant semantic marker.
-    pub dominant_state: SemanticMarker,
-    /// Global phase coherence.
-    pub coherence: f64,
-    /// Marker diversity (entropy).
-    pub diversity: f64,
-    /// Temporal marker variability proxy.
-    pub metastability: f64,
-}
 
 #[derive(Debug, Clone, Copy)]
 struct NodeSemanticEntry {
@@ -169,6 +40,35 @@ struct ClusterAssignment {
     nodes: SmallVec<[NodeId; 8]>,
     marker: SemanticMarker,
     coherence: f64,
+}
+
+/// Typed rejection reasons produced while building semantic clusters.
+///
+/// AX-ID: AXIOMA-004, AXIOMA-006
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClusterRejectionReason {
+    /// Candidate exceeded fixed-capacity cluster storage and was truncated.
+    TruncatedToCapacity {
+        /// Original candidate size before truncation.
+        original_len: usize,
+    },
+    /// Candidate failed canonicalization checks.
+    NonCanonicalInput {
+        /// Canonicalization failure reason.
+        error: GenesisError,
+    },
+    /// Canonical cluster materialization failed after canonicalization.
+    ClusterConstructionFailed {
+        /// Constructor failure reason after canonicalization.
+        error: GenesisError,
+    },
+    /// Existing stored cluster had an invalid canonical key.
+    ExistingClusterKeyInvalid {
+        /// Index of the invalid cluster in `self.clusters`.
+        cluster_index: usize,
+        /// Canonical-key failure reason.
+        error: GenesisError,
+    },
 }
 
 /// Engine that interprets oscillator dynamics as semantic field descriptors.
@@ -188,6 +88,7 @@ pub struct PhaseSemanticsEngine {
     neighbor_flat: Vec<usize>,
     degree_buf: Vec<usize>,
     write_buf: Vec<usize>,
+    cluster_rejections: SmallVec<[ClusterRejectionReason; 8]>,
     field_state: CognitiveFieldState,
     network_state: NetworkSemanticState,
     metastate: MetaState,
@@ -215,6 +116,7 @@ impl PhaseSemanticsEngine {
             neighbor_flat: Vec::new(),
             degree_buf: Vec::new(),
             write_buf: Vec::new(),
+            cluster_rejections: SmallVec::new(),
             field_state: CognitiveFieldState {
                 dominant_marker: SemanticMarker::Exploration,
                 coherence: 0.0,
@@ -251,6 +153,7 @@ impl PhaseSemanticsEngine {
         self.neighbor_flat.clear();
         self.degree_buf.clear();
         self.write_buf.clear();
+        self.cluster_rejections.clear();
 
         self.entries.reserve(network.oscillators.len());
         self.tension_edges.reserve(network.coupling.len());
@@ -400,6 +303,14 @@ impl PhaseSemanticsEngine {
         &self.tension_edges
     }
 
+    /// Returns cluster rejection diagnostics from the latest update.
+    ///
+    /// AX-ID: AXIOMA-004, AXIOMA-006
+    #[must_use]
+    pub fn cluster_rejections(&self) -> &[ClusterRejectionReason] {
+        &self.cluster_rejections
+    }
+
     /// Node-local semantic incoherence proxy for attractor penalization.
     ///
     /// AX-ID: AXIOMA-004, `H_información`
@@ -464,16 +375,54 @@ impl PhaseSemanticsEngine {
             if let Some(assignment) =
                 assign_node_to_cluster(entry, &network.coupling, &self.entries)
             {
-                if !self
-                    .clusters
-                    .iter()
-                    .any(|cluster| cluster.nodes == assignment.nodes)
-                {
-                    self.clusters.push(SemanticCluster {
-                        nodes: assignment.nodes,
-                        marker: assignment.marker,
-                        coherence: assignment.coherence,
-                    });
+                let candidate_nodes = if assignment.nodes.len() > SEMANTIC_CLUSTER_MAX_NODES {
+                    self.cluster_rejections
+                        .push(ClusterRejectionReason::TruncatedToCapacity {
+                            original_len: assignment.nodes.len(),
+                        });
+                    &assignment.nodes[..SEMANTIC_CLUSTER_MAX_NODES]
+                } else {
+                    assignment.nodes.as_slice()
+                };
+
+                let candidate_key = match SemanticCluster::canonicalize_nodes(candidate_nodes) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        self.cluster_rejections
+                            .push(ClusterRejectionReason::NonCanonicalInput { error });
+                        continue;
+                    }
+                };
+
+                let mut duplicate_exists = false;
+                for (cluster_index, cluster) in self.clusters.iter().enumerate() {
+                    match cluster.canonical_key() {
+                        Ok(existing_key) => {
+                            if existing_key == candidate_key {
+                                duplicate_exists = true;
+                                break;
+                            }
+                        }
+                        Err(error) => self.cluster_rejections.push(
+                            ClusterRejectionReason::ExistingClusterKeyInvalid {
+                                cluster_index,
+                                error,
+                            },
+                        ),
+                    }
+                }
+
+                if !duplicate_exists {
+                    match SemanticCluster::from_nodes(
+                        candidate_nodes,
+                        assignment.marker,
+                        assignment.coherence,
+                    ) {
+                        Ok(cluster) => self.clusters.push(cluster),
+                        Err(error) => self
+                            .cluster_rejections
+                            .push(ClusterRejectionReason::ClusterConstructionFailed { error }),
+                    }
                 }
             }
         }
@@ -482,7 +431,7 @@ impl PhaseSemanticsEngine {
             rhs.coherence
                 .total_cmp(&lhs.coherence)
                 .then_with(|| lhs.marker.cmp(&rhs.marker))
-                .then_with(|| lhs.nodes.len().cmp(&rhs.nodes.len()).reverse())
+                .then_with(|| lhs.node_count.cmp(&rhs.node_count).reverse())
         });
     }
 
@@ -571,18 +520,6 @@ fn assign_node_to_cluster(
         marker: entry.state.marker,
         coherence: coherence_sum / count,
     })
-}
-
-impl Ord for SemanticMarker {
-    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        marker_rank(*self).cmp(&marker_rank(*other))
-    }
-}
-
-impl PartialOrd for SemanticMarker {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 #[inline]
@@ -846,7 +783,7 @@ mod tests {
     use crate::oscillator::QuantumOscillator;
 
     fn id(raw: u64) -> NodeId {
-        NodeId::try_new(raw).expect("NodeId válido")
+        NodeId::try_new(raw).expect("failed to create NodeId")
     }
 
     fn network_with_phases(phases: &[f64], amplitudes: &[f64]) -> QuantumKuramotoNetwork {

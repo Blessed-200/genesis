@@ -1,15 +1,23 @@
-//! # genesis-dynamics — Motor de Resonancia Cognitiva
+//! # genesis-dynamics — Cognitive Resonance Engine
 //!
-//! Implementa `H_dinámica` y `H_información` del Hamiltoniano total.
-//! Cada módulo deriva sus ecuaciones de `LEY_FUNDACIONAL.md`.
+//! This crate implements `H_dinámica` and `H_información` from the global
+//! Hamiltonian and provides the runtime dynamics layer for the GÉNESIS system.
+//! The implemented equations follow the formal derivation in
+//! `LEY_FUNDACIONAL.md`.
 //!
-//! ## Módulos
-//! - `oscillator`: `QuantumOscillator` — 5 fases por nodo (grados Clifford 0..=4)
-//! - `kuramoto`: `QuantumKuramotoNetwork` — integración Euler-Maruyama
-//! - `synchrony`: parámetro de orden `r_sync`, cluster sincronizado
-//! - `free_energy`: `VFEMinimizer` — único motor de aprendizaje (AXIOMA-003)
-//! - `attractor`: `AttractorLandscape` — descenso por gradiente en `E(x)`
-//! - `criticality`: `CriticalityMonitor` — SOC `P(S) ∝ S^{-τ}` (AXIOMA-005)
+//! ## Modules
+//! - `oscillator`: `QuantumOscillator` state evolution over five Clifford grades
+//!   (0..=4) with amplitude and saturation controls.
+//! - `kuramoto`: `QuantumKuramotoNetwork` integration via Euler–Maruyama for
+//!   coupled oscillator updates.
+//! - `synchrony`: order parameter `r_sync` computation and synchronized-cluster
+//!   extraction.
+//! - `free_energy`: `VFEMinimizer` as the sole learning engine
+//!   (AXIOMA-003).
+//! - `attractor`: `AttractorLandscape` gradient-based descent over attractor
+//!   energy `E(x)`.
+//! - `criticality`: `CriticalityMonitor` for SOC regime tracking
+//!   `P(S) ∝ S^{-τ}` (AXIOMA-005).
 //!
 //! ## SIMD compilation options
 //! Some Kuramoto hot-path primitives use compile-time SIMD feature gating:
@@ -85,10 +93,11 @@ pub use criticality::{
     SOC_R_SYNC_MIN,
 };
 pub use free_energy::{Belief, FisherEdgeMetric, FisherInfo, VFEMinimizer};
+pub use genesis_types::{
+    CognitiveFieldState, MetaState, NetworkSemanticState, NodeSemanticState, PhaseRegion,
+    SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
+};
 pub use kuramoto::QuantumKuramotoNetwork;
 pub use oscillator::QuantumOscillator;
-pub use phase_semantics::{
-    CognitiveFieldState, MetaState, NetworkSemanticState, NodeSemanticState, PhaseRegion,
-    PhaseSemanticsEngine, SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
-};
+pub use phase_semantics::{ClusterRejectionReason, PhaseSemanticsEngine};
 pub use synchrony::{synchronized_cluster, synchrony_order, synchrony_order_fast};

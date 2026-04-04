@@ -361,7 +361,7 @@ impl SpikeComponents {
 
     #[inline]
     #[cfg(feature = "serde")]
-    fn indices_are_canonical(indices: &[u16; SPIKE_MAX_COMPONENTS], count: u8) -> bool {
+    const fn indices_are_canonical(indices: &[u16; SPIKE_MAX_COMPONENTS], count: u8) -> bool {
         let n = count as usize;
         if n > SPIKE_MAX_COMPONENTS {
             return false;
@@ -378,6 +378,29 @@ impl SpikeComponents {
         }
         true
     }
+
+    /// Compile-time canonical-index validation proof for serde paths.
+    ///
+    /// AX-ID: AXIOMA-018
+    #[cfg(feature = "serde")]
+    const _ASSERT_CANONICAL_CONSISTENCY: () = {
+        let good = {
+            let mut arr = [u16::MAX; SPIKE_MAX_COMPONENTS];
+            arr[0] = 1;
+            arr[1] = 3;
+            arr[2] = 8;
+            arr
+        };
+        assert!(Self::indices_are_canonical(&good, 3));
+
+        let bad = {
+            let mut arr = [u16::MAX; SPIKE_MAX_COMPONENTS];
+            arr[0] = 4;
+            arr[1] = 4;
+            arr
+        };
+        assert!(!Self::indices_are_canonical(&bad, 2));
+    };
 
     /// Returns `true` if all explicit padding fields are zeroed.
     ///

@@ -38,3 +38,6 @@ name = "fuzz_vfe_compute"
 path = "fuzz_targets/fuzz_vfe_compute.rs"
 test = false
 doc  = false
+
+[lints]
+workspace = true

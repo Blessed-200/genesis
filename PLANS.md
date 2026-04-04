@@ -182,7 +182,7 @@
 
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `! cargo check --workspace 2>&1 | grep -q '^warning:'`
 - `cargo test --release -p genesis-topology -- invariant --nocapture`
 - `cargo test --release -p genesis-dynamics -- invariant --nocapture`
 
@@ -210,7 +210,7 @@
 ### Validation
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `! cargo check --workspace 2>&1 | grep -q '^warning:'`
 
 ### Complexity/cache target
 - Preserve asymptotic complexity while increasing key-density in binary-search cache lines by separating hot search keys from payload vectors/ids.
@@ -1598,3 +1598,112 @@ Remaining risk:
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
 - `scripts/check_english_only.sh`
+
+## 1.15 CRATE-000 semantic/type unification follow-up (2026-04-03)
+
+### Root cause
+
+- Phase-semantics primitive enums/records are defined only in `genesis-dynamics`, so CRATE-000 is not the single source of truth for shared semantic types.
+- Core G(1,3) cardinality constants are re-declared as local literals in math modules instead of flowing from `genesis-types` constants.
+- Workspace-wide clippy policy is not centrally configured, so lint strictness can drift across crates.
+
+### File-level actions
+
+1. `shared/genesis-types/src/phase_semantics.rs` + `shared/genesis-types/src/lib.rs`
+   - Introduce canonical primitive phase-semantic types (`PhaseRegion`, `SemanticMarker`, `MetaState`, `NodeSemanticState`, `CognitiveFieldState`, `SemanticTensionEdge`, `SemanticTrace`, `SemanticCluster`, `NetworkSemanticState`) in CRATE-000 with `#[repr(C)]` for HPC-friendly ABI layout.
+   - Re-export these types from crate root.
+2. `core/genesis-dynamics/src/phase_semantics.rs` + `core/genesis-dynamics/src/lib.rs`
+   - Remove duplicated primitive type definitions and import canonical types from `genesis-types`.
+   - Keep `PhaseSemanticsEngine` implementation in dynamics unchanged semantically.
+3. `core/genesis-math/src/sign.rs` + `core/genesis-math/src/basis.rs`
+   - Replace duplicated G(1,3) literal cardinality constants with `genesis-types` constants to reinforce single-source Clifford dimensions.
+4. `Cargo.toml`
+   - Add `[workspace.lints.clippy]` and set `all`, `pedantic`, and `nursery` to `deny`.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo clippy --workspace --all-targets`
+
+## 1.16 CRATE-000 review-finding closure (2026-04-03)
+
+### Root cause
+
+- Workspace-level clippy lint policy was declared but not opted into by member crates via `[lints] workspace = true`.
+- Crate-root export smoke test in `genesis-types` did not exercise newly exported phase-semantics primitives.
+- `SemanticCluster` used `SmallVec` under `#[repr(C)]`, which is not a C-ABI-stable field representation.
+
+### File-level actions
+
+1. `core/genesis-dynamics/Cargo.toml`, `core/genesis-math/Cargo.toml`, `core/genesis-topology/Cargo.toml`, `shared/genesis-types/Cargo.toml`, `fuzz/Cargo.toml`
+   - Add top-level `[lints]` with `workspace = true`.
+2. `shared/genesis-types/src/lib.rs`
+   - Extend `all_public_exports_accessible` to explicitly reference all phase-semantics primitive re-exports.
+3. `shared/genesis-types/src/phase_semantics.rs` + `core/genesis-dynamics/src/phase_semantics.rs`
+   - Replace `SemanticCluster.nodes: SmallVec<[NodeId; 8]>` with C-stable fixed storage (`[NodeId; 8]` + `node_count`).
+   - Update cluster construction logic and any call sites to preserve semantics while respecting fixed-capacity contract.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo clippy --workspace --all-targets`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.17 CRATE-000 review round-2 closure (2026-04-03)
+
+### Root cause
+
+- Cluster dedup in dynamics compared pre-canonical node slices rather than canonical fixed-storage identity.
+- `SemanticCluster::from_nodes` accepted unsorted/duplicate/invalid node sequences and `nodes()` could panic on malformed public `node_count`.
+- Two recent validation blocks in `PLANS.md` used warning checks that do not fail on warnings.
+
+### File-level actions
+
+1. `shared/genesis-types/src/phase_semantics.rs`
+   - Add canonicalization + validation for cluster nodes (strictly increasing, unique, no invalid sentinel, bounded by fixed capacity).
+   - Add checked cluster-key accessor and change `nodes()` to `Result<&[NodeId], GenesisError>`.
+   - Add dedicated tests for valid input, oversize rejection, and non-monotonic/duplicate rejection.
+2. `core/genesis-dynamics/src/phase_semantics.rs`
+   - Use canonicalized cluster key for deduplication.
+   - Apply explicit truncation policy for oversized candidates and emit explicit error logs on rejected candidates.
+3. `PLANS.md`
+   - Invert warning-scan command in the two targeted validation sections to fail when warnings are present.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo clippy --workspace --all-targets`
+- `! cargo check --workspace 2>&1 | grep -q '^warning:'`
+
+## 1.18 CRATE-000 review round-3 API hardening (2026-04-03)
+
+### Root cause
+
+- `SemanticCluster` fallible APIs still return `Option`, losing rejection detail needed by callers.
+- `canonical_key` returned raw backing storage instead of re-canonicalizing the active prefix.
+- Dynamics cluster rejection reporting currently writes directly to stderr (`eprintln!`) rather than exposing typed outcomes.
+
+### File-level actions
+
+1. `shared/genesis-types/src/phase_semantics.rs`
+   - Switch ABI enums to explicit integer repr (`#[repr(u8)]`) with explicit discriminants.
+   - Change `canonicalize_nodes` and `from_nodes` to `Result<..., GenesisError>`.
+   - Rework `canonical_key` to canonicalize from active slice (`self.nodes[..node_count]`) via `canonicalize_nodes`.
+   - Update tests for new `Result` APIs and explicit error assertions.
+2. `core/genesis-dynamics/src/phase_semantics.rs`
+   - Remove direct stderr output.
+   - Introduce typed cluster-rejection reasons collected during `update_from_network` and expose accessor.
+   - Update dedup/build flow for `Result`-based cluster API.
+3. `shared/genesis-types/src/lib.rs`
+   - Update smoke tests to the `Result`-based cluster constructor.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo clippy --workspace --all-targets`
+- `! cargo check --workspace 2>&1 | grep -q '^warning:'`

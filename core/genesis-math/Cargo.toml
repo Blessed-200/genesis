@@ -29,3 +29,6 @@ cacheline64 = []
 [[bench]]
 name    = "geometry"
 harness = false
+
+[lints]
+workspace = true

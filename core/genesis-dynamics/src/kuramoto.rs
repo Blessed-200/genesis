@@ -585,7 +585,7 @@ impl QuantumKuramotoNetwork {
     ///
     /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
     #[inline]
-    pub fn node_count(&self) -> usize {
+    pub const fn node_count(&self) -> usize {
         self.live_count
     }
 
