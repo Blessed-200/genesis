@@ -5,7 +5,12 @@
 //! AX-ID: AXIOMA-001 (G(1,3) substrate), AXIOMA-002 (time as geometric dimension)
 //!
 //! # Primary type
-//! [`SparseCliffordVector`] — dense 160-byte multivector. See [`multivector`].
+//! [`SparseCliffordVector`] — dense 192-byte multivector. See [`multivector`].
+//!
+//! # Inlining verification
+//! To inspect inlining decisions for hot-path primitives, use:
+//! - `cargo asm genesis_math::product::sparse_geometric_product`
+//! - `cargo rustc -p genesis-math --release -- --emit=asm`
 //!
 //! # Module map
 //! - [`sign`]       — `BladeIndex`, `Sign`, `CAYLEY_SIGN`, `compute_clifford_sign`
@@ -88,11 +93,11 @@ pub trait GeometricProduct: Sized {
     /// below the cognitive noise floor (Cauchy-Schwarz gate).
     fn geo_product(&self, rhs: &Self) -> Option<Self>;
 
-    /// Producto escalar métrico Σᵢ aᵢbᵢηᵢᵢ.
+    /// Metric scalar product Σᵢ aᵢbᵢηᵢᵢ.
     ///
-    /// NO es la norma de Lorentz ⟨A·Ã⟩₀. Para grado k ≥ 2, el valor
-    /// difiere de `clifford_norm_sq` por el signo del reverso.
-    /// Use `clifford_norm_sq` para la norma Lorentz-invariante.
+    /// This is not the Lorentz norm ⟨A·Ã⟩₀. For grades `k ≥ 2`, this value
+    /// differs from `clifford_norm_sq` by the reverse-sign term.
+    /// Use `clifford_norm_sq` for Lorentz-invariant norm queries.
     fn metric_scalar_product(&self, rhs: &Self) -> f64;
 
     /// Grade-k projection of the multivector.

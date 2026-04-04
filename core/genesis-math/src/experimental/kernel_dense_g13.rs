@@ -14,7 +14,7 @@
 //!   equivalencia, sin impacto en el dispatch productivo.
 
 use crate::basis::TOTAL_BLADES;
-use crate::product::CAYLEY_SIGN_F64;
+use crate::sign::CAYLEY_SIGN_F64_REF;
 
 /// Dense product result buffer for G(1,3).
 pub type DenseBuf = [f64; TOTAL_BLADES];
@@ -36,7 +36,7 @@ pub fn dense_geometric_product_g13(a: &DenseBuf, b: &DenseBuf) -> DenseBuf {
     // are consumed sequentially; only the `out[i ^ j]` scatter remains.
     for i in 0..TOTAL_BLADES {
         let a_i = a[i];
-        let sign_row = &CAYLEY_SIGN_F64[i];
+        let sign_row = &CAYLEY_SIGN_F64_REF[i];
         for j in 0..TOTAL_BLADES {
             out[i ^ j] += a_i * b[j] * sign_row[j];
         }

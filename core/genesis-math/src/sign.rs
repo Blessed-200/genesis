@@ -229,6 +229,28 @@ pub const CAYLEY_SIGN: [[i8; BLADE_COUNT]; BLADE_COUNT] = {
     table
 };
 
+#[repr(align(64))]
+struct AlignedCayleySignF64([[f64; BLADE_COUNT]; BLADE_COUNT]);
+
+/// 64-byte aligned floating-point Cayley sign table for SIMD kernels.
+pub(crate) const CAYLEY_SIGN_F64: [[f64; BLADE_COUNT]; BLADE_COUNT] = {
+    let mut t = [[0.0f64; BLADE_COUNT]; BLADE_COUNT];
+    let mut i = 0usize;
+    while i < BLADE_COUNT {
+        let mut j = 0usize;
+        while j < BLADE_COUNT {
+            t[i][j] = if CAYLEY_SIGN[i][j] > 0 { 1.0 } else { -1.0 };
+            j += 1;
+        }
+        i += 1;
+    }
+    t
+};
+
+const CAYLEY_SIGN_F64_ALIGNED: AlignedCayleySignF64 = AlignedCayleySignF64(CAYLEY_SIGN_F64);
+pub(crate) const CAYLEY_SIGN_F64_REF: &[[f64; BLADE_COUNT]; BLADE_COUNT] = &CAYLEY_SIGN_F64_ALIGNED.0;
+const _: () = assert!(core::mem::align_of::<AlignedCayleySignF64>() == 64);
+
 // ── Hot-path entry point ──────────────────────────────────────────────────────
 
 /// Returns the basis-blade geometric product kernel `(I ⊕ J, σ(I,J))` in O(1).
