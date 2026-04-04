@@ -115,7 +115,8 @@ commands:
           name: "Security: Enforce BLAKE3 hash algorithm"
           timeout: 5m
           command: |
-            grep -q "blake3 = \"=1.5.4\"" shared/genesis-types/Cargo.toml \
+            # Usamos una expresión regular para ignorar la cantidad de espacios
+            grep -qE "blake3\s*=\s*\"=1.5.4\"" shared/genesis-types/Cargo.toml \
               || { echo "❌ BLAKE3 hash not pinned in genesis-types!"; exit 1; }
             if grep -r "use sha2" --include="*.rs" .; then
               echo "❌ SHA-256 detected! Only BLAKE3 is permitted."
