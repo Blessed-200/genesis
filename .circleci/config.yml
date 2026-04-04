@@ -28,10 +28,6 @@ executors:
 commands:
   setup-rust:
     description: "Install Rust toolchain + configure cargo caching"
-    parameters:
-      components:
-        type: string
-        default: "rustfmt,clippy"  # ✅ SIN ESPACIOS: rustfmt,clippy (no: rustfmt, clippy)
     steps:
       - checkout
       - run:
@@ -39,7 +35,8 @@ commands:
           timeout: 10m
           command: |
             rustup show
-            rustup component add << parameters.components >>
+            rustup component add rustfmt
+            rustup component add clippy
             cargo --version
             rustc --version
       - run:
@@ -140,8 +137,7 @@ jobs:
   lint-format-clippy:
     executor: ubuntu-xl
     steps:
-      - setup-rust:
-          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
+      - setup-rust
       - restore-cargo-caches:
           cache_key_suffix: "lint"
       - run:
@@ -169,8 +165,7 @@ jobs:
     environment:
       BUILD_PROFILE: "debug"
     steps:
-      - setup-rust:
-          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
+      - setup-rust
       - restore-cargo-caches:
           cache_key_suffix: "build"
       - run:
@@ -178,7 +173,7 @@ jobs:
           timeout: 5m
           command: |
             case $CIRCLE_NODE_INDEX in
-              0) echo 'export BUILD_PROFILE="debug"' >> $BASH_ENV ;;
+              0) echo 'export BUILD_PROFILE="debug"' >> $BASH_ENV ;; 
               1) echo 'export BUILD_PROFILE="release"' >> $BASH_ENV ;;
             esac
             source $BASH_ENV
@@ -199,8 +194,7 @@ jobs:
     executor: ubuntu-xl
     parallelism: 4
     steps:
-      - setup-rust:
-          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
+      - setup-rust
       - restore-cargo-caches:
           cache_key_suffix: "test"
       - verify-blake3
@@ -238,8 +232,7 @@ jobs:
   test-coverage-gates:
     executor: ubuntu-xl
     steps:
-      - setup-rust:
-          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
+      - setup-rust
       - restore-cargo-caches:
           cache_key_suffix: "coverage"
       - run:
@@ -277,8 +270,7 @@ jobs:
   test-invariants:
     executor: ubuntu-2xl
     steps:
-      - setup-rust:
-          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
+      - setup-rust
       - restore-cargo-caches:
           cache_key_suffix: "invariants"
       - run:
@@ -319,8 +311,7 @@ jobs:
   security-scan:
     executor: ubuntu-xl
     steps:
-      - setup-rust:
-          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
+      - setup-rust
       - verify-blake3
       - run:
           name: "Security: Cargo audit (known vulnerabilities)"
@@ -356,8 +347,7 @@ jobs:
   bench-hotpaths:
     executor: ubuntu-2xl
     steps:
-      - setup-rust:
-          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
+      - setup-rust
       - restore-cargo-caches:
           cache_key_suffix: "bench"
       - run:
@@ -397,8 +387,7 @@ jobs:
   build-docker:
     executor: ubuntu-xl
     steps:
-      - setup-rust:
-          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
+      - setup-rust
       - restore-cargo-caches:
           cache_key_suffix: "docker"
       - run:
