@@ -304,8 +304,8 @@ unsafe fn geometric_product_x86_avx2_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
-        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd,
-        _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
+        _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_cvtsd_f64, _mm256_extractf128_pd,
+        _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_unpackhi_pd,
     };
 
     // HOT PATH: O(16²), dense G(1,3) product on AVX2.
@@ -323,6 +323,9 @@ unsafe fn geometric_product_x86_avx2_dense(
             // SAFETY: `j` advances in multiples of 4 over a fixed-size 16-lane
             // array, so both sequential loads stay within bounds.
             let products = unsafe {
+                // SAFETY: `j` advances in multiples of four lanes and remains
+                // in-bounds for the fixed 16-lane dense buffer. Unaligned loads
+                // keep the SIMD kernel valid for any caller alignment.
                 let b_vec = _mm256_loadu_pd(b_coeffs.as_ptr().add(j));
                 let scaled = _mm256_mul_pd(coef_a_vec, b_vec);
                 let signs = _mm256_loadu_pd(sign_row.as_ptr().add(j));
@@ -354,8 +357,8 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
-        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd,
-        _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
+        _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_cvtsd_f64, _mm256_extractf128_pd,
+        _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_unpackhi_pd,
     };
 
     // HOT PATH: O(16²), dense G(1,3) product on AVX2+FMA hardware.
@@ -372,6 +375,9 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
             // SAFETY: `j` advances in multiples of 4 over a fixed-size 16-lane
             // array, so both sequential loads stay within bounds.
             let products = unsafe {
+                // SAFETY: `j` advances in multiples of four lanes and remains
+                // in-bounds for the fixed 16-lane dense buffer. Unaligned loads
+                // keep the SIMD kernel valid for any caller alignment.
                 let b_vec = _mm256_loadu_pd(b_coeffs.as_ptr().add(j));
                 let scaled = _mm256_mul_pd(coef_a_vec, b_vec);
                 let signs = _mm256_loadu_pd(sign_row.as_ptr().add(j));
@@ -407,6 +413,9 @@ unsafe fn geometric_product_x86_avx512_dense(
         _mm512_permutex2var_pd, _mm512_set1_pd, _mm512_setzero_pd, _mm512_storeu_pd, _mm512_xor_pd,
     };
 
+    // SAFETY: the dense coefficient buffer has fixed length 16 and both loads
+    // stay in-bounds. Unaligned loads avoid imposing external alignment
+    // requirements on callers.
     let a_lo = _mm512_loadu_pd(a_coeffs.as_ptr());
     let a_hi = _mm512_loadu_pd(a_coeffs.as_ptr().add(8));
     let mut acc_lo = _mm512_setzero_pd();

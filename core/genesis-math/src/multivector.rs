@@ -1,15 +1,16 @@
-//! `SparseCliffordVector` — dense G(1,3) multivector, cacheline-aligned (160B/32B default, 192B/64B with `cacheline64`).
+//! `SparseCliffordVector` — dense G(1,3) multivector, cacheline-aligned (192B/64B).
 //!
 //! AX-ID: AXIOMA-001, AXIOMA-011, AXIOMA-018
 //!
-//! # Layout (mandated: 160 bytes align 32 by default; 192 bytes align 64 with feature `cacheline64`)
+//! # Layout (mandatory ABI: 192B with 64B alignment)
 //! ```text
 //! Offset  Size  Field               Description
 //!      0   128  coeffs: [f64; 16]   blade coefficients (dense, zeros for inactive)
 //!    128     8  clifford_norm_sq    ⟨A·Ã⟩₀ — Lorentz-invariant, not for CS gate
 //!    136     8  max_abs_coeff       max_i(|`coeffs[i]`|) — ONLY valid for CS gate
 //!    144     2  active_mask: u16    bit i set ↔ |`coeffs[i]`| > PLANCK
-//!    146    14  _pad: [u8; 14]      explicit padding to 160 bytes
+//!    146    14  _pad: [u8; 14]      explicit payload padding before tail region
+//!    160    32  _tail_pad: [u8; 32] explicit tail padding; total serialized byte view = 192B
 //! ```
 //!
 //! # Invariants (guaranteed by all constructors)
@@ -42,8 +43,7 @@ use crate::grade::{even_grade, grade_project, odd_grade, reverse, CLIFFORD_NORM_
 ///
 /// AX-ID: AXIOMA-001 (G(1,3) substrate), AXIOMA-011 (holonomic gating),
 ///    AXIOMA-018 (SNN isomorphism / DAX layout)
-#[cfg_attr(feature = "cacheline64", repr(C, align(64)))]
-#[cfg_attr(not(feature = "cacheline64"), repr(C, align(32)))]
+#[repr(C, align(64))]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SparseCliffordVector {
     /// 128 bytes — exactly 2 AVX-512 zmm registers.
@@ -64,30 +64,22 @@ pub struct SparseCliffordVector {
     /// `active_mask.count_ones()` = number of active blades.
     pub active_mask: u16,
 
-    /// Explicit padding to 160 bytes. Not semantically meaningful.
+    /// Explicit payload padding before the tail region. Not semantically meaningful.
     _pad: [u8; 14],
-    /// Trailing explicit padding required only for 64-byte alignment mode.
-    #[cfg(feature = "cacheline64")]
+    /// Explicit tail padding that closes the mandatory 192B byte view.
     _tail_pad: [u8; 32],
 }
 
 // ── Compile-time layout assertions ───────────────────────────────────────────
 
 const _: () = {
-    #[cfg(feature = "cacheline64")]
     assert!(std::mem::size_of::<SparseCliffordVector>() == 192);
-    #[cfg(not(feature = "cacheline64"))]
-    assert!(std::mem::size_of::<SparseCliffordVector>() == 160);
-    #[cfg(feature = "cacheline64")]
     assert!(std::mem::align_of::<SparseCliffordVector>() == 64);
-    #[cfg(not(feature = "cacheline64"))]
-    assert!(std::mem::align_of::<SparseCliffordVector>() == 32);
     assert!(memoffset::offset_of!(SparseCliffordVector, coeffs) == 0);
     assert!(memoffset::offset_of!(SparseCliffordVector, clifford_norm_sq) == 128);
     assert!(memoffset::offset_of!(SparseCliffordVector, max_abs_coeff) == 136);
     assert!(memoffset::offset_of!(SparseCliffordVector, active_mask) == 144);
     assert!(memoffset::offset_of!(SparseCliffordVector, _pad) == 146);
-    #[cfg(feature = "cacheline64")]
     assert!(memoffset::offset_of!(SparseCliffordVector, _tail_pad) == 160);
 };
 
@@ -225,7 +217,6 @@ impl SparseCliffordVector {
             max_abs_coeff: 0.0,
             active_mask: 0,
             _pad: [0u8; 14],
-            #[cfg(feature = "cacheline64")]
             _tail_pad: [0u8; 32],
         }
     }
@@ -248,7 +239,6 @@ impl SparseCliffordVector {
             max_abs_coeff: metadata.max_abs_coeff,
             active_mask: metadata.active_mask as u16, // G(1,3) has ≤16 blades; DerivedMetadata uses u32 for future expansion
             _pad: [0u8; 14],
-            #[cfg(feature = "cacheline64")]
             _tail_pad: [0u8; 32],
         }
     }
@@ -267,7 +257,6 @@ impl SparseCliffordVector {
             max_abs_coeff,
             active_mask,
             _pad: [0u8; 14],
-            #[cfg(feature = "cacheline64")]
             _tail_pad: [0u8; 32],
         }
     }
@@ -544,20 +533,33 @@ impl SparseCliffordVector {
 
     // ── DAX byte view ─────────────────────────────────────────────────────────
 
-    /// View as raw bytes for DAX/NVMe writes. Zero-copy. O(1).
+    /// Returns the canonical 192-byte byte view for zero-copy serialization.
+    ///
+    /// The byte view is native-endian and mirrors the in-memory `repr(C, align(64))`
+    /// layout exactly. Consumers must treat this as an ABI contract: 192B total
+    /// size, 64B alignment requirement when reinterpreting back as
+    /// `SparseCliffordVector`, and IEEE-754 `f64` lane encoding.
+    ///
+    /// This method performs no allocation and no byte reordering.
+    ///
     /// AX-ID: AXIOMA-018
     #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         bytemuck::bytes_of(self)
     }
 
-    /// Reconstruct from a raw aligned byte slice without panicking.
+    /// Reconstructs a `SparseCliffordVector` view from a raw serialized byte view.
     ///
-    /// Returns `Err` on wrong length (must be 160) or alignment (must be ≡ 0 mod 32).
+    /// Contract:
+    /// - `bytes.len() == 192`
+    /// - `bytes` must satisfy 64-byte alignment for `SparseCliffordVector`
+    /// - payload is interpreted as native-endian IEEE-754 data, without conversion
     ///
     /// # Errors
-    /// Returns `bytemuck::PodCastError` if `bytes` no tiene longitud or alignment
-    /// correcta for `SparseCliffordVector`.
+    /// Returns `bytemuck::PodCastError` if the serialized byte view length or
+    /// alignment is invalid for `SparseCliffordVector`.
+    ///
+    /// AX-ID: AXIOMA-018
     #[inline]
     pub fn try_from_bytes(bytes: &[u8]) -> Result<&Self, bytemuck::PodCastError> {
         bytemuck::try_from_bytes(bytes)
@@ -784,29 +786,15 @@ mod tests {
 
     #[test]
     fn layout_mandated_cacheline_profile() {
-        #[cfg(feature = "cacheline64")]
         assert_eq!(
             std::mem::size_of::<SparseCliffordVector>(),
             192,
-            "must be 192 bytes with cacheline64"
+            "must be 192 bytes with mandatory 64-byte alignment"
         );
-        #[cfg(not(feature = "cacheline64"))]
-        assert_eq!(
-            std::mem::size_of::<SparseCliffordVector>(),
-            160,
-            "must be 160 bytes by default"
-        );
-        #[cfg(feature = "cacheline64")]
         assert_eq!(
             std::mem::align_of::<SparseCliffordVector>(),
             64,
-            "must be align 64 with cacheline64"
-        );
-        #[cfg(not(feature = "cacheline64"))]
-        assert_eq!(
-            std::mem::align_of::<SparseCliffordVector>(),
-            32,
-            "must be align 32 by default"
+            "must be align 64"
         );
         assert_eq!(memoffset::offset_of!(SparseCliffordVector, coeffs), 0);
         assert_eq!(
@@ -822,7 +810,6 @@ mod tests {
             144
         );
         assert_eq!(memoffset::offset_of!(SparseCliffordVector, _pad), 146);
-        #[cfg(feature = "cacheline64")]
         assert_eq!(memoffset::offset_of!(SparseCliffordVector, _tail_pad), 160);
     }
 
@@ -1110,10 +1097,7 @@ mod tests {
         let restored = SparseCliffordVector::from_dense(&restored_buf).unwrap();
         assert_eq!(v.coeffs[1], restored.coeffs[1]);
         assert_eq!(v.coeffs[6], restored.coeffs[6]);
-        #[cfg(feature = "cacheline64")]
         assert_eq!(bytes.len(), 192);
-        #[cfg(not(feature = "cacheline64"))]
-        assert_eq!(bytes.len(), 160);
     }
 
     #[test]
