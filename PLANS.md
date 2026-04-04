@@ -1,6 +1,6 @@
 # PLANS
 
-## 1.9 SIMD geometric-product hardening for GEN-7 (2026-04-04)
+## 1.19 SIMD geometric-product hardening for GEN-7 (2026-04-04)
 
 ### Root cause
 

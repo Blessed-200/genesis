@@ -304,8 +304,8 @@ unsafe fn geometric_product_x86_avx2_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
-        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_loadu_pd, _mm256_mul_pd,
-        _mm256_set1_pd, _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
+        _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_cvtsd_f64, _mm256_extractf128_pd,
+        _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_unpackhi_pd,
     };
 
     // HOT PATH: O(16²), dense G(1,3) product on AVX2.
@@ -357,8 +357,8 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
-        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_loadu_pd, _mm256_mul_pd,
-        _mm256_set1_pd, _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
+        _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_cvtsd_f64, _mm256_extractf128_pd,
+        _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_unpackhi_pd,
     };
 
     // HOT PATH: O(16²), dense G(1,3) product on AVX2+FMA hardware.
