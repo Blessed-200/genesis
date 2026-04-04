@@ -8,8 +8,8 @@
 use core::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
 use genesis_types::{
-    CognitiveFieldState, MetaState, NetworkSemanticState, NodeId, NodeSemanticState, PhaseRegion,
-    SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
+    CognitiveFieldState, GenesisError, MetaState, NetworkSemanticState, NodeId, NodeSemanticState,
+    PhaseRegion, SemanticCluster, SemanticMarker, SemanticTensionEdge, SemanticTrace,
     SEMANTIC_CLUSTER_MAX_NODES,
 };
 use smallvec::SmallVec;
@@ -42,6 +42,28 @@ struct ClusterAssignment {
     coherence: f64,
 }
 
+/// Typed rejection reasons produced while building semantic clusters.
+///
+/// AX-ID: AXIOMA-004, AXIOMA-006
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClusterRejectionReason {
+    /// Candidate exceeded fixed-capacity cluster storage and was truncated.
+    TruncatedToCapacity {
+        /// Original candidate size before truncation.
+        original_len: usize,
+    },
+    /// Candidate failed canonicalization checks.
+    NonCanonicalInput {
+        /// Canonicalization failure reason.
+        error: GenesisError,
+    },
+    /// Canonical cluster materialization failed after canonicalization.
+    ClusterConstructionFailed {
+        /// Constructor failure reason after canonicalization.
+        error: GenesisError,
+    },
+}
+
 /// Engine that interprets oscillator dynamics as semantic field descriptors.
 ///
 /// This structure is deterministic: node entries are stored sorted by `NodeId`
@@ -59,6 +81,7 @@ pub struct PhaseSemanticsEngine {
     neighbor_flat: Vec<usize>,
     degree_buf: Vec<usize>,
     write_buf: Vec<usize>,
+    cluster_rejections: SmallVec<[ClusterRejectionReason; 8]>,
     field_state: CognitiveFieldState,
     network_state: NetworkSemanticState,
     metastate: MetaState,
@@ -86,6 +109,7 @@ impl PhaseSemanticsEngine {
             neighbor_flat: Vec::new(),
             degree_buf: Vec::new(),
             write_buf: Vec::new(),
+            cluster_rejections: SmallVec::new(),
             field_state: CognitiveFieldState {
                 dominant_marker: SemanticMarker::Exploration,
                 coherence: 0.0,
@@ -122,6 +146,7 @@ impl PhaseSemanticsEngine {
         self.neighbor_flat.clear();
         self.degree_buf.clear();
         self.write_buf.clear();
+        self.cluster_rejections.clear();
 
         self.entries.reserve(network.oscillators.len());
         self.tension_edges.reserve(network.coupling.len());
@@ -271,6 +296,14 @@ impl PhaseSemanticsEngine {
         &self.tension_edges
     }
 
+    /// Returns cluster rejection diagnostics from the latest update.
+    ///
+    /// AX-ID: AXIOMA-004, AXIOMA-006
+    #[must_use]
+    pub fn cluster_rejections(&self) -> &[ClusterRejectionReason] {
+        &self.cluster_rejections
+    }
+
     /// Node-local semantic incoherence proxy for attractor penalization.
     ///
     /// AX-ID: AXIOMA-004, `H_información`
@@ -336,23 +369,22 @@ impl PhaseSemanticsEngine {
                 assign_node_to_cluster(entry, &network.coupling, &self.entries)
             {
                 let candidate_nodes = if assignment.nodes.len() > SEMANTIC_CLUSTER_MAX_NODES {
-                    eprintln!(
-                        "phase_semantics: truncating cluster candidate from {} to {} nodes",
-                        assignment.nodes.len(),
-                        SEMANTIC_CLUSTER_MAX_NODES
-                    );
+                    self.cluster_rejections
+                        .push(ClusterRejectionReason::TruncatedToCapacity {
+                            original_len: assignment.nodes.len(),
+                        });
                     &assignment.nodes[..SEMANTIC_CLUSTER_MAX_NODES]
                 } else {
                     assignment.nodes.as_slice()
                 };
 
-                let Some(candidate_key) = SemanticCluster::canonicalize_nodes(candidate_nodes)
-                else {
-                    eprintln!(
-                        "phase_semantics: rejecting non-canonical cluster candidate \
-                         (unsorted, duplicate, or invalid NodeId)"
-                    );
-                    continue;
+                let candidate_key = match SemanticCluster::canonicalize_nodes(candidate_nodes) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        self.cluster_rejections
+                            .push(ClusterRejectionReason::NonCanonicalInput { error });
+                        continue;
+                    }
                 };
 
                 if !self.clusters.iter().any(|cluster| {
@@ -360,14 +392,15 @@ impl PhaseSemanticsEngine {
                         .canonical_key()
                         .is_ok_and(|existing_key| existing_key == candidate_key)
                 }) {
-                    if let Some(cluster) = SemanticCluster::from_nodes(
+                    match SemanticCluster::from_nodes(
                         candidate_nodes,
                         assignment.marker,
                         assignment.coherence,
                     ) {
-                        self.clusters.push(cluster);
-                    } else {
-                        eprintln!("phase_semantics: rejecting cluster candidate after canonicalization failure");
+                        Ok(cluster) => self.clusters.push(cluster),
+                        Err(error) => self
+                            .cluster_rejections
+                            .push(ClusterRejectionReason::ClusterConstructionFailed { error }),
                     }
                 }
             }

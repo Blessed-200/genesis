@@ -91,5 +91,5 @@ pub use genesis_types::{
 };
 pub use kuramoto::QuantumKuramotoNetwork;
 pub use oscillator::QuantumOscillator;
-pub use phase_semantics::PhaseSemanticsEngine;
+pub use phase_semantics::{ClusterRejectionReason, PhaseSemanticsEngine};
 pub use synchrony::{synchronized_cluster, synchrony_order, synchrony_order_fast};

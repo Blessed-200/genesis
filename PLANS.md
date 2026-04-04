@@ -1678,3 +1678,32 @@ Remaining risk:
 - `cargo test --workspace`
 - `cargo clippy --workspace --all-targets`
 - `! cargo check --workspace 2>&1 | grep -q '^warning:'`
+
+## 1.18 CRATE-000 review round-3 API hardening (2026-04-03)
+
+### Root cause
+
+- `SemanticCluster` fallible APIs still return `Option`, losing rejection detail needed by callers.
+- `canonical_key` returned raw backing storage instead of re-canonicalizing the active prefix.
+- Dynamics cluster rejection reporting currently writes directly to stderr (`eprintln!`) rather than exposing typed outcomes.
+
+### File-level actions
+
+1. `shared/genesis-types/src/phase_semantics.rs`
+   - Switch ABI enums to explicit integer repr (`#[repr(u8)]`) with explicit discriminants.
+   - Change `canonicalize_nodes` and `from_nodes` to `Result<..., GenesisError>`.
+   - Rework `canonical_key` to canonicalize from active slice (`self.nodes[..node_count]`) via `canonicalize_nodes`.
+   - Update tests for new `Result` APIs and explicit error assertions.
+2. `core/genesis-dynamics/src/phase_semantics.rs`
+   - Remove direct stderr output.
+   - Introduce typed cluster-rejection reasons collected during `update_from_network` and expose accessor.
+   - Update dedup/build flow for `Result`-based cluster API.
+3. `shared/genesis-types/src/lib.rs`
+   - Update smoke tests to the `Result`-based cluster constructor.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo clippy --workspace --all-targets`
+- `! cargo check --workspace 2>&1 | grep -q '^warning:'`

@@ -16,52 +16,52 @@ pub const SEMANTIC_CLUSTER_MAX_NODES: usize = 8;
 ///
 /// AX-ID: AXIOMA-006, H_dinámica
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(C)]
+#[repr(u8)]
 pub enum PhaseRegion {
     /// `[0, π/4)`
-    Certainty,
+    Certainty = 0,
     /// `[π/4, π/2)`
-    Integration,
+    Integration = 1,
     /// `[π/2, π)`
-    Exploration,
+    Exploration = 2,
     /// `[π, 3π/2)`
-    Tension,
+    Tension = 3,
     /// `[3π/2, 2π)`
-    Release,
+    Release = 4,
 }
 
 /// Primary semantic interpretation marker per node.
 ///
 /// AX-ID: AXIOMA-004, AXIOMA-006
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[repr(C)]
+#[repr(u8)]
 pub enum SemanticMarker {
     /// Coherent low-surprise regime.
-    Certainty,
+    Certainty = 0,
     /// Integration regime with convergent coupling.
-    Integration,
+    Integration = 1,
     /// Broad search / novelty regime.
-    Exploration,
+    Exploration = 2,
     /// Divergent neighboring semantics.
-    Conflict,
+    Conflict = 3,
     /// Low-amplitude semantic collapse.
-    Collapse,
+    Collapse = 4,
 }
 
 /// Metastable cognitive regime of the network.
 ///
 /// AX-ID: AXIOMA-005, AXIOMA-006
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(C)]
+#[repr(u8)]
 pub enum MetaState {
     /// High stability and coherent semantics.
-    StableMeaning,
+    StableMeaning = 0,
     /// Dynamic exploratory regime.
-    ExploratoryFlux,
+    ExploratoryFlux = 1,
     /// High local semantic tension.
-    CognitiveTension,
+    CognitiveTension = 2,
     /// System-wide semantic degradation.
-    SemanticCollapse,
+    SemanticCollapse = 3,
 }
 
 /// Local semantic state for one node.
@@ -164,25 +164,31 @@ impl SemanticCluster {
     /// - strictly increasing `NodeId` order
     /// - no `NodeId::INVALID` sentinel entries
     ///
-    /// Returns `None` when any invariant is violated.
+    /// Returns an error when any invariant is violated.
+    ///
+    /// # Errors
+    /// Returns `GenesisError::InvariantViolation` for capacity/ordering
+    /// violations and `GenesisError::NodeIdOutOfRange` when the invalid
+    /// sentinel `NodeId::INVALID` appears in the input.
     ///
     /// AX-ID: AXIOMA-004, AXIOMA-006
-    #[must_use]
     pub fn canonicalize_nodes(
         nodes: &[NodeId],
-    ) -> Option<([NodeId; SEMANTIC_CLUSTER_MAX_NODES], u8)> {
+    ) -> Result<([NodeId; SEMANTIC_CLUSTER_MAX_NODES], u8), crate::GenesisError> {
         if nodes.len() > SEMANTIC_CLUSTER_MAX_NODES {
-            return None;
+            return Err(crate::GenesisError::InvariantViolation { axiom_id: 4 });
         }
 
         let mut previous: Option<NodeId> = None;
         for &node in nodes {
             if node == NodeId::INVALID {
-                return None;
+                return Err(crate::GenesisError::NodeIdOutOfRange {
+                    raw: NodeId::INVALID.get(),
+                });
             }
             if let Some(prev) = previous {
                 if node <= prev {
-                    return None;
+                    return Err(crate::GenesisError::InvariantViolation { axiom_id: 4 });
                 }
             }
             previous = Some(node);
@@ -191,19 +197,26 @@ impl SemanticCluster {
         let mut fixed = [NodeId::INVALID; SEMANTIC_CLUSTER_MAX_NODES];
         fixed[..nodes.len()].copy_from_slice(nodes);
 
-        Some((fixed, nodes.len() as u8))
+        Ok((fixed, nodes.len() as u8))
     }
 
     /// Builds a semantic cluster from an ordered node slice.
     ///
-    /// Returns `None` when the slice exceeds `SEMANTIC_CLUSTER_MAX_NODES`.
+    /// Returns an error when validation fails.
+    ///
+    /// # Errors
+    /// Propagates canonicalization failures from `canonicalize_nodes`,
+    /// including ordering/capacity violations and invalid sentinel entries.
     ///
     /// AX-ID: AXIOMA-004, AXIOMA-006
-    #[must_use]
-    pub fn from_nodes(nodes: &[NodeId], marker: SemanticMarker, coherence: f64) -> Option<Self> {
+    pub fn from_nodes(
+        nodes: &[NodeId],
+        marker: SemanticMarker,
+        coherence: f64,
+    ) -> Result<Self, crate::GenesisError> {
         let (fixed, node_count) = Self::canonicalize_nodes(nodes)?;
 
-        Some(Self {
+        Ok(Self {
             nodes: fixed,
             node_count,
             marker,
@@ -222,10 +235,22 @@ impl SemanticCluster {
     pub fn canonical_key(
         &self,
     ) -> Result<([NodeId; SEMANTIC_CLUSTER_MAX_NODES], u8), crate::GenesisError> {
-        if usize::from(self.node_count) > self.nodes.len() {
+        let node_count = usize::from(self.node_count);
+        if node_count > self.nodes.len() {
             return Err(crate::GenesisError::InvariantViolation { axiom_id: 4 });
         }
-        Ok((self.nodes, self.node_count))
+
+        let active = &self.nodes[..node_count];
+        let (fixed, canonical_count) = Self::canonicalize_nodes(active)?;
+
+        if fixed[node_count..]
+            .iter()
+            .any(|node| *node != NodeId::INVALID)
+        {
+            return Err(crate::GenesisError::InvariantViolation { axiom_id: 4 });
+        }
+
+        Ok((fixed, canonical_count))
     }
 
     /// Returns active cluster members as a slice.
@@ -273,7 +298,7 @@ mod tests {
     #[test]
     fn semantic_cluster_from_nodes_rejects_oversized_input() {
         let oversized = [NodeId::INVALID; SEMANTIC_CLUSTER_MAX_NODES + 1];
-        assert!(SemanticCluster::from_nodes(&oversized, SemanticMarker::Certainty, 1.0).is_none());
+        assert!(SemanticCluster::from_nodes(&oversized, SemanticMarker::Certainty, 1.0).is_err());
     }
 
     #[test]
@@ -283,7 +308,7 @@ mod tests {
             NodeId::INVALID,
         ];
         assert!(
-            SemanticCluster::from_nodes(&within_capacity, SemanticMarker::Certainty, 1.0).is_none()
+            SemanticCluster::from_nodes(&within_capacity, SemanticMarker::Certainty, 1.0).is_err()
         );
     }
 
@@ -293,14 +318,14 @@ mod tests {
             NodeId::try_new(2).expect("2 is inside the valid NodeId range"),
             NodeId::try_new(2).expect("2 is inside the valid NodeId range"),
         ];
-        assert!(SemanticCluster::from_nodes(&duplicate, SemanticMarker::Conflict, 0.2).is_none());
+        assert!(SemanticCluster::from_nodes(&duplicate, SemanticMarker::Conflict, 0.2).is_err());
 
         let non_monotonic = [
             NodeId::try_new(5).expect("5 is inside the valid NodeId range"),
             NodeId::try_new(3).expect("3 is inside the valid NodeId range"),
         ];
         assert!(
-            SemanticCluster::from_nodes(&non_monotonic, SemanticMarker::Conflict, 0.2).is_none()
+            SemanticCluster::from_nodes(&non_monotonic, SemanticMarker::Conflict, 0.2).is_err()
         );
     }
 
