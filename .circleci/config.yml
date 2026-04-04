@@ -34,9 +34,12 @@ commands:
           name: "Install Rust toolchain (stable)"
           timeout: 10m
           command: |
+            # Obtenemos el toolchain actual para forzar la instalación sobre él y evitar errores de override
+            ACTIVE_TOOLCHAIN=$(rustup show active-toolchain | cut -d' ' -f1)
+            echo "Installing components for: $ACTIVE_TOOLCHAIN"
+            rustup component add rustfmt --toolchain "$ACTIVE_TOOLCHAIN" || true
+            rustup component add clippy --toolchain "$ACTIVE_TOOLCHAIN" || true
             rustup show
-            rustup component add rustfmt
-            rustup component add clippy
             cargo --version
             rustc --version
       - run:
