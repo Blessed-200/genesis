@@ -98,6 +98,8 @@ pub trait GeometricProduct: Sized {
     /// This is not the Lorentz norm ⟨A·Ã⟩₀. For grades `k ≥ 2`, this value
     /// differs from `clifford_norm_sq` by the reverse-sign term.
     /// Use `clifford_norm_sq` for Lorentz-invariant norm queries.
+    ///
+    /// AX-ID: AXIOMA-001
     fn metric_scalar_product(&self, rhs: &Self) -> f64;
 
     /// Grade-k projection of the multivector.

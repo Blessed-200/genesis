@@ -4,12 +4,11 @@
 
 #![allow(clippy::cast_precision_loss)]
 
-use criterion::{
-    black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use genesis_math::experimental::kernel_dense_g13::dense_geometric_product_g13;
 use genesis_math::{
-    compute_clifford_norm_sq, fast_metric_distance, sparse_geometric_product, SparseCliffordVector,
+    compute_clifford_norm_sq, fast_metric_distance, sparse_geometric_product,
+    SparseCliffordVector,
 };
 
 const DENSE_BATCH: usize = 1024;

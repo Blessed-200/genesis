@@ -248,7 +248,8 @@ pub(crate) const CAYLEY_SIGN_F64: [[f64; BLADE_COUNT]; BLADE_COUNT] = {
 };
 
 const CAYLEY_SIGN_F64_ALIGNED: AlignedCayleySignF64 = AlignedCayleySignF64(CAYLEY_SIGN_F64);
-pub(crate) const CAYLEY_SIGN_F64_REF: &[[f64; BLADE_COUNT]; BLADE_COUNT] = &CAYLEY_SIGN_F64_ALIGNED.0;
+pub(crate) const CAYLEY_SIGN_F64_REF: &[[f64; BLADE_COUNT]; BLADE_COUNT] =
+    &CAYLEY_SIGN_F64_ALIGNED.0;
 const _: () = assert!(core::mem::align_of::<AlignedCayleySignF64>() == 64);
 
 // ── Hot-path entry point ──────────────────────────────────────────────────────

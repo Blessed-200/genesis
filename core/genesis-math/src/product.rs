@@ -56,6 +56,10 @@
 //! - Feature-detection dispatch branches execute once outside inner loops.
 //! - Popcount-based dispatch at `sparse_geometric_product` entry is intentional.
 //! - `deterministic_strict` forcing scalar kernels preserves proof reproducibility.
+//! - The AArch64 NEON kernel intentionally uses `vld1q_f64` for
+//!   `CAYLEY_SIGN_F64_REF`/`TOTAL_BLADES` traversal; unaligned-safe loads are
+//!   architecturally safe and performance-neutral there, unlike AVX aligned
+//!   intrinsic requirements.
 
 use genesis_types::constants::COGNITIVE_PLANCK_CONSTANT;
 use genesis_types::error::{GenesisError, SignatureViolationCode};
@@ -319,8 +323,8 @@ unsafe fn geometric_product_x86_avx2_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
-        _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_cvtsd_f64, _mm256_extractf128_pd,
-        _mm256_load_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_unpackhi_pd,
+        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_load_pd, _mm256_mul_pd,
+        _mm256_set1_pd, _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
     };
     debug_assert_eq!((a_coeffs.as_ptr() as usize) % 64, 0);
     debug_assert_eq!((b_coeffs.as_ptr() as usize) % 64, 0);
@@ -341,8 +345,8 @@ unsafe fn geometric_product_x86_avx2_dense(
             // array, so both sequential loads stay within bounds.
             let products = unsafe {
                 // SAFETY: `j` advances in multiples of four lanes and remains
-                // in-bounds for the fixed 16-lane dense buffer. Unaligned loads
-                // keep the SIMD kernel valid for any caller alignment.
+                // in-bounds for the fixed 16-lane dense buffer. Aligned loads
+                // are valid because SparseCliffordVector enforces 64-byte alignment.
                 let b_vec = _mm256_load_pd(b_coeffs.as_ptr().add(j));
                 let scaled = _mm256_mul_pd(coef_a_vec, b_vec);
                 let signs = _mm256_load_pd(sign_row.as_ptr().add(j));
@@ -374,8 +378,8 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
-        _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_cvtsd_f64, _mm256_extractf128_pd,
-        _mm256_load_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_unpackhi_pd,
+        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_load_pd, _mm256_mul_pd,
+        _mm256_set1_pd, _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
     };
     debug_assert_eq!((a_coeffs.as_ptr() as usize) % 64, 0);
     debug_assert_eq!((b_coeffs.as_ptr() as usize) % 64, 0);
@@ -395,8 +399,8 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
             // array, so both sequential loads stay within bounds.
             let products = unsafe {
                 // SAFETY: `j` advances in multiples of four lanes and remains
-                // in-bounds for the fixed 16-lane dense buffer. Unaligned loads
-                // keep the SIMD kernel valid for any caller alignment.
+                // in-bounds for the fixed 16-lane dense buffer. Aligned loads
+                // are valid because SparseCliffordVector enforces 64-byte alignment.
                 let b_vec = _mm256_load_pd(b_coeffs.as_ptr().add(j));
                 let scaled = _mm256_mul_pd(coef_a_vec, b_vec);
                 let signs = _mm256_load_pd(sign_row.as_ptr().add(j));
@@ -434,9 +438,9 @@ unsafe fn geometric_product_x86_avx512_dense(
     debug_assert_eq!((a_coeffs.as_ptr() as usize) % 64, 0);
     debug_assert_eq!((b_coeffs.as_ptr() as usize) % 64, 0);
 
-    // SAFETY: the dense coefficient buffer has fixed length 16 and both loads
-    // stay in-bounds. Unaligned loads avoid imposing external alignment
-    // requirements on callers.
+    // SAFETY: the dense coefficient buffers have fixed length 16 and loads stay
+    // in-bounds. Aligned loads are valid because SparseCliffordVector enforces
+    // 64-byte alignment for coefficient storage.
     let a_lo = _mm512_load_pd(a_coeffs.as_ptr());
     let a_hi = _mm512_load_pd(a_coeffs.as_ptr().add(8));
     let mut acc_lo = _mm512_setzero_pd();
@@ -445,9 +449,8 @@ unsafe fn geometric_product_x86_avx512_dense(
     for (j, &coef_b) in b_coeffs.iter().enumerate() {
         let sign_lo =
             _mm512_castsi512_pd(_mm512_load_si512(SIGN_FLIP_MASKS.0[j][0..8].as_ptr().cast()));
-        let sign_hi = _mm512_castsi512_pd(_mm512_load_si512(
-            SIGN_FLIP_MASKS.0[j][8..16].as_ptr().cast(),
-        ));
+        let sign_hi =
+            _mm512_castsi512_pd(_mm512_load_si512(SIGN_FLIP_MASKS.0[j][8..16].as_ptr().cast()));
 
         let signed_lo = _mm512_xor_pd(a_lo, sign_lo);
         let signed_hi = _mm512_xor_pd(a_hi, sign_hi);
