@@ -323,8 +323,8 @@ unsafe fn geometric_product_x86_avx2_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
-        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_load_pd, _mm256_mul_pd,
-        _mm256_set1_pd, _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
+        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_load_pd, _mm256_mul_pd, _mm256_set1_pd,
+        _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
     };
     debug_assert_eq!((a_coeffs.as_ptr() as usize) % 64, 0);
     debug_assert_eq!((b_coeffs.as_ptr() as usize) % 64, 0);
@@ -378,8 +378,8 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
-        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_load_pd, _mm256_mul_pd,
-        _mm256_set1_pd, _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
+        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_load_pd, _mm256_mul_pd, _mm256_set1_pd,
+        _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
     };
     debug_assert_eq!((a_coeffs.as_ptr() as usize) % 64, 0);
     debug_assert_eq!((b_coeffs.as_ptr() as usize) % 64, 0);
@@ -447,10 +447,12 @@ unsafe fn geometric_product_x86_avx512_dense(
     let mut acc_hi = _mm512_setzero_pd();
 
     for (j, &coef_b) in b_coeffs.iter().enumerate() {
-        let sign_lo =
-            _mm512_castsi512_pd(_mm512_load_si512(SIGN_FLIP_MASKS.0[j][0..8].as_ptr().cast()));
-        let sign_hi =
-            _mm512_castsi512_pd(_mm512_load_si512(SIGN_FLIP_MASKS.0[j][8..16].as_ptr().cast()));
+        let sign_lo = _mm512_castsi512_pd(_mm512_load_si512(
+            SIGN_FLIP_MASKS.0[j][0..8].as_ptr().cast(),
+        ));
+        let sign_hi = _mm512_castsi512_pd(_mm512_load_si512(
+            SIGN_FLIP_MASKS.0[j][8..16].as_ptr().cast(),
+        ));
 
         let signed_lo = _mm512_xor_pd(a_lo, sign_lo);
         let signed_hi = _mm512_xor_pd(a_hi, sign_hi);

@@ -7,8 +7,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use genesis_math::experimental::kernel_dense_g13::dense_geometric_product_g13;
 use genesis_math::{
-    compute_clifford_norm_sq, fast_metric_distance, sparse_geometric_product,
-    SparseCliffordVector,
+    compute_clifford_norm_sq, fast_metric_distance, sparse_geometric_product, SparseCliffordVector,
 };
 
 const DENSE_BATCH: usize = 1024;
@@ -98,7 +97,9 @@ fn throughput_geometric_product(c: &mut Criterion) {
         b.iter(|| {
             let mut sink = 0.0f64;
             for i in 0..SPARSE_BATCH {
-                if let Some(p) = sparse_geometric_product(black_box(&sparse[i]), black_box(&sparse[i + 1])) {
+                if let Some(p) =
+                    sparse_geometric_product(black_box(&sparse[i]), black_box(&sparse[i + 1]))
+                {
                     sink += p.max_abs_coeff;
                 }
             }
@@ -119,19 +120,22 @@ fn throughput_geometric_product(c: &mut Criterion) {
         });
     });
 
-    group.bench_function("geo_product_dense_baseline_dense_geometric_product_g13", |b| {
-        b.iter(|| {
-            let mut sink = 0.0f64;
-            for i in 0..DENSE_BATCH {
-                let out = dense_geometric_product_g13(
-                    black_box(&dense[i].coeffs),
-                    black_box(&dense[i + 1].coeffs),
-                );
-                sink += out[0];
-            }
-            black_box(sink)
-        });
-    });
+    group.bench_function(
+        "geo_product_dense_baseline_dense_geometric_product_g13",
+        |b| {
+            b.iter(|| {
+                let mut sink = 0.0f64;
+                for i in 0..DENSE_BATCH {
+                    let out = dense_geometric_product_g13(
+                        black_box(&dense[i].coeffs),
+                        black_box(&dense[i + 1].coeffs),
+                    );
+                    sink += out[0];
+                }
+                black_box(sink)
+            });
+        },
+    );
 
     group.bench_function("geo_product_dense_baseline_naive_matmul16x16", |b| {
         b.iter(|| {
