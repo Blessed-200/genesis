@@ -120,6 +120,7 @@ fn throughput_geometric_product(c: &mut Criterion) {
         });
     });
 
+    group.throughput(Throughput::Elements(DENSE_BATCH as u64));
     group.bench_function(
         "geo_product_dense_baseline_dense_geometric_product_g13",
         |b| {
@@ -137,6 +138,7 @@ fn throughput_geometric_product(c: &mut Criterion) {
         },
     );
 
+    group.throughput(Throughput::Elements(DENSE_BATCH as u64));
     group.bench_function("geo_product_dense_baseline_naive_matmul16x16", |b| {
         b.iter(|| {
             let mut sink = 0.0f64;
