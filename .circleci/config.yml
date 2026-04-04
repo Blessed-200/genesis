@@ -1,12 +1,7 @@
 version: 2.1
 
-# ════════════════════════════════════════════════════════════════════════════════
-# GENESIS CI/CD Pipeline – Production Quality Gate (FIXED: CircleCI 2.1 Compliant)
-# ════════════════════════════════════════════════════════════════════════════════
-
 orbs:
   rust: circleci/rust@1.6.1
-  snyk: snyk/snyk@1.7.0
 
 executors:
   ubuntu-xl:
@@ -30,20 +25,15 @@ executors:
       CARGO_INCREMENTAL: 0
       RUST_BACKTRACE: full
 
-# ════════════════════════════════════════════════════════════════════════════════
-# REUSABLE COMMANDS
-# ════════════════════════════════════════════════════════════════════════════════
-
 commands:
   setup-rust:
     description: "Install Rust toolchain + configure cargo caching"
     parameters:
       components:
         type: string
-        default: "rustfmt, clippy"
+        default: "rustfmt,clippy"  # ✅ SIN ESPACIOS: rustfmt,clippy (no: rustfmt, clippy)
     steps:
       - checkout
-
       - run:
           name: "Install Rust toolchain (stable)"
           timeout: 10m
@@ -52,7 +42,6 @@ commands:
             rustup component add << parameters.components >>
             cargo --version
             rustc --version
-
       - run:
           name: "Configure cargo cache paths"
           timeout: 5m
@@ -73,7 +62,6 @@ commands:
           keys:
             - v3-cargo-registry-<< parameters.cache_key_suffix >>-{{ checksum "Cargo.lock" }}
             - v3-cargo-registry-<< parameters.cache_key_suffix >>-
-
       - restore_cache:
           name: "Restore cargo build artifacts"
           keys:
@@ -92,7 +80,6 @@ commands:
           key: v3-cargo-registry-<< parameters.cache_key_suffix >>-{{ checksum "Cargo.lock" }}
           paths:
             - ~/.cargo/registry/
-
       - save_cache:
           name: "Save cargo build artifacts"
           key: v3-cargo-target-<< parameters.cache_key_suffix >>-{{ checksum "Cargo.lock" }}-{{ .Environment.CIRCLE_JOB }}
@@ -127,7 +114,6 @@ commands:
           command: |
             grep -q "blake3 = \"=1.5.4\"" shared/genesis-types/Cargo.toml \
               || { echo "❌ BLAKE3 hash not pinned in genesis-types!"; exit 1; }
-            
             if grep -r "use sha2" --include="*.rs" .; then
               echo "❌ SHA-256 detected! Only BLAKE3 is permitted."
               exit 1
@@ -143,34 +129,25 @@ commands:
     steps:
       - store_test_results:
           path: << parameters.test_output_dir >>
-
       - store_artifacts:
           path: << parameters.test_output_dir >>
           destination: test-logs
-
       - store_artifacts:
           path: target/criterion/
           destination: benchmarks
-
-# ════════════════════════════════════════════════════════════════════════════════
-# JOBS
-# ════════════════════════════════════════════════════════════════════════════════
 
 jobs:
   lint-format-clippy:
     executor: ubuntu-xl
     steps:
       - setup-rust:
-          components: "rustfmt, clippy"
-
+          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
       - restore-cargo-caches:
           cache_key_suffix: "lint"
-
       - run:
           name: "Format: Check code formatting (rustfmt)"
           timeout: 10m
           command: cargo fmt --all -- --check
-
       - run:
           name: "Documentation: Verify English-only comments"
           timeout: 5m
@@ -178,14 +155,11 @@ jobs:
             if ! grep -r "AX-ID:" --include="*.rs" shared/ core/ | head -5; then
               echo "⚠️  Missing AX-ID citations (advisory)"
             fi
-
       - run-clippy
-
       - run:
           name: "Lint: Check workspace integrity"
           timeout: 10m
           command: cargo check --workspace
-
       - save-cargo-caches:
           cache_key_suffix: "lint"
 
@@ -195,11 +169,10 @@ jobs:
     environment:
       BUILD_PROFILE: "debug"
     steps:
-      - setup-rust
-
+      - setup-rust:
+          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
       - restore-cargo-caches:
           cache_key_suffix: "build"
-
       - run:
           name: "Determine build profile for this matrix node"
           timeout: 5m
@@ -210,7 +183,6 @@ jobs:
             esac
             source $BASH_ENV
             echo "Building with profile: $BUILD_PROFILE"
-
       - run:
           name: "Build workspace ($BUILD_PROFILE)"
           timeout: 20m
@@ -220,7 +192,6 @@ jobs:
             else
               cargo build --workspace --verbose
             fi
-
       - save-cargo-caches:
           cache_key_suffix: "build"
 
@@ -228,18 +199,15 @@ jobs:
     executor: ubuntu-xl
     parallelism: 4
     steps:
-      - setup-rust
-
+      - setup-rust:
+          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
       - restore-cargo-caches:
           cache_key_suffix: "test"
-
       - verify-blake3
-
       - run:
           name: "Ensure test output directory exists"
           timeout: 5m
           command: mkdir -p test-output
-
       - run:
           name: "Unit tests (split by crate, node $CIRCLE_NODE_INDEX of $CIRCLE_NODE_TOTAL)"
           timeout: 25m
@@ -254,7 +222,6 @@ jobs:
               if [ $IDX -lt $CRATE_COUNT ]; then
                 CRATE="${CRATES[$IDX]}"
                 echo "▶ Testing crate: $CRATE (node $CIRCLE_NODE_INDEX)"
-                
                 cargo test \
                   -p "$CRATE" \
                   --verbose \
@@ -263,26 +230,22 @@ jobs:
                   2>&1 | tee -a test-output/test-${CRATE}.log
               fi
             done
-
       - store-test-artifacts:
           test_output_dir: "test-output"
-
       - save-cargo-caches:
           cache_key_suffix: "test"
 
   test-coverage-gates:
     executor: ubuntu-xl
     steps:
-      - setup-rust
-
+      - setup-rust:
+          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
       - restore-cargo-caches:
           cache_key_suffix: "coverage"
-
       - run:
           name: "Coverage: Install tarpaulin"
           timeout: 10m
           command: cargo install cargo-tarpaulin@0.28 --locked
-
       - run:
           name: "Coverage: Generate report (debug profile)"
           timeout: 30m
@@ -296,7 +259,6 @@ jobs:
               --timeout 600 \
               --verbose \
               2>&1 | tee coverage-reports/tarpaulin.log
-
       - run:
           name: "Coverage: Enforce 90%+ threshold on critical crates"
           timeout: 5m
@@ -306,22 +268,19 @@ jobs:
               echo "Crate: $CRATE"
               echo "✓ Coverage check passed (or advisory)"
             done
-
       - store_artifacts:
           path: coverage-reports/
           destination: coverage
-
       - save-cargo-caches:
           cache_key_suffix: "coverage"
 
   test-invariants:
     executor: ubuntu-2xl
     steps:
-      - setup-rust
-
+      - setup-rust:
+          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
       - restore-cargo-caches:
           cache_key_suffix: "invariants"
-
       - run:
           name: "Invariants: Run all tests including #[ignore]"
           timeout: 30m
@@ -332,7 +291,6 @@ jobs:
               --release \
               -- --include-ignored --nocapture \
               2>&1 | tee test-output/invariants.log
-
       - run:
           name: "Invariants: Stochastic Lanczos (topology)"
           timeout: 15m
@@ -343,7 +301,6 @@ jobs:
               hnsw_level_distribution_m16 \
               -- --nocapture \
               2>&1 | tee -a test-output/invariants.log
-
       - run:
           name: "Invariants: Minkowski signature verification"
           timeout: 15m
@@ -354,20 +311,17 @@ jobs:
               canonical_signature_table_matches_precomputed \
               -- --nocapture \
               2>&1 | tee -a test-output/invariants.log
-
       - store-test-artifacts:
           test_output_dir: "test-output"
-
       - save-cargo-caches:
           cache_key_suffix: "invariants"
 
   security-scan:
     executor: ubuntu-xl
     steps:
-      - setup-rust
-
+      - setup-rust:
+          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
       - verify-blake3
-
       - run:
           name: "Security: Cargo audit (known vulnerabilities)"
           timeout: 15m
@@ -376,7 +330,6 @@ jobs:
             cargo audit \
               --deny warnings \
               || echo "⚠️  Audit findings (advisory)"
-
       - run:
           name: "Security: Check for secrets in source"
           timeout: 10m
@@ -387,7 +340,6 @@ jobs:
               exit 1
             fi
             echo "✓ No hardcoded secrets detected"
-
       - run:
           name: "Security: Dependency license scan"
           timeout: 15m
@@ -397,7 +349,6 @@ jobs:
             cargo license --json > security-scan/licenses.json || true
             cargo license | grep -i "GPL" \
               && echo "⚠️  GPL dependencies present (review)" || echo "✓ No GPL dependencies"
-
       - store_artifacts:
           path: security-scan/
           destination: security
@@ -406,11 +357,9 @@ jobs:
     executor: ubuntu-2xl
     steps:
       - setup-rust:
-          components: "rustfmt, clippy"
-
+          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
       - restore-cargo-caches:
           cache_key_suffix: "bench"
-
       - run:
           name: "Benchmarks: Criterion (throughput + latency)"
           timeout: 30m
@@ -418,19 +367,16 @@ jobs:
             CRITERION_VERBOSE: "1"
           command: |
             mkdir -p benchmark-output
-            
             cargo bench \
               -p genesis-dynamics \
               --bench dynamics \
               -- --verbose \
               2>&1 | tee benchmark-output/criterion-dynamics.log
-            
             cargo bench \
               -p genesis-dynamics \
               --bench vfe_hotpaths \
               -- --verbose \
               2>&1 | tee benchmark-output/criterion-vfe.log
-
       - run:
           name: "Benchmarks: IAI Callgrind (instruction count)"
           timeout: 20m
@@ -439,26 +385,22 @@ jobs:
               -p genesis-dynamics \
               --bench iai_hotpaths \
               2>&1 | tee -a benchmark-output/iai-results.log
-
       - store_artifacts:
           path: target/criterion/
           destination: benchmarks/criterion
-
       - store_artifacts:
           path: benchmark-output/
           destination: benchmarks/logs
-
       - save-cargo-caches:
           cache_key_suffix: "bench"
 
   build-docker:
     executor: ubuntu-xl
     steps:
-      - setup-rust
-
+      - setup-rust:
+          components: "rustfmt,clippy"  # ✅ SIN ESPACIOS
       - restore-cargo-caches:
           cache_key_suffix: "docker"
-
       - run:
           name: "Docker: Check if Dockerfile exists"
           timeout: 10m
@@ -474,7 +416,6 @@ jobs:
     executor: ubuntu-xl
     steps:
       - checkout
-
       - run:
           name: "Deploy: Staging environment (manual approval required)"
           timeout: 15m
@@ -483,39 +424,28 @@ jobs:
             echo "Build SHA: $CIRCLE_SHA1"
             echo "Branch: $CIRCLE_BRANCH"
 
-# ════════════════════════════════════════════════════════════════════════════════
-# WORKFLOWS
-# ════════════════════════════════════════════════════════════════════════════════
-
 workflows:
   genesis-prod-gate:
     jobs:
       - lint-format-clippy
-
       - build-matrix:
           requires:
             - lint-format-clippy
-
       - test-unit-parallel:
           requires:
             - build-matrix
-
       - test-coverage-gates:
           requires:
             - test-unit-parallel
-
       - test-invariants:
           requires:
             - build-matrix
-
       - security-scan:
           requires:
             - lint-format-clippy
-
       - bench-hotpaths:
           requires:
             - test-unit-parallel
-
       - build-docker:
           requires:
             - lint-format-clippy
