@@ -827,8 +827,8 @@ mod tests {
     fn sparse_clifford_vector_stack_and_heap_alignment() {
         let stack_value = SparseCliffordVector::zero();
         let heap_value = Box::new(SparseCliffordVector::zero());
-        let stack_ptr = (&stack_value as *const SparseCliffordVector).cast::<u8>() as usize;
-        let heap_ptr = (heap_value.as_ref() as *const SparseCliffordVector).cast::<u8>() as usize;
+        let stack_ptr = (&raw const stack_value).cast::<u8>() as usize;
+        let heap_ptr = std::ptr::from_ref(heap_value.as_ref()).cast::<u8>() as usize;
         assert_eq!(stack_ptr % 64, 0);
         assert_eq!(heap_ptr % 64, 0);
     }

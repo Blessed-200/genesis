@@ -17,7 +17,7 @@ const NORM_BATCH: usize = 4096;
 const PROJECTION_BATCH: usize = 2048;
 const DISTANCE_BATCH: usize = 2048;
 
-fn lcg_next(state: &mut u64) -> u64 {
+const fn lcg_next(state: &mut u64) -> u64 {
     *state = state
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407);
@@ -43,12 +43,12 @@ fn sparse_vectors(count: usize) -> Vec<SparseCliffordVector> {
     let mut state = 0x7F12_0DE3_AA19_C0DEu64;
     let mut out = Vec::with_capacity(count);
     for _ in 0..count {
-        let active = ((lcg_next(&mut state) as usize) % 5) + 4;
+        let active = ((lcg_next(&mut state) % 5) as u8 + 4) as usize;
         let mut dense = [0.0f64; 16];
         let mut used = 0u16;
         let mut filled = 0usize;
         while filled < active {
-            let idx = (lcg_next(&mut state) as usize) & 0xF;
+            let idx = (lcg_next(&mut state) & 0xF) as u8 as usize;
             let bit = 1u16 << idx;
             if (used & bit) == 0 {
                 used |= bit;
@@ -146,8 +146,7 @@ fn throughput_geometric_product(c: &mut Criterion) {
                 let a = &dense[i].coeffs;
                 let m = &dense[i + 1].coeffs;
                 let mut out = [0.0f64; 16];
-                for r in 0..16 {
-                    let ar = a[r];
+                for &ar in a.iter().take(16) {
                     for c in 0..16 {
                         out[c] += ar * m[c];
                     }
