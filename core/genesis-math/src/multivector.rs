@@ -103,8 +103,20 @@ pub(crate) fn has_non_finite_coeff(buf: &[f64; TOTAL_BLADES]) -> bool {
     buf.iter().any(|value| !value.is_finite())
 }
 
-#[inline]
+#[inline(always)]
 pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetadata {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: guarded by runtime AVX2 detection; `buf` is a valid 16-lane slice.
+            return unsafe { derive_all_metadata_avx2(buf) };
+        }
+    }
+    derive_all_metadata_scalar(buf)
+}
+
+#[inline(always)]
+fn derive_all_metadata_scalar(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetadata {
     let mut active_mask = 0u32;
     let mut max_abs_coeff = 0.0f64;
     let mut clifford_norm_sq = 0.0f64;
@@ -134,6 +146,76 @@ pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetad
     DerivedMetadata::new(active_mask, max_abs_coeff, clifford_norm_sq)
 }
 
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn derive_all_metadata_avx2(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetadata {
+    use core::mem::MaybeUninit;
+    use std::arch::x86_64::{
+        _mm256_andnot_pd, _mm256_loadu_pd, _mm256_max_pd, _mm256_set1_pd, _mm256_storeu_pd,
+    };
+
+    let mut active_mask = 0u32;
+    let mut clifford_norm_sq = 0.0_f64;
+    let mut comp_norm = 0.0_f64;
+    let mut max_abs_vec = _mm256_set1_pd(0.0);
+    let sign_mask = _mm256_set1_pd(-0.0);
+
+    let mut k = 0usize;
+    while k < TOTAL_BLADES {
+        // SAFETY: `k` advances in 4-lane chunks and TOTAL_BLADES == 16.
+        let coeff_vec = unsafe { _mm256_loadu_pd(buf.as_ptr().add(k)) };
+        let abs_vec = unsafe { _mm256_andnot_pd(sign_mask, coeff_vec) };
+        max_abs_vec = unsafe { _mm256_max_pd(max_abs_vec, abs_vec) };
+
+        let mut coeff_chunk = MaybeUninit::<[f64; 4]>::uninit();
+        let mut abs_chunk = MaybeUninit::<[f64; 4]>::uninit();
+        // SAFETY: local stack arrays have 4 lanes.
+        unsafe {
+            _mm256_storeu_pd(coeff_chunk.as_mut_ptr().cast(), coeff_vec);
+            _mm256_storeu_pd(abs_chunk.as_mut_ptr().cast(), abs_vec);
+        }
+        // SAFETY: both arrays were fully initialized via `_mm256_storeu_pd`.
+        let coeff_chunk = unsafe { coeff_chunk.assume_init() };
+        // SAFETY: both arrays were fully initialized via `_mm256_storeu_pd`.
+        let abs_chunk = unsafe { abs_chunk.assume_init() };
+
+        let mut lane = 0usize;
+        while lane < 4 {
+            let idx = k + lane;
+            let mut coeff = coeff_chunk[lane];
+            if coeff == 0.0 {
+                coeff = 0.0;
+                buf[idx] = 0.0;
+            }
+            let abs = abs_chunk[lane];
+            if abs > COGNITIVE_PLANCK_CONSTANT {
+                active_mask |= 1_u32 << idx;
+                let y_norm = (coeff * coeff).mul_add(CLIFFORD_NORM_WEIGHTS_F64[idx], -comp_norm);
+                let t_norm = clifford_norm_sq + y_norm;
+                comp_norm = (t_norm - clifford_norm_sq) - y_norm;
+                clifford_norm_sq = t_norm;
+            } else {
+                buf[idx] = 0.0;
+            }
+            lane += 1;
+        }
+        k += 4;
+    }
+
+    let mut max_lanes = [0.0_f64; 4];
+    // SAFETY: output is a 4-lane stack buffer.
+    unsafe { _mm256_storeu_pd(max_lanes.as_mut_ptr(), max_abs_vec) };
+    let mut max_abs_coeff = 0.0_f64;
+    for value in max_lanes {
+        max_abs_coeff = max_abs_coeff.max(value);
+    }
+    if active_mask == 0 {
+        max_abs_coeff = 0.0;
+    }
+
+    DerivedMetadata::new(active_mask, max_abs_coeff, clifford_norm_sq)
+}
+
 #[inline]
 fn normalize_non_finite_payload(value: f64) -> Option<u8> {
     if value.is_nan() {
@@ -145,6 +227,81 @@ fn normalize_non_finite_payload(value: f64) -> Option<u8> {
     } else {
         None
     }
+}
+
+#[inline]
+fn from_iter_exact_size<I>(mut iter: I) -> Result<SparseCliffordVector, GenesisError>
+where
+    I: Iterator<Item = (usize, f64)>,
+{
+    use core::mem::MaybeUninit;
+
+    let mut dense = MaybeUninit::<[f64; TOTAL_BLADES]>::zeroed();
+    // SAFETY: zeroed `[f64; 16]` is valid and fully initialized.
+    let buf = unsafe { &mut *dense.as_mut_ptr() };
+    let mut active_mask = 0_u16;
+    let mut max_abs = 0.0_f64;
+    let mut clifford_norm_sq = 0.0_f64;
+    let mut needs_max_rescan = false;
+
+    for (idx, coef) in iter.by_ref() {
+        if idx >= TOTAL_BLADES {
+            return Err(GenesisError::BladeIndexOutOfRange { index: idx });
+        }
+        if !coef.is_finite() {
+            return Err(GenesisError::SignatureViolation {
+                code: SignatureViolationCode::FromSparseInput,
+                blade_index: idx as u16,
+                normalized_value: normalize_non_finite_payload(coef),
+            });
+        }
+        let old = buf[idx];
+        let old_abs = old.abs();
+        let old_was_max = old_abs >= max_abs;
+        let old_active = old_abs > COGNITIVE_PLANCK_CONSTANT;
+        if old_active {
+            clifford_norm_sq -= old * old * CLIFFORD_NORM_WEIGHTS_F64[idx];
+        }
+
+        let next = old + coef;
+        buf[idx] = next;
+        let next_abs = next.abs();
+        let next_active = next_abs > COGNITIVE_PLANCK_CONSTANT;
+        if next_active {
+            active_mask |= 1_u16 << idx;
+            clifford_norm_sq += next * next * CLIFFORD_NORM_WEIGHTS_F64[idx];
+            max_abs = max_abs.max(next_abs);
+            if old_was_max && next_abs < old_abs {
+                needs_max_rescan = true;
+            }
+        } else {
+            active_mask &= !(1_u16 << idx);
+            buf[idx] = 0.0;
+            if old_was_max {
+                needs_max_rescan = true;
+            }
+        }
+    }
+
+    if active_mask == 0 {
+        return Ok(SparseCliffordVector::zero());
+    }
+    if needs_max_rescan {
+        max_abs = 0.0;
+        let mut mask = active_mask;
+        while mask != 0 {
+            let i = mask.trailing_zeros() as usize;
+            max_abs = max_abs.max(buf[i].abs());
+            mask &= mask - 1;
+        }
+    }
+
+    Ok(SparseCliffordVector::from_dense_with_metadata(
+        *buf,
+        active_mask,
+        max_abs,
+        clifford_norm_sq,
+    ))
 }
 
 impl SparseCliffordVector {
@@ -170,6 +327,14 @@ impl SparseCliffordVector {
     where
         I: IntoIterator<Item = (usize, f64)>,
     {
+        let iter = iter.into_iter();
+        let (lower, upper) = iter.size_hint();
+        if let Some(exact) = upper {
+            if exact == lower && exact <= TOTAL_BLADES {
+                return from_iter_exact_size(iter);
+            }
+        }
+
         let mut buf = [0.0f64; TOTAL_BLADES];
         for (idx, coef) in iter {
             if idx >= TOTAL_BLADES {

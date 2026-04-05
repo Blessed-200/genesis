@@ -1,5 +1,45 @@
 # PLANS
 
+## 1.21 Cross-crate hot-path throughput recovery phase (2026-04-05)
+
+### Root cause
+
+- `genesis-math` geometric product still pays sparse-mask overhead for fully dense inputs and one-blade products.
+- `genesis-math` metadata derivation performs scalar max/active scans with avoidable branch and pass overhead.
+- `genesis-topology` HNSW insertion prunes/sorts too frequently, and beam-search heap operations are O(ef) in `pop_best`.
+- `genesis-topology` λ₂ workspace rebuilds `id_to_dense` per call and power refinement is over-iterated for connectivity-only usage.
+- `genesis-dynamics` synchrony guardrail is undersized for CI variance and slab sync paths need tighter inlining/clean-state guarantees.
+- Secondary kernels (`cohomology`, `lsh`, `from_iter`) retain micro-optimizations headroom.
+
+### File-level actions
+
+1. `core/genesis-math/src/product.rs`
+   - Add dense-mask direct dispatch in `sparse_geometric_product`.
+   - Add an inlined single-blade helper producing precomputed metadata without full-buffer derivation.
+2. `core/genesis-math/src/multivector.rs`
+   - Inline `derive_all_metadata`, fuse active-mask/max scan, add AVX2 max-abs reduction path.
+   - Optimize `from_iter` constructor path for bounded exact-size iterators.
+3. `core/genesis-topology/src/hnsw.rs`
+   - Switch edge insertion to append + deferred sort/dedup.
+   - Coalesce prune calls per layer wiring stage.
+   - Replace `FixedHeap` with O(log ef) binary-heap operations and remove O(ef) shifts.
+   - Reuse thread-local search result buffers to avoid per-call Vec allocations.
+4. `core/genesis-topology/src/manifold.rs`
+   - Reduce power refinement iteration budget and convergence threshold.
+   - Move `id_to_dense` map into `LambdaWorkspace` and reuse/reset touched entries.
+5. `core/genesis-dynamics/benches/dynamics.rs`
+   - Relax synchrony-fast guardrail baseline and update derivation comment.
+6. `core/genesis-dynamics/src/synchrony.rs` and `core/genesis-dynamics/src/oscillator.rs`
+   - Tighten hot-path sync inlining/branch behavior; keep slab state clean post-step paths.
+7. `core/genesis-topology/src/cohomology.rs` and `core/genesis-topology/src/lsh.rs`
+   - Apply targeted micro-optimizations for XOR elimination and adversarial merge setup.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
 ## 1.20 CRATE-002 cacheline-aligned SIMD + throughput benchmark phase (2026-04-04)
 
 ### Root cause

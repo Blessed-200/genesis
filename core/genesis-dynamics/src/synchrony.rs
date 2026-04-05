@@ -198,6 +198,15 @@ fn reduce_blocks(
             if !block.states[lane].contributes_to_sync() {
                 continue;
             }
+            #[cfg(target_arch = "x86_64")]
+            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+            {
+                // SAFETY: guarded by runtime AVX2/FMA detection.
+                unsafe {
+                    reduce_lane_avx2(block, lane, &mut acc);
+                }
+                continue;
+            }
             for (grade, grade_acc) in acc.iter_mut().enumerate() {
                 let amplitude = block.amplitudes[grade][lane];
                 let phase = block.phases[grade][lane];
@@ -217,6 +226,86 @@ fn reduce_blocks(
         }
     }
     acc
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn reduce_lane_avx2(
+    block: &crate::oscillator::OscillatorBlock,
+    lane: usize,
+    acc: &mut [(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5],
+) {
+    use std::arch::x86_64::{
+        _mm256_loadu_pd, _mm256_mul_pd, _mm256_storeu_pd,
+    };
+
+    let phases = [
+        block.phases[0][lane],
+        block.phases[1][lane],
+        block.phases[2][lane],
+        block.phases[3][lane],
+    ];
+    let amplitudes = [
+        block.amplitudes[0][lane],
+        block.amplitudes[1][lane],
+        block.amplitudes[2][lane],
+        block.amplitudes[3][lane],
+    ];
+    let mut sin_vals = [0.0_f64; 4];
+    let mut cos_vals = [0.0_f64; 4];
+    let mut i = 0usize;
+    while i < 4 {
+        #[cfg(feature = "poly_trig")]
+        {
+            sin_vals[i] = poly_sin(phases[i]);
+            cos_vals[i] = poly_cos(phases[i]);
+        }
+        #[cfg(not(feature = "poly_trig"))]
+        {
+            let (s, c) = phases[i].sin_cos();
+            sin_vals[i] = s;
+            cos_vals[i] = c;
+        }
+        i += 1;
+    }
+
+    // SAFETY: local arrays are contiguous 4-lane buffers.
+    let amp_vec = unsafe { _mm256_loadu_pd(amplitudes.as_ptr()) };
+    // SAFETY: local arrays are contiguous 4-lane buffers.
+    let sin_vec = unsafe { _mm256_loadu_pd(sin_vals.as_ptr()) };
+    // SAFETY: local arrays are contiguous 4-lane buffers.
+    let cos_vec = unsafe { _mm256_loadu_pd(cos_vals.as_ptr()) };
+    let mut weighted_cos = [0.0_f64; 4];
+    let mut weighted_sin = [0.0_f64; 4];
+    // SAFETY: output arrays provide 4 contiguous lanes.
+    unsafe {
+        _mm256_storeu_pd(weighted_cos.as_mut_ptr(), _mm256_mul_pd(amp_vec, cos_vec));
+        _mm256_storeu_pd(weighted_sin.as_mut_ptr(), _mm256_mul_pd(amp_vec, sin_vec));
+    }
+
+    let mut grade = 0usize;
+    while grade < 4 {
+        acc[grade].0.add(weighted_cos[grade]);
+        acc[grade].1.add(weighted_sin[grade]);
+        acc[grade].2.add(amplitudes[grade]);
+        grade += 1;
+    }
+
+    // Grade-4 lane remains scalar.
+    let amplitude = block.amplitudes[4][lane];
+    let phase = block.phases[4][lane];
+    #[cfg(feature = "poly_trig")]
+    {
+        acc[4].0.add(amplitude * poly_cos(phase));
+        acc[4].1.add(amplitude * poly_sin(phase));
+    }
+    #[cfg(not(feature = "poly_trig"))]
+    {
+        let (s, c) = phase.sin_cos();
+        acc[4].0.add(amplitude * c);
+        acc[4].1.add(amplitude * s);
+    }
+    acc[4].2.add(amplitude);
 }
 
 fn reduce_blocks_serial(

@@ -127,6 +127,32 @@ impl Z2Matrix {
                     if (self.data[row_pivot_idx] & pivot_bit) != 0 {
                         let base = row * wpr + pivot_word;
                         let len = wpr - pivot_word;
+                        #[cfg(target_arch = "x86_64")]
+                        if std::arch::is_x86_feature_detected!("avx2") {
+                            let mut i = 0usize;
+                            while i + 4 <= len {
+                                // SAFETY: each chunk processes 4 contiguous `u64` words.
+                                // Bounds:
+                                // - `base + i + 3 < base + len <= row*wpr + wpr`
+                                // - `pivot_word + i + 3 < pivot_word + len <= wpr`.
+                                unsafe {
+                                    xor_row_chunk_avx2(
+                                        self.data.as_mut_ptr().add(base + i),
+                                        pivot_row_buf.as_ptr().add(pivot_word + i),
+                                    );
+                                }
+                                i += 4;
+                            }
+                            while i < len {
+                                // SAFETY: `i < len` implies `base + i` and `pivot_word + i` are in bounds.
+                                unsafe {
+                                    *self.data.get_unchecked_mut(base + i) ^=
+                                        *pivot_row_buf.get_unchecked(pivot_word + i);
+                                }
+                                i += 1;
+                            }
+                            continue;
+                        }
                         let mut i = 0;
                         while i + 4 <= len {
                             // SAFETY: `base + i + k < base + len <= row * wpr + wpr`, so all
@@ -162,6 +188,20 @@ impl Z2Matrix {
         debug_assert_matrix_invariants(self);
         rank
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn xor_row_chunk_avx2(dst_ptr: *mut u64, pivot_ptr: *const u64) {
+    use std::arch::x86_64::{_mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256};
+
+    // SAFETY: caller guarantees both pointers are valid for 4 contiguous `u64` lanes.
+    let dst = unsafe { _mm256_loadu_si256(dst_ptr.cast()) };
+    // SAFETY: caller guarantees both pointers are valid for 4 contiguous `u64` lanes.
+    let pivot = unsafe { _mm256_loadu_si256(pivot_ptr.cast()) };
+    let out = unsafe { _mm256_xor_si256(dst, pivot) };
+    // SAFETY: caller guarantees destination pointer is valid for 4 lanes.
+    unsafe { _mm256_storeu_si256(dst_ptr.cast(), out) };
 }
 
 fn debug_assert_matrix_invariants(matrix: &Z2Matrix) {
@@ -531,6 +571,22 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
     }
 
     for _ in 0..iterations {
+        #[cfg(target_arch = "x86_64")]
+        if std::arch::is_x86_feature_detected!("avx2") {
+            let mut i = 0usize;
+            while i + 4 <= words_per_row {
+                // SAFETY: `i..i+4` is in bounds for both vectors.
+                unsafe {
+                    xor_row_chunk_avx2(dst.as_mut_ptr().add(i), pivot.as_ptr().add(i));
+                }
+                i += 4;
+            }
+            while i < words_per_row {
+                dst[i] ^= pivot[i];
+                i += 1;
+            }
+            continue;
+        }
         for (dst_word, pivot_word) in dst.iter_mut().zip(pivot.iter()) {
             *dst_word ^= *pivot_word;
         }

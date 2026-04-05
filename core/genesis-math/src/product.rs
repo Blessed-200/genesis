@@ -249,14 +249,38 @@ fn geometric_product_scalar_dense(
     }
 }
 
-#[inline]
-fn geometric_product_dispatch_dense(
+#[inline(always)]
+fn single_blade_product_fast(
     a: &SparseCliffordVector,
     b: &SparseCliffordVector,
+) -> Option<SparseCliffordVector> {
+    let i = a.active_mask.trailing_zeros() as usize;
+    let j = b.active_mask.trailing_zeros() as usize;
+    let k = i ^ j;
+    let coeff = a.coeffs[i] * b.coeffs[j] * f64::from(CAYLEY_SIGN[i][j]);
+    let abs = coeff.abs();
+    if abs <= COGNITIVE_PLANCK_CONSTANT || !coeff.is_finite() {
+        return None;
+    }
+    let mut result_buf = [0.0_f64; TOTAL_BLADES];
+    result_buf[k] = coeff;
+    let mask = 1_u16 << k;
+    let norm_sq = coeff * coeff * crate::grade::CLIFFORD_NORM_WEIGHTS_F64[k];
+    Some(SparseCliffordVector::from_dense_with_metadata(
+        result_buf,
+        mask,
+        abs,
+        norm_sq,
+    ))
+}
+
+fn geometric_product_dispatch_dense(
+    a_coeffs: &[f64; TOTAL_BLADES],
+    b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     if cfg!(feature = "deterministic_strict") {
-        geometric_product_scalar_dense(&a.coeffs, &b.coeffs, result_buf);
+        geometric_product_scalar_dense(a_coeffs, b_coeffs, result_buf);
         return;
     }
     #[cfg(target_arch = "x86_64")]
@@ -265,14 +289,14 @@ fn geometric_product_dispatch_dense(
         if std::arch::is_x86_feature_detected!("avx512f") {
             // SAFETY: guarded by runtime feature detection.
             unsafe {
-                geometric_product_x86_avx512_dense(a, b, result_buf);
+                geometric_product_x86_avx512_dense(a_coeffs, b_coeffs, result_buf);
             }
             return;
         }
         if std::arch::is_x86_feature_detected!("avx2") {
             // SAFETY: guarded by runtime feature detection.
             unsafe {
-                geometric_product_x86_avx2_dense(a, b, result_buf);
+                geometric_product_x86_avx2_dense(a_coeffs, b_coeffs, result_buf);
             }
             return;
         }
@@ -283,13 +307,13 @@ fn geometric_product_dispatch_dense(
         if std::arch::is_aarch64_feature_detected!("neon") {
             // SAFETY: guarded by runtime feature detection.
             unsafe {
-                geometric_product_aarch64_neon_dense(a, b, result_buf);
+                geometric_product_aarch64_neon_dense(a_coeffs, b_coeffs, result_buf);
             }
             return;
         }
     }
 
-    geometric_product_scalar_dense(&a.coeffs, &b.coeffs, result_buf);
+    geometric_product_scalar_dense(a_coeffs, b_coeffs, result_buf);
 }
 
 #[inline]
@@ -301,7 +325,7 @@ fn geometric_product_dispatch_by_mask(
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     if a_mask == DENSE_MASK && b_mask == DENSE_MASK {
-        geometric_product_dispatch_dense(a, b, result_buf);
+        geometric_product_dispatch_dense(&a.coeffs, &b.coeffs, result_buf);
         return;
     }
     geometric_product_scalar_sparse(&a.coeffs, a_mask, &b.coeffs, b_mask, result_buf);
@@ -310,16 +334,16 @@ fn geometric_product_dispatch_by_mask(
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn geometric_product_x86_avx2_dense(
-    a: &SparseCliffordVector,
-    b: &SparseCliffordVector,
+    a_coeffs: &[f64; TOTAL_BLADES],
+    b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
         _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_load_pd, _mm256_mul_pd, _mm256_set1_pd,
         _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
     };
-    debug_assert_eq!((a.coeffs.as_ptr() as usize) % 64, 0);
-    debug_assert_eq!((b.coeffs.as_ptr() as usize) % 64, 0);
+    debug_assert_eq!((a_coeffs.as_ptr() as usize) % 64, 0);
+    debug_assert_eq!((b_coeffs.as_ptr() as usize) % 64, 0);
 
     // HOT PATH: O(16²), dense G(1,3) product on AVX2.
     // Sequential SIMD loads come from `sign_row[j..]` and `b_coeffs[j..]`; the
@@ -327,7 +351,7 @@ unsafe fn geometric_product_x86_avx2_dense(
     // Clifford product. Keep lane values resident in registers to avoid
     // store-to-load forwarding stalls from a stack scratch buffer.
     for i in 0..TOTAL_BLADES {
-        let coef_a = a.coeffs[i];
+        let coef_a = a_coeffs[i];
         let coef_a_vec = _mm256_set1_pd(coef_a);
         let sign_row = &CAYLEY_SIGN_F64_REF[i];
 
@@ -339,7 +363,7 @@ unsafe fn geometric_product_x86_avx2_dense(
                 // SAFETY: `j` advances in multiples of four lanes and remains
                 // in-bounds for the fixed 16-lane dense buffer. Aligned loads
                 // are valid because SparseCliffordVector enforces 64-byte alignment.
-                let b_vec = _mm256_load_pd(b.coeffs.as_ptr().add(j));
+                let b_vec = _mm256_load_pd(b_coeffs.as_ptr().add(j));
                 let scaled = _mm256_mul_pd(coef_a_vec, b_vec);
                 let signs = _mm256_load_pd(sign_row.as_ptr().add(j));
                 _mm256_mul_pd(scaled, signs)
@@ -365,26 +389,26 @@ unsafe fn geometric_product_x86_avx2_dense(
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn geometric_product_x86_avx512_dense(
-    a: &SparseCliffordVector,
-    b: &SparseCliffordVector,
+    a_coeffs: &[f64; TOTAL_BLADES],
+    b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
         _mm512_add_pd, _mm512_castsi512_pd, _mm512_load_pd, _mm512_load_si512, _mm512_mul_pd,
         _mm512_permutex2var_pd, _mm512_set1_pd, _mm512_setzero_pd, _mm512_store_pd, _mm512_xor_pd,
     };
-    debug_assert_eq!((a.coeffs.as_ptr() as usize) % 64, 0);
-    debug_assert_eq!((b.coeffs.as_ptr() as usize) % 64, 0);
+    debug_assert_eq!((a_coeffs.as_ptr() as usize) % 64, 0);
+    debug_assert_eq!((b_coeffs.as_ptr() as usize) % 64, 0);
 
     // SAFETY: the dense coefficient buffers have fixed length 16 and loads stay
     // in-bounds. Aligned loads are valid because SparseCliffordVector enforces
     // 64-byte alignment for coefficient storage.
-    let a_lo = _mm512_load_pd(a.coeffs.as_ptr());
-    let a_hi = _mm512_load_pd(a.coeffs.as_ptr().add(8));
+    let a_lo = _mm512_load_pd(a_coeffs.as_ptr());
+    let a_hi = _mm512_load_pd(a_coeffs.as_ptr().add(8));
     let mut acc_lo = _mm512_setzero_pd();
     let mut acc_hi = _mm512_setzero_pd();
 
-    for (j, &coef_b) in b.coeffs.iter().enumerate() {
+    for (j, &coef_b) in b_coeffs.iter().enumerate() {
         let sign_lo = _mm512_castsi512_pd(_mm512_load_si512(
             SIGN_FLIP_MASKS.0[j][0..8].as_ptr().cast(),
         ));
@@ -420,8 +444,8 @@ unsafe fn geometric_product_x86_avx512_dense(
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn geometric_product_aarch64_neon_dense(
-    a: &SparseCliffordVector,
-    b: &SparseCliffordVector,
+    a_coeffs: &[f64; TOTAL_BLADES],
+    b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::aarch64::{vdupq_n_f64, vgetq_lane_f64, vld1q_f64, vmulq_f64};
@@ -431,7 +455,7 @@ unsafe fn geometric_product_aarch64_neon_dense(
     // from `sign_row[j..]` and `b_coeffs[j..]`; the scatter store remains scalar.
     // Keep lane values in the NEON register file to avoid a stack round-trip.
     for i in 0..TOTAL_BLADES {
-        let coef_a = a.coeffs[i];
+        let coef_a = a_coeffs[i];
         let coef_a_vec = vdupq_n_f64(coef_a);
         let sign_row = &CAYLEY_SIGN_F64_REF[i];
 
@@ -441,7 +465,7 @@ unsafe fn geometric_product_aarch64_neon_dense(
             // array, so both sequential loads stay within bounds.
             let products = unsafe {
                 let signs_vec = vld1q_f64(sign_row.as_ptr().add(j));
-                let b_vec = vld1q_f64(b.coeffs.as_ptr().add(j));
+                let b_vec = vld1q_f64(b_coeffs.as_ptr().add(j));
                 let scaled = vmulq_f64(coef_a_vec, b_vec);
                 vmulq_f64(scaled, signs_vec)
             };
@@ -509,18 +533,34 @@ pub fn sparse_geometric_product(
 
     // ── Stack buffer ──────────────────────────────────────────────────────────
     // [f64; TOTAL_BLADES] = 128 bytes in G(1,3). Zero heap allocation.
-    let mut result_buf = [0.0f64; TOTAL_BLADES];
+    // Dense-dense fast path bypasses all sparse/popcount routing.
+    if a.active_mask == DENSE_MASK && b.active_mask == DENSE_MASK {
+        let mut result_buf = [0.0f64; TOTAL_BLADES];
+        geometric_product_dispatch_dense(&a.coeffs, &b.coeffs, &mut result_buf);
+        crate::multivector::canonicalize_signed_zero(&mut result_buf);
+        let metadata = derive_all_metadata(&mut result_buf);
+        if metadata.active_mask == 0 {
+            return None;
+        }
+        return Some(SparseCliffordVector::from_dense_with_metadata(
+            result_buf,
+            metadata.active_mask as u16,
+            metadata.max_abs_coeff,
+            metadata.clifford_norm_sq,
+        ));
+    }
 
     // ── Fast paths by active-mask pattern ─────────────────────────────────────
     let pop_a = a.active_mask.count_ones();
     let pop_b = b.active_mask.count_ones();
 
     if pop_a == 1 && pop_b == 1 {
-        let i = a.active_mask.trailing_zeros() as usize;
-        let j = b.active_mask.trailing_zeros() as usize;
-        let k = i ^ j;
-        result_buf[k] = a.coeffs[i] * b.coeffs[j] * f64::from(CAYLEY_SIGN[i][j]);
-    } else if pop_a == 1 || pop_b == 1 {
+        return single_blade_product_fast(a, b);
+    }
+
+    let mut result_buf = [0.0f64; TOTAL_BLADES];
+
+    if pop_a == 1 || pop_b == 1 {
         geometric_product_scalar_sparse(
             &a.coeffs,
             a.active_mask,
@@ -591,10 +631,7 @@ pub fn sparse_geometric_product_deterministic_strict(
     let pop_b = b.active_mask.count_ones();
 
     if pop_a == 1 && pop_b == 1 {
-        let i = a.active_mask.trailing_zeros() as usize;
-        let j = b.active_mask.trailing_zeros() as usize;
-        let k = i ^ j;
-        result_buf[k] = a.coeffs[i] * b.coeffs[j] * f64::from(CAYLEY_SIGN[i][j]);
+        return Ok(single_blade_product_fast(a, b));
     } else if pop_a == 1 || pop_b == 1 {
         geometric_product_scalar_sparse(
             &a.coeffs,
@@ -1122,7 +1159,7 @@ mod tests {
         assert_eq!((b.coeffs.as_ptr() as usize) % 64, 0);
         // This is intentionally a dispatch smoke-test: runtime feature checks may
         // route to SIMD kernels or to `geometric_product_scalar_dense`.
-        geometric_product_dispatch_dense(&a, &b, &mut out);
+        geometric_product_dispatch_dense(&a.coeffs, &b.coeffs, &mut out);
     }
 
     #[test]
@@ -1395,7 +1432,7 @@ mod simd_equivalence_tests {
             geometric_product_scalar_dense(&a_mv.coeffs, &b_mv.coeffs, &mut scalar);
             // SAFETY: guarded by runtime feature checks above.
             unsafe {
-                geometric_product_x86_avx2_dense(&a_mv, &b_mv, &mut simd);
+                geometric_product_x86_avx2_dense(&a_mv.coeffs, &b_mv.coeffs, &mut simd);
             }
 
             for k in 0..TOTAL_BLADES {
