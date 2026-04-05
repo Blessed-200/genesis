@@ -813,6 +813,26 @@ mod tests {
         assert_eq!(memoffset::offset_of!(SparseCliffordVector, _tail_pad), 160);
     }
 
+    #[test]
+    fn sparse_clifford_vector_align_is_64() {
+        assert_eq!(std::mem::align_of::<SparseCliffordVector>(), 64);
+    }
+
+    #[test]
+    fn sparse_clifford_vector_size_is_192() {
+        assert_eq!(std::mem::size_of::<SparseCliffordVector>(), 192);
+    }
+
+    #[test]
+    fn sparse_clifford_vector_stack_and_heap_alignment() {
+        let stack_value = SparseCliffordVector::zero();
+        let heap_value = Box::new(SparseCliffordVector::zero());
+        let stack_ptr = (&raw const stack_value).cast::<u8>() as usize;
+        let heap_ptr = std::ptr::from_ref(heap_value.as_ref()).cast::<u8>() as usize;
+        assert_eq!(stack_ptr % 64, 0);
+        assert_eq!(heap_ptr % 64, 0);
+    }
+
     // ── from_iter ─────────────────────────────────────────────────────────────
 
     #[test]

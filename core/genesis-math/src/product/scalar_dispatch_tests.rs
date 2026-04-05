@@ -1,4 +1,5 @@
 use super::{geometric_product_dispatch_by_mask, geometric_product_scalar_sparse, TOTAL_BLADES};
+use crate::SparseCliffordVector;
 
 #[inline]
 fn next_unit(state: u64) -> (u64, f64) {
@@ -51,7 +52,9 @@ fn scalar_sparse_dispatch_routing_identity() {
             let mut scalar = [0.0f64; TOTAL_BLADES];
             let mut dispatch = [0.0f64; TOTAL_BLADES];
             geometric_product_scalar_sparse(&a, mask_a, &b, mask_b, &mut scalar);
-            geometric_product_dispatch_by_mask(&a, mask_a, &b, mask_b, &mut dispatch);
+            let a_mv = SparseCliffordVector::from_dense_buf(&a);
+            let b_mv = SparseCliffordVector::from_dense_buf(&b);
+            geometric_product_dispatch_by_mask(&a_mv, mask_a, &b_mv, mask_b, &mut dispatch);
 
             for k in 0..TOTAL_BLADES {
                 assert_eq!(

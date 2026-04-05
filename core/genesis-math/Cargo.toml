@@ -20,7 +20,9 @@ criterion = { workspace = true }
 properties = []
 deterministic_strict = []
 avx512 = []  # Enable AVX-512 path (requires nightly or recent stable)
-cacheline64 = [] # Backward-compatible no-op: 64B alignment is now mandatory.
+# Deprecated: `cacheline64` is now always-on because `SparseCliffordVector`
+# is unconditionally `#[repr(C, align(64))]`.
+cacheline64 = []
 
 [[bench]]
 name    = "geometry"

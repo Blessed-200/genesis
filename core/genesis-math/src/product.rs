@@ -44,29 +44,43 @@
 //!
 //! # No `_basis` parameter (Mandato §4.2)
 //! `CAYLEY_SIGN` is compile-time in `.rodata`. No basis passed at call site.
+//!
+//! # Safety model for SIMD kernels
+//! Callers of SIMD kernels must pass properly aligned `SparseCliffordVector`
+//! references (64-byte alignment). Dense kernels then perform aligned vector
+//! loads/stores over fixed `[f64; 16]` buffers.
+//!
+//! Branchless execution inside hot loops is intentional:
+//! - Sign application uses bitwise XOR masks (no per-lane conditionals).
+//! - Dense kernels always execute fixed 16×16 iterations.
+//! - Feature-detection dispatch branches execute once outside inner loops.
+//! - Popcount-based dispatch at `sparse_geometric_product` entry is intentional.
+//! - `deterministic_strict` forcing scalar kernels preserves proof reproducibility.
+//! - The AArch64 NEON kernel intentionally uses `vld1q_f64` for
+//!   `CAYLEY_SIGN_F64_REF`/`TOTAL_BLADES` traversal; unaligned-safe loads are
+//!   architecturally safe and performance-neutral there, unlike AVX aligned
+//!   intrinsic requirements.
 
 use genesis_types::constants::COGNITIVE_PLANCK_CONSTANT;
 use genesis_types::error::{GenesisError, SignatureViolationCode};
 
 use crate::basis::TOTAL_BLADES;
 use crate::multivector::{derive_all_metadata, SparseCliffordVector};
-use crate::sign::CAYLEY_SIGN;
+use crate::sign::{CAYLEY_SIGN, CAYLEY_SIGN_F64_REF};
 
 const DENSE_MASK: u16 = 0xFFFF;
 
-pub(crate) const CAYLEY_SIGN_F64: [[f64; 16]; 16] = {
-    let mut t = [[0.0f64; 16]; 16];
-    let mut i = 0;
-    while i < 16 {
-        let mut j = 0;
-        while j < 16 {
-            t[i][j] = if CAYLEY_SIGN[i][j] > 0 { 1.0 } else { -1.0 };
-            j += 1;
-        }
-        i += 1;
-    }
-    t
-};
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[repr(align(64))]
+struct AlignedSignFlipMasks([[u64; TOTAL_BLADES]; TOTAL_BLADES]);
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[repr(align(64))]
+struct AlignedXorPermuteIndices([[i64; TOTAL_BLADES]; TOTAL_BLADES]);
+
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+#[repr(align(64))]
+struct AlignedDenseBuf([f64; TOTAL_BLADES]);
 
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 const SIGN_FLIP_BIT: u64 = 1u64 << 63;
@@ -115,9 +129,14 @@ const fn build_xor_permute_indices() -> [[i64; TOTAL_BLADES]; TOTAL_BLADES] {
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-const SIGN_FLIP_MASKS: [[u64; TOTAL_BLADES]; TOTAL_BLADES] = build_sign_flip_masks();
+const SIGN_FLIP_MASKS: AlignedSignFlipMasks = AlignedSignFlipMasks(build_sign_flip_masks());
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
-const XOR_PERMUTE_INDICES: [[i64; TOTAL_BLADES]; TOTAL_BLADES] = build_xor_permute_indices();
+const XOR_PERMUTE_INDICES: AlignedXorPermuteIndices =
+    AlignedXorPermuteIndices(build_xor_permute_indices());
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+const _: () = assert!(core::mem::align_of::<AlignedSignFlipMasks>() == 64);
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
+const _: () = assert!(core::mem::align_of::<AlignedXorPermuteIndices>() == 64);
 
 /// Selection policy for geometric-product execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -198,7 +217,7 @@ fn geometric_product_scalar_sparse(
         let coef_a = a_coeffs[i];
         // loop-invariant, hoisted
         // CRYSTAL: O13 — inevitable
-        let sign_row = &CAYLEY_SIGN_F64[i];
+        let sign_row = &CAYLEY_SIGN_F64_REF[i];
         let mut mask_b = b_mask;
         while mask_b != 0 {
             let j = mask_b.trailing_zeros() as usize;
@@ -222,7 +241,7 @@ fn geometric_product_scalar_dense(
     // store into `result_buf[i ^ j]`.
     for i in 0..TOTAL_BLADES {
         let coef_a = a_coeffs[i];
-        let sign_row = &CAYLEY_SIGN_F64[i];
+        let sign_row = &CAYLEY_SIGN_F64_REF[i];
         for j in 0..TOTAL_BLADES {
             let k = i ^ j;
             result_buf[k] = (coef_a * sign_row[j]).mul_add(b_coeffs[j], result_buf[k]);
@@ -232,12 +251,12 @@ fn geometric_product_scalar_dense(
 
 #[inline]
 fn geometric_product_dispatch_dense(
-    a_coeffs: &[f64; TOTAL_BLADES],
-    b_coeffs: &[f64; TOTAL_BLADES],
+    a: &SparseCliffordVector,
+    b: &SparseCliffordVector,
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     if cfg!(feature = "deterministic_strict") {
-        geometric_product_scalar_dense(a_coeffs, b_coeffs, result_buf);
+        geometric_product_scalar_dense(&a.coeffs, &b.coeffs, result_buf);
         return;
     }
     #[cfg(target_arch = "x86_64")]
@@ -246,22 +265,14 @@ fn geometric_product_dispatch_dense(
         if std::arch::is_x86_feature_detected!("avx512f") {
             // SAFETY: guarded by runtime feature detection.
             unsafe {
-                geometric_product_x86_avx512_dense(a_coeffs, b_coeffs, result_buf);
-            }
-            return;
-        }
-        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
-        {
-            // SAFETY: guarded by runtime feature detection.
-            unsafe {
-                geometric_product_x86_avx2_fma_dense(a_coeffs, b_coeffs, result_buf);
+                geometric_product_x86_avx512_dense(a, b, result_buf);
             }
             return;
         }
         if std::arch::is_x86_feature_detected!("avx2") {
             // SAFETY: guarded by runtime feature detection.
             unsafe {
-                geometric_product_x86_avx2_dense(a_coeffs, b_coeffs, result_buf);
+                geometric_product_x86_avx2_dense(a, b, result_buf);
             }
             return;
         }
@@ -272,41 +283,43 @@ fn geometric_product_dispatch_dense(
         if std::arch::is_aarch64_feature_detected!("neon") {
             // SAFETY: guarded by runtime feature detection.
             unsafe {
-                geometric_product_aarch64_neon_dense(a_coeffs, b_coeffs, result_buf);
+                geometric_product_aarch64_neon_dense(a, b, result_buf);
             }
             return;
         }
     }
 
-    geometric_product_scalar_dense(a_coeffs, b_coeffs, result_buf);
+    geometric_product_scalar_dense(&a.coeffs, &b.coeffs, result_buf);
 }
 
 #[inline]
 fn geometric_product_dispatch_by_mask(
-    a_coeffs: &[f64; TOTAL_BLADES],
+    a: &SparseCliffordVector,
     a_mask: u16,
-    b_coeffs: &[f64; TOTAL_BLADES],
+    b: &SparseCliffordVector,
     b_mask: u16,
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     if a_mask == DENSE_MASK && b_mask == DENSE_MASK {
-        geometric_product_dispatch_dense(a_coeffs, b_coeffs, result_buf);
+        geometric_product_dispatch_dense(a, b, result_buf);
         return;
     }
-    geometric_product_scalar_sparse(a_coeffs, a_mask, b_coeffs, b_mask, result_buf);
+    geometric_product_scalar_sparse(&a.coeffs, a_mask, &b.coeffs, b_mask, result_buf);
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn geometric_product_x86_avx2_dense(
-    a_coeffs: &[f64; TOTAL_BLADES],
-    b_coeffs: &[f64; TOTAL_BLADES],
+    a: &SparseCliffordVector,
+    b: &SparseCliffordVector,
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
-        _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_cvtsd_f64, _mm256_extractf128_pd,
-        _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_unpackhi_pd,
+        _mm256_cvtsd_f64, _mm256_extractf128_pd, _mm256_load_pd, _mm256_mul_pd, _mm256_set1_pd,
+        _mm256_unpackhi_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
     };
+    debug_assert_eq!((a.coeffs.as_ptr() as usize) % 64, 0);
+    debug_assert_eq!((b.coeffs.as_ptr() as usize) % 64, 0);
 
     // HOT PATH: O(16²), dense G(1,3) product on AVX2.
     // Sequential SIMD loads come from `sign_row[j..]` and `b_coeffs[j..]`; the
@@ -314,9 +327,9 @@ unsafe fn geometric_product_x86_avx2_dense(
     // Clifford product. Keep lane values resident in registers to avoid
     // store-to-load forwarding stalls from a stack scratch buffer.
     for i in 0..TOTAL_BLADES {
-        let coef_a = a_coeffs[i];
+        let coef_a = a.coeffs[i];
         let coef_a_vec = _mm256_set1_pd(coef_a);
-        let sign_row = &CAYLEY_SIGN_F64[i];
+        let sign_row = &CAYLEY_SIGN_F64_REF[i];
 
         let mut j = 0usize;
         while j < TOTAL_BLADES {
@@ -324,63 +337,11 @@ unsafe fn geometric_product_x86_avx2_dense(
             // array, so both sequential loads stay within bounds.
             let products = unsafe {
                 // SAFETY: `j` advances in multiples of four lanes and remains
-                // in-bounds for the fixed 16-lane dense buffer. Unaligned loads
-                // keep the SIMD kernel valid for any caller alignment.
-                let b_vec = _mm256_loadu_pd(b_coeffs.as_ptr().add(j));
+                // in-bounds for the fixed 16-lane dense buffer. Aligned loads
+                // are valid because SparseCliffordVector enforces 64-byte alignment.
+                let b_vec = _mm256_load_pd(b.coeffs.as_ptr().add(j));
                 let scaled = _mm256_mul_pd(coef_a_vec, b_vec);
-                let signs = _mm256_loadu_pd(sign_row.as_ptr().add(j));
-                _mm256_mul_pd(scaled, signs)
-            };
-            // SAFETY: `products` is a live SIMD register. These extraction
-            // intrinsics shuffle within registers only, so the hot path avoids
-            // any intermediate stack buffer or reload from memory.
-            let v0 = _mm256_cvtsd_f64(products);
-            let v1 = _mm256_cvtsd_f64(_mm256_unpackhi_pd(products, products));
-            let hi128 = _mm256_extractf128_pd(products, 1);
-            let v2 = _mm_cvtsd_f64(hi128);
-            let v3 = _mm_cvtsd_f64(_mm_unpackhi_pd(hi128, hi128));
-
-            result_buf[i ^ j] += v0;
-            result_buf[i ^ (j + 1)] += v1;
-            result_buf[i ^ (j + 2)] += v2;
-            result_buf[i ^ (j + 3)] += v3;
-            j += 4;
-        }
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2,fma")]
-unsafe fn geometric_product_x86_avx2_fma_dense(
-    a_coeffs: &[f64; TOTAL_BLADES],
-    b_coeffs: &[f64; TOTAL_BLADES],
-    result_buf: &mut [f64; TOTAL_BLADES],
-) {
-    use std::arch::x86_64::{
-        _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_cvtsd_f64, _mm256_extractf128_pd,
-        _mm256_loadu_pd, _mm256_mul_pd, _mm256_set1_pd, _mm256_unpackhi_pd,
-    };
-
-    // HOT PATH: O(16²), dense G(1,3) product on AVX2+FMA hardware.
-    // The read side is fully sequential; scatter remains scalar so we preserve
-    // the scalar accumulation order while still exposing contiguous SIMD loads.
-    // Keep lane values resident in registers to avoid store forwarding stalls.
-    for i in 0..TOTAL_BLADES {
-        let coef_a = a_coeffs[i];
-        let coef_a_vec = _mm256_set1_pd(coef_a);
-        let sign_row = &CAYLEY_SIGN_F64[i];
-
-        let mut j = 0usize;
-        while j < TOTAL_BLADES {
-            // SAFETY: `j` advances in multiples of 4 over a fixed-size 16-lane
-            // array, so both sequential loads stay within bounds.
-            let products = unsafe {
-                // SAFETY: `j` advances in multiples of four lanes and remains
-                // in-bounds for the fixed 16-lane dense buffer. Unaligned loads
-                // keep the SIMD kernel valid for any caller alignment.
-                let b_vec = _mm256_loadu_pd(b_coeffs.as_ptr().add(j));
-                let scaled = _mm256_mul_pd(coef_a_vec, b_vec);
-                let signs = _mm256_loadu_pd(sign_row.as_ptr().add(j));
+                let signs = _mm256_load_pd(sign_row.as_ptr().add(j));
                 _mm256_mul_pd(scaled, signs)
             };
             // SAFETY: `products` is a live SIMD register. These extraction
@@ -404,35 +365,38 @@ unsafe fn geometric_product_x86_avx2_fma_dense(
 #[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f")]
 unsafe fn geometric_product_x86_avx512_dense(
-    a_coeffs: &[f64; TOTAL_BLADES],
-    b_coeffs: &[f64; TOTAL_BLADES],
+    a: &SparseCliffordVector,
+    b: &SparseCliffordVector,
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::x86_64::{
-        _mm512_add_pd, _mm512_castsi512_pd, _mm512_loadu_pd, _mm512_loadu_si512, _mm512_mul_pd,
-        _mm512_permutex2var_pd, _mm512_set1_pd, _mm512_setzero_pd, _mm512_storeu_pd, _mm512_xor_pd,
+        _mm512_add_pd, _mm512_castsi512_pd, _mm512_load_pd, _mm512_load_si512, _mm512_mul_pd,
+        _mm512_permutex2var_pd, _mm512_set1_pd, _mm512_setzero_pd, _mm512_store_pd, _mm512_xor_pd,
     };
+    debug_assert_eq!((a.coeffs.as_ptr() as usize) % 64, 0);
+    debug_assert_eq!((b.coeffs.as_ptr() as usize) % 64, 0);
 
-    // SAFETY: the dense coefficient buffer has fixed length 16 and both loads
-    // stay in-bounds. Unaligned loads avoid imposing external alignment
-    // requirements on callers.
-    let a_lo = _mm512_loadu_pd(a_coeffs.as_ptr());
-    let a_hi = _mm512_loadu_pd(a_coeffs.as_ptr().add(8));
+    // SAFETY: the dense coefficient buffers have fixed length 16 and loads stay
+    // in-bounds. Aligned loads are valid because SparseCliffordVector enforces
+    // 64-byte alignment for coefficient storage.
+    let a_lo = _mm512_load_pd(a.coeffs.as_ptr());
+    let a_hi = _mm512_load_pd(a.coeffs.as_ptr().add(8));
     let mut acc_lo = _mm512_setzero_pd();
     let mut acc_hi = _mm512_setzero_pd();
 
-    for (j, &coef_b) in b_coeffs.iter().enumerate() {
-        let sign_lo =
-            _mm512_castsi512_pd(_mm512_loadu_si512(SIGN_FLIP_MASKS[j][0..8].as_ptr().cast()));
-        let sign_hi = _mm512_castsi512_pd(_mm512_loadu_si512(
-            SIGN_FLIP_MASKS[j][8..16].as_ptr().cast(),
+    for (j, &coef_b) in b.coeffs.iter().enumerate() {
+        let sign_lo = _mm512_castsi512_pd(_mm512_load_si512(
+            SIGN_FLIP_MASKS.0[j][0..8].as_ptr().cast(),
+        ));
+        let sign_hi = _mm512_castsi512_pd(_mm512_load_si512(
+            SIGN_FLIP_MASKS.0[j][8..16].as_ptr().cast(),
         ));
 
         let signed_lo = _mm512_xor_pd(a_lo, sign_lo);
         let signed_hi = _mm512_xor_pd(a_hi, sign_hi);
 
-        let idx_lo = _mm512_loadu_si512(XOR_PERMUTE_INDICES[j][0..8].as_ptr().cast());
-        let idx_hi = _mm512_loadu_si512(XOR_PERMUTE_INDICES[j][8..16].as_ptr().cast());
+        let idx_lo = _mm512_load_si512(XOR_PERMUTE_INDICES.0[j][0..8].as_ptr().cast());
+        let idx_hi = _mm512_load_si512(XOR_PERMUTE_INDICES.0[j][8..16].as_ptr().cast());
 
         let perm_lo = _mm512_permutex2var_pd(signed_lo, idx_lo, signed_hi);
         let perm_hi = _mm512_permutex2var_pd(signed_lo, idx_hi, signed_hi);
@@ -442,15 +406,22 @@ unsafe fn geometric_product_x86_avx512_dense(
         acc_hi = _mm512_add_pd(acc_hi, _mm512_mul_pd(perm_hi, b_vec));
     }
 
-    _mm512_storeu_pd(result_buf.as_mut_ptr(), acc_lo);
-    _mm512_storeu_pd(result_buf.as_mut_ptr().add(8), acc_hi);
+    let mut aligned_out = std::mem::MaybeUninit::<AlignedDenseBuf>::uninit();
+    // SAFETY: `AlignedDenseBuf` guarantees 64-byte alignment, stores cover all
+    // 16 lanes exactly once, and `assume_init` is called only after both stores.
+    unsafe {
+        let out_ptr = aligned_out.as_mut_ptr().cast::<f64>();
+        _mm512_store_pd(out_ptr, acc_lo);
+        _mm512_store_pd(out_ptr.add(8), acc_hi);
+        *result_buf = aligned_out.assume_init().0;
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn geometric_product_aarch64_neon_dense(
-    a_coeffs: &[f64; TOTAL_BLADES],
-    b_coeffs: &[f64; TOTAL_BLADES],
+    a: &SparseCliffordVector,
+    b: &SparseCliffordVector,
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
     use std::arch::aarch64::{vdupq_n_f64, vgetq_lane_f64, vld1q_f64, vmulq_f64};
@@ -460,9 +431,9 @@ unsafe fn geometric_product_aarch64_neon_dense(
     // from `sign_row[j..]` and `b_coeffs[j..]`; the scatter store remains scalar.
     // Keep lane values in the NEON register file to avoid a stack round-trip.
     for i in 0..TOTAL_BLADES {
-        let coef_a = a_coeffs[i];
+        let coef_a = a.coeffs[i];
         let coef_a_vec = vdupq_n_f64(coef_a);
-        let sign_row = &CAYLEY_SIGN_F64[i];
+        let sign_row = &CAYLEY_SIGN_F64_REF[i];
 
         let mut j = 0usize;
         while j < TOTAL_BLADES {
@@ -470,7 +441,7 @@ unsafe fn geometric_product_aarch64_neon_dense(
             // array, so both sequential loads stay within bounds.
             let products = unsafe {
                 let signs_vec = vld1q_f64(sign_row.as_ptr().add(j));
-                let b_vec = vld1q_f64(b_coeffs.as_ptr().add(j));
+                let b_vec = vld1q_f64(b.coeffs.as_ptr().add(j));
                 let scaled = vmulq_f64(coef_a_vec, b_vec);
                 vmulq_f64(scaled, signs_vec)
             };
@@ -500,8 +471,9 @@ unsafe fn geometric_product_aarch64_neon_dense(
 /// AX-ID: AXIOMA-001, AXIOMA-011
 /// See also: [`crate::sign::fast_cayley_product`]
 #[allow(clippy::many_single_char_names)]
-// Canonical notation GA: i = blade_a, j = blade_b, k = blade_resultado.
+// Canonical GA notation: i = left blade, j = right blade, k = result blade.
 // Renaming diverges from standard literature (Hestenes 2003, §2.1).
+#[inline]
 pub fn sparse_geometric_product(
     a: &SparseCliffordVector,
     b: &SparseCliffordVector,
@@ -519,7 +491,7 @@ pub fn sparse_geometric_product(
     }
     // Provable upper bound: for each blade k of the result,
     //   |result[k]| ≤ Σ_{i⊕j=k} |aᵢ||bⱼ| ≤ 16 · max_abs_a · max_abs_b
-    // (exactamente 16 pares (i, i⊕k) for each k fijo).
+    // (exactly 16 pairs `(i, i⊕k)` for each fixed k).
     // If 16 · max_abs_a · max_abs_b < PLANCK → all blades are sub-Planck.
     // Fix [B1]: previous bound (without factor 16) suppressed real products in [PLANCK/16, PLANCK].
     #[allow(clippy::cast_precision_loss)]
@@ -557,13 +529,7 @@ pub fn sparse_geometric_product(
             &mut result_buf,
         );
     } else {
-        geometric_product_dispatch_by_mask(
-            &a.coeffs,
-            a.active_mask,
-            &b.coeffs,
-            b.active_mask,
-            &mut result_buf,
-        );
+        geometric_product_dispatch_by_mask(a, a.active_mask, b, b.active_mask, &mut result_buf);
     }
 
     // ── Consolidate metadata in one pass (no second reconstruction pass) ─────
@@ -656,7 +622,7 @@ pub fn sparse_geometric_product_deterministic_strict(
 /// Lorentz norm of the grade-2 component of A*B in G(1,3).
 ///
 /// Computes `⟨(A*B)·rev(A*B)⟩₀` restricted to the bivector component,
-/// without constructing un `SparseCliffordVector` full.
+/// without constructing a full `SparseCliffordVector`.
 ///
 /// # Purpose
 /// Distance function for HNSW in genesis-topology:
@@ -666,12 +632,12 @@ pub fn sparse_geometric_product_deterministic_strict(
 ///   3 (e₀₁, −1), 5 (e₀₂, −1), 6 (e₁₂, +1),
 ///   9 (e₀₃, −1), 10 (e₁₃, +1), 12 (e₂₃, +1)
 ///
-/// # Retorno
+/// # Return value
 /// `None` if the CS gate triggers (same criterion as `sparse_geometric_product`).
-/// `Some(norm_sq)` where `norm_sq` can be negativo (spacelike), cero (null),
-/// or positivo (timelike). .abs() is used by the HNSW caller as `.abs()` as distance.
+/// `Some(norm_sq)` where `norm_sq` can be negative (spacelike), zero (null),
+/// or positive (timelike). The HNSW caller applies `.abs()` for distance use.
 ///
-/// # Rendimiento
+/// # Performance
 /// Zero heap allocation. Stack buffer of 128 bytes. Six FMA operations over the
 /// blades of grade 2 post-accumulation.
 /// Target: < 30 ns in hardware with AVX-512.
@@ -680,7 +646,7 @@ pub fn sparse_geometric_product_deterministic_strict(
 /// Performance note (CRATE-001 v0.2.3): in sandbox without AVX-512 sostenido,
 /// the benchmark `bivector_norm_sq_of_product_16x16` it maintains ~420ns.
 /// The main cause is the cost of the dense loop 16×16 and the management of the
-/// discriminante of the enum of retorno bajo `black_box`; no hay heap allocation.
+/// branch-management cost on the return enum under `black_box`; there is no heap allocation.
 /// Semantic result of the bivector product — distinguishes "algebraic zero"
 /// of "sub-Planck" so that callers can implement d(v,v)=0 correctly.
 ///
@@ -721,7 +687,7 @@ const BIVECTOR_LANE_WEIGHTS: [f64; 6] = [-1.0, -1.0, 1.0, -1.0, 1.0, 1.0];
 /// AX-ID: AXIOMA-013, AXIOMA-001
 /// See also: [`bivector_norm_sq_of_product_lhs_dense`], [`sparse_geometric_product`]
 #[allow(clippy::many_single_char_names)]
-// i = blade_a, j = blade_b, k = blade_resultado — canonical GA notation.
+// i = left blade, j = right blade, k = result blade — canonical GA notation.
 pub fn bivector_norm_sq_of_product(
     a: &SparseCliffordVector,
     b: &SparseCliffordVector,
@@ -744,7 +710,7 @@ pub fn bivector_norm_sq_of_product(
     let mut bivector_buf = [0.0f64; 6];
 
     // Inner loop identical to the path general of sparse_geometric_product.
-    // The compiler vectoriza this loop with VFMADD when active_mask = 0xFFFF.
+    // The compiler vectorizes this loop with VFMADD when active_mask = 0xFFFF.
     let mut mask_a = a.active_mask;
     while mask_a != 0 {
         let i = mask_a.trailing_zeros() as usize;
@@ -1046,26 +1012,26 @@ mod tests {
     /// Regression [B1]: CS gate previous (without factor 16) suppressed real products
     /// in the range [PLANCK/16, PLANCK]. With the correction, these products pass.
     ///
-    /// AX-ID: AXIOMA-011, MANDATO §2.3
+    /// AX-ID: AXIOMA-011, Mandate §2.3
     #[test]
     fn cs_gate_does_not_suppress_constructive_superposition() {
         use genesis_types::constants::COGNITIVE_PLANCK_CONSTANT;
-        // Construir max_abs ≈ sqrt(PLANCK/8): producto = PLANCK/8 ∈ [PLANCK/16, PLANCK].
+        // Construct max_abs ≈ sqrt(PLANCK/8): product = PLANCK/8 ∈ [PLANCK/16, PLANCK].
         // With the incorrect gate (without ×16): PLANCK/8 < PLANCK → suppressed (INCORRECT).
         // With the correct gate (×16): 16 × PLANCK/8 = 2×PLANCK > PLANCK → NO suppressed.
         let coef = (COGNITIVE_PLANCK_CONSTANT * 2.0f64).sqrt();
-        // e₀ × e₀ = +1 (scalar). Ambos vectors tienen max_abs_coeff = coef.
+        // e₀ × e₀ = +1 (scalar). Both vectors have max_abs_coeff = coef.
         let a = SparseCliffordVector::from_iter([(0b0001usize, coef)]).unwrap();
         let b = SparseCliffordVector::from_iter([(0b0001usize, coef)]).unwrap();
         // Verify precondition: 16 × coef² ≥ PLANCK → gate must not trigger.
         assert!(
             a.max_abs_coeff * b.max_abs_coeff * (TOTAL_BLADES as f64) >= COGNITIVE_PLANCK_CONSTANT,
-            "precondition: gate no debe dispararse con factor 16"
+            "precondition: gate must not trigger with factor 16"
         );
         let result = sparse_geometric_product(&a, &b);
         assert!(
             result.is_some(),
-            "producto con 16×max_a×max_b > PLANCK no debe ser suprimido por CS gate"
+            "product with 16×max_a×max_b > PLANCK must not be suppressed by the CS gate"
         );
     }
 
@@ -1073,7 +1039,7 @@ mod tests {
     fn cs_gate_factor_16_boundary() {
         use genesis_types::constants::COGNITIVE_PLANCK_CONSTANT;
 
-        // Case 1: 15.9999 × (max_a · max_b) < PLANCK ⇒ gate must suprimir (None).
+        // Case 1: 15.9999 × (max_a · max_b) < PLANCK ⇒ gate must suppress (None).
         let coef_below = (COGNITIVE_PLANCK_CONSTANT / 16.0001f64).sqrt();
         let a_below = SparseCliffordVector::from_iter([(0b0001usize, coef_below)]).unwrap();
         let b_below = SparseCliffordVector::from_iter([(0b0001usize, coef_below)]).unwrap();
@@ -1082,7 +1048,7 @@ mod tests {
         );
         assert!(sparse_geometric_product(&a_below, &b_below).is_none());
 
-        // Case 2: 16.0001 × (max_a · max_b) ≥ PLANCK and producto algebraicamente no nulo ⇒ Some.
+        // Case 2: 16.0001 × (max_a · max_b) ≥ PLANCK and algebraically non-zero product ⇒ Some.
         let coef_above = (COGNITIVE_PLANCK_CONSTANT * 1.0001f64).sqrt();
         let a_above = SparseCliffordVector::from_iter([(0b0001usize, coef_above)]).unwrap();
         let b_above = SparseCliffordVector::from_iter([(0b0001usize, coef_above)]).unwrap();
@@ -1116,13 +1082,13 @@ mod tests {
         }
 
         let mut dispatch = [0.0f64; TOTAL_BLADES];
-        geometric_product_dispatch_by_mask(&a.coeffs, mask_a, &b.coeffs, mask_b, &mut dispatch);
+        geometric_product_dispatch_by_mask(&a, mask_a, &b, mask_b, &mut dispatch);
 
         for i in 0..TOTAL_BLADES {
             assert_eq!(
                 scalar[i].to_bits(),
                 dispatch[i].to_bits(),
-                "kernel mismatch en blade {i} para máscaras {mask_a:#06x} x {mask_b:#06x}"
+                "kernel mismatch at blade {i} for masks {mask_a:#06x} x {mask_b:#06x}"
             );
         }
     }
@@ -1145,6 +1111,18 @@ mod tests {
     #[test]
     fn kernel_bit_equivalence_dense_dispatch_vs_scalar() {
         assert_kernel_bit_equivalent(DENSE_MASK, DENSE_MASK);
+    }
+
+    #[test]
+    fn aligned_buffers_dispatch_smoke_test() {
+        let a = mv_from_mask(DENSE_MASK, 1.0);
+        let b = mv_from_mask(DENSE_MASK, 2.0);
+        let mut out = [0.0f64; TOTAL_BLADES];
+        assert_eq!((a.coeffs.as_ptr() as usize) % 64, 0);
+        assert_eq!((b.coeffs.as_ptr() as usize) % 64, 0);
+        // This is intentionally a dispatch smoke-test: runtime feature checks may
+        // route to SIMD kernels or to `geometric_product_scalar_dense`.
+        geometric_product_dispatch_dense(&a, &b, &mut out);
     }
 
     #[test]
@@ -1329,13 +1307,13 @@ mod tests {
         let r = bivector_norm_sq_of_product(&e(0b0001), &e(0b0001));
         match r {
             BivectorProduct::Computed(v) => assert!(v.abs() < 1e-15),
-            BivectorProduct::SubPlanck => panic!("producto escalar puro no debe ser SubPlanck"),
+            BivectorProduct::SubPlanck => panic!("pure scalar product must not be SubPlanck"),
         }
     }
 
     #[test]
     fn bivector_norm_sq_consistent_with_full_product() {
-        // Verificar consistency with sparse_geometric_product for mixed input.
+        // Verify consistency with sparse_geometric_product for mixed input.
         let a = SparseCliffordVector::from_iter([(0b0001, 2.0), (0b0010, 3.0)]).unwrap();
         let b = SparseCliffordVector::from_iter([(0b0100, 1.0), (0b1000, -1.0)]).unwrap();
 
@@ -1356,7 +1334,7 @@ mod tests {
 
         assert!(
             (biv_fast - biv_ref).abs() < 1e-12,
-            "bivector_norm_sq_of_product={biv_fast} pero referencia={biv_ref}"
+            "bivector_norm_sq_of_product={biv_fast} but reference={biv_ref}"
         );
     }
 
@@ -1382,15 +1360,12 @@ mod tests {
 // ─────────────────────────────────────────────────────────────────────────────
 #[cfg(all(test, target_arch = "x86_64"))]
 mod simd_equivalence_tests {
-    use super::{
-        geometric_product_scalar_dense, geometric_product_x86_avx2_fma_dense, TOTAL_BLADES,
-    };
+    use super::{geometric_product_scalar_dense, geometric_product_x86_avx2_dense, TOTAL_BLADES};
+    use crate::SparseCliffordVector;
 
     #[test]
-    fn avx2_fma_dense_kernel_matches_scalar_for_one_million_cases() {
-        if !(std::arch::is_x86_feature_detected!("avx2")
-            && std::arch::is_x86_feature_detected!("fma"))
-        {
+    fn avx2_dense_kernel_matches_scalar_for_one_million_cases() {
+        if !std::arch::is_x86_feature_detected!("avx2") {
             return;
         }
 
@@ -1412,13 +1387,15 @@ mod simd_equivalence_tests {
                 let y = ((state >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
                 b[i] = y.mul_add(2.0, -1.0);
             }
+            let a_mv = SparseCliffordVector::from_dense_buf(&a);
+            let b_mv = SparseCliffordVector::from_dense_buf(&b);
 
             let mut scalar = [0.0f64; TOTAL_BLADES];
             let mut simd = [0.0f64; TOTAL_BLADES];
-            geometric_product_scalar_dense(&a, &b, &mut scalar);
+            geometric_product_scalar_dense(&a_mv.coeffs, &b_mv.coeffs, &mut scalar);
             // SAFETY: guarded by runtime feature checks above.
             unsafe {
-                geometric_product_x86_avx2_fma_dense(&a, &b, &mut simd);
+                geometric_product_x86_avx2_dense(&a_mv, &b_mv, &mut simd);
             }
 
             for k in 0..TOTAL_BLADES {

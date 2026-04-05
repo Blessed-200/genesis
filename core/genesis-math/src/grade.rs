@@ -109,6 +109,7 @@ pub fn compute_clifford_norm(coeffs: &[f64; 16]) -> f64 {
 /// active blades. Output assembled via `SparseCliffordVector::from_dense_buf`.
 ///
 /// AX-ID: AXIOMA-001
+#[inline]
 pub fn grade_project(v: &SparseCliffordVector, grade: usize) -> SparseCliffordVector {
     debug_assert!(grade <= 4, "grade > 4 violates G(1,3) invariant");
     #[allow(clippy::cast_possible_truncation)]
@@ -161,6 +162,7 @@ where
 /// let v = SparseCliffordVector::zero();
 /// let _ = grade_project_ct::<5>(&v);
 /// ```
+#[inline]
 pub fn grade_project_ct<const G: usize>(v: &SparseCliffordVector) -> SparseCliffordVector
 where
     Grade<G>: ValidGrade,
@@ -178,6 +180,7 @@ where
 /// Even-grade sub-multivector: scalar (k=0) + bivectors (k=2) + 4-vector (k=4).
 ///
 /// Single pass over `active_mask`.
+#[inline]
 pub fn even_grade(v: &SparseCliffordVector) -> SparseCliffordVector {
     let mut buf = [0.0f64; 16];
     let mut mask = v.active_mask;
@@ -192,6 +195,7 @@ pub fn even_grade(v: &SparseCliffordVector) -> SparseCliffordVector {
 }
 
 /// Odd-grade sub-multivector: vectors (k=1) + trivectors (k=3).
+#[inline]
 pub fn odd_grade(v: &SparseCliffordVector) -> SparseCliffordVector {
     let mut buf = [0.0f64; 16];
     let mut mask = v.active_mask;

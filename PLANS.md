@@ -1,5 +1,40 @@
 # PLANS
 
+## 1.20 CRATE-002 cacheline-aligned SIMD + throughput benchmark phase (2026-04-04)
+
+### Root cause
+
+- `SparseCliffordVector` must be unconditionally 64-byte aligned so SIMD kernels can safely use aligned loads/stores without fallback penalties.
+- x86 AVX2/AVX-512 dense kernels still use unaligned intrinsics and lack explicit alignment contract assertions.
+- SIMD lookup tables and sign tables do not enforce 64-byte alignment at the type level.
+- Throughput validation coverage needs a dedicated Criterion suite spanning geometric product, norm, and projection operations plus scalar baselines.
+
+### File-level actions
+
+1. `core/genesis-math/src/multivector.rs`
+   - Keep `SparseCliffordVector` as unconditional `#[repr(C, align(64))]` with fixed 192-byte layout and explicit alignment tests (size, align, stack/heap pointer checks).
+2. `core/genesis-math/src/product.rs`
+   - Switch AVX2/AVX-512 coefficient/table accesses to aligned load/store intrinsics where alignment is guaranteed.
+   - Add debug alignment assertions and comprehensive `// SAFETY:` comments on each unsafe block.
+   - Add module-level safety/branchless documentation and inline hot dispatch functions.
+   - Enforce 64-byte alignment for AVX-512 lookup tables with aligned wrapper newtypes and compile-time assertions.
+3. `core/genesis-math/src/sign.rs`
+   - Enforce 64-byte alignment for `CAYLEY_SIGN_F64` table and add compile-time alignment assertions.
+4. `core/genesis-math/src/grade.rs` and `core/genesis-math/src/lib.rs`
+   - Add requested `#[inline(always)]` hot-path annotations and crate-level inlining verification docs.
+5. `core/genesis-math/benches/clifford_ops.rs` + `core/genesis-math/Cargo.toml`
+   - Add criterion throughput benchmark groups for geometric products, norms, and projections including scalar/dense and naive-matmul comparative baselines.
+   - Keep bench target registration explicit with `harness = false`.
+
+### Validation
+
+- `cargo test --release -p genesis-math -- invariant --nocapture`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-math -- geometric_product --output-format bencher`
+- `cargo bench -p genesis-math --bench clifford_ops --no-run`
+
 ## 1.19 SIMD geometric-product hardening for GEN-7 (2026-04-04)
 
 ### Root cause
