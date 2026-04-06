@@ -80,6 +80,11 @@ impl Z2Matrix {
 
         debug_assert_eq!(self.data.len(), self.rows * wpr);
 
+        #[cfg(target_arch = "x86_64")]
+        let avx2 = std::arch::is_x86_feature_detected!("avx2");
+        #[cfg(not(target_arch = "x86_64"))]
+        let avx2 = false;
+
         for c in 0..self.cols {
             if r >= self.rows {
                 break;
@@ -127,8 +132,7 @@ impl Z2Matrix {
                     if (self.data[row_pivot_idx] & pivot_bit) != 0 {
                         let base = row * wpr + pivot_word;
                         let len = wpr - pivot_word;
-                        #[cfg(target_arch = "x86_64")]
-                        if std::arch::is_x86_feature_detected!("avx2") {
+                        if avx2 {
                             let mut i = 0usize;
                             while i + 4 <= len {
                                 // SAFETY: each chunk processes 4 contiguous `u64` words.
@@ -151,31 +155,31 @@ impl Z2Matrix {
                                 }
                                 i += 1;
                             }
-                            continue;
-                        }
-                        let mut i = 0;
-                        while i + 4 <= len {
-                            // SAFETY: `base + i + k < base + len <= row * wpr + wpr`, so all
-                            // indices are within the current row and corresponding pivot tail.
-                            unsafe {
-                                *self.data.get_unchecked_mut(base + i) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i);
-                                *self.data.get_unchecked_mut(base + i + 1) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i + 1);
-                                *self.data.get_unchecked_mut(base + i + 2) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i + 2);
-                                *self.data.get_unchecked_mut(base + i + 3) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i + 3);
+                        } else {
+                            let mut i = 0;
+                            while i + 4 <= len {
+                                // SAFETY: `base + i + k < base + len <= row * wpr + wpr`, so all
+                                // indices are within the current row and corresponding pivot tail.
+                                unsafe {
+                                    *self.data.get_unchecked_mut(base + i) ^=
+                                        *pivot_row_buf.get_unchecked(pivot_word + i);
+                                    *self.data.get_unchecked_mut(base + i + 1) ^=
+                                        *pivot_row_buf.get_unchecked(pivot_word + i + 1);
+                                    *self.data.get_unchecked_mut(base + i + 2) ^=
+                                        *pivot_row_buf.get_unchecked(pivot_word + i + 2);
+                                    *self.data.get_unchecked_mut(base + i + 3) ^=
+                                        *pivot_row_buf.get_unchecked(pivot_word + i + 3);
+                                }
+                                i += 4;
                             }
-                            i += 4;
-                        }
-                        while i < len {
-                            // SAFETY: `i < len` implies `base + i` and `pivot_word + i` are in bounds.
-                            unsafe {
-                                *self.data.get_unchecked_mut(base + i) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i);
+                            while i < len {
+                                // SAFETY: `i < len` implies `base + i` and `pivot_word + i` are in bounds.
+                                unsafe {
+                                    *self.data.get_unchecked_mut(base + i) ^=
+                                        *pivot_row_buf.get_unchecked(pivot_word + i);
+                                }
+                                i += 1;
                             }
-                            i += 1;
                         }
                     }
                 }
@@ -570,9 +574,13 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
         pivot[word] = state.rotate_left(11);
     }
 
+    #[cfg(target_arch = "x86_64")]
+    let avx2 = std::arch::is_x86_feature_detected!("avx2");
+    #[cfg(not(target_arch = "x86_64"))]
+    let avx2 = false;
+
     for _ in 0..iterations {
-        #[cfg(target_arch = "x86_64")]
-        if std::arch::is_x86_feature_detected!("avx2") {
+        if avx2 {
             let mut i = 0usize;
             while i + 4 <= words_per_row {
                 // SAFETY: `i..i+4` is in bounds for both vectors.
@@ -585,10 +593,10 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
                 dst[i] ^= pivot[i];
                 i += 1;
             }
-            continue;
-        }
-        for (dst_word, pivot_word) in dst.iter_mut().zip(pivot.iter()) {
-            *dst_word ^= *pivot_word;
+        } else {
+            for (dst_word, pivot_word) in dst.iter_mut().zip(pivot.iter()) {
+                *dst_word ^= *pivot_word;
+            }
         }
     }
 

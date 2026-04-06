@@ -199,7 +199,8 @@ fn reduce_blocks(
                 continue;
             }
             #[cfg(target_arch = "x86_64")]
-            if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+            if std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
             {
                 // SAFETY: guarded by runtime AVX2/FMA detection.
                 unsafe {
@@ -253,8 +254,7 @@ unsafe fn reduce_lane_avx2(
     ];
     let mut sin_vals = [0.0_f64; 4];
     let mut cos_vals = [0.0_f64; 4];
-    let mut i = 0usize;
-    while i < 4 {
+    for i in 0..4 {
         #[cfg(feature = "poly_trig")]
         {
             sin_vals[i] = poly_sin(phases[i]);
@@ -266,7 +266,6 @@ unsafe fn reduce_lane_avx2(
             sin_vals[i] = s;
             cos_vals[i] = c;
         }
-        i += 1;
     }
 
     // SAFETY: local arrays are contiguous 4-lane buffers.
@@ -283,12 +282,10 @@ unsafe fn reduce_lane_avx2(
         _mm256_storeu_pd(weighted_sin.as_mut_ptr(), _mm256_mul_pd(amp_vec, sin_vec));
     }
 
-    let mut grade = 0usize;
-    while grade < 4 {
+    for grade in 0..4 {
         acc[grade].0.add(weighted_cos[grade]);
         acc[grade].1.add(weighted_sin[grade]);
         acc[grade].2.add(amplitudes[grade]);
-        grade += 1;
     }
 
     // Grade-4 lane remains scalar.

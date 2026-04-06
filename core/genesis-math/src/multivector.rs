@@ -255,45 +255,28 @@ where
                 normalized_value: normalize_non_finite_payload(coef),
             });
         }
-        let old = buf[idx];
-        let old_abs = old.abs();
-        let old_was_max = old_abs >= max_abs;
-        let old_active = old_abs > COGNITIVE_PLANCK_CONSTANT;
-        if old_active {
-            clifford_norm_sq -= old * old * CLIFFORD_NORM_WEIGHTS_F64[idx];
-        }
-
-        let next = old + coef;
+        let next = buf[idx] + coef;
         buf[idx] = next;
-        let next_abs = next.abs();
-        let next_active = next_abs > COGNITIVE_PLANCK_CONSTANT;
-        if next_active {
+    }
+
+    // Defer Planck cutoff until after all duplicates are combined
+    active_mask = 0;
+    max_abs = 0.0;
+    clifford_norm_sq = 0.0;
+    for idx in 0..TOTAL_BLADES {
+        let coef = buf[idx];
+        let abs = coef.abs();
+        if abs > COGNITIVE_PLANCK_CONSTANT {
             active_mask |= 1_u16 << idx;
-            clifford_norm_sq += next * next * CLIFFORD_NORM_WEIGHTS_F64[idx];
-            max_abs = max_abs.max(next_abs);
-            if old_was_max && next_abs < old_abs {
-                needs_max_rescan = true;
-            }
+            max_abs = max_abs.max(abs);
+            clifford_norm_sq += coef * coef * CLIFFORD_NORM_WEIGHTS_F64[idx];
         } else {
-            active_mask &= !(1_u16 << idx);
             buf[idx] = 0.0;
-            if old_was_max {
-                needs_max_rescan = true;
-            }
         }
     }
 
     if active_mask == 0 {
         return Ok(SparseCliffordVector::zero());
-    }
-    if needs_max_rescan {
-        max_abs = 0.0;
-        let mut mask = active_mask;
-        while mask != 0 {
-            let i = mask.trailing_zeros() as usize;
-            max_abs = max_abs.max(buf[i].abs());
-            mask &= mask - 1;
-        }
     }
 
     Ok(SparseCliffordVector::from_dense_with_metadata(

@@ -109,6 +109,8 @@ struct FixedHeap<const CAP: usize> {
     data: [(f32, u32); CAP],
     len: usize,
     limit: usize,
+    worst_val: f32,
+    worst_idx: usize,
 }
 
 impl<const CAP: usize> FixedHeap<CAP> {
@@ -118,6 +120,8 @@ impl<const CAP: usize> FixedHeap<CAP> {
             data: [(f32::INFINITY, u32::MAX); CAP],
             len: 0,
             limit,
+            worst_val: f32::INFINITY,
+            worst_idx: 0,
         }
     }
 
@@ -126,18 +130,25 @@ impl<const CAP: usize> FixedHeap<CAP> {
     }
 
     const fn worst(&self) -> f32 {
+        self.worst_val
+    }
+
+    fn update_worst_cache(&mut self) {
         if self.len == 0 {
-            return f32::INFINITY;
+            self.worst_val = f32::INFINITY;
+            self.worst_idx = 0;
+            return;
         }
-        let mut worst = self.data[0].0;
-        let mut i = 1;
-        while i < self.len {
-            if self.data[i].0 > worst {
-                worst = self.data[i].0;
+        let mut worst = self.data[0];
+        let mut worst_idx = 0;
+        for i in 1..self.len {
+            if compare_dist_idx(self.data[i], worst).is_gt() {
+                worst = self.data[i];
+                worst_idx = i;
             }
-            i += 1;
         }
-        worst
+        self.worst_val = worst.0;
+        self.worst_idx = worst_idx;
     }
 
     fn pop_best(&mut self) -> Option<(f32, u32)> {
@@ -149,6 +160,10 @@ impl<const CAP: usize> FixedHeap<CAP> {
         if self.len > 0 {
             self.data[0] = self.data[self.len];
             self.sift_down(0);
+            self.update_worst_cache();
+        } else {
+            self.worst_val = f32::INFINITY;
+            self.worst_idx = 0;
         }
         Some(best)
     }
@@ -162,17 +177,15 @@ impl<const CAP: usize> FixedHeap<CAP> {
             self.data[self.len] = item;
             self.len += 1;
             self.sift_up(self.len - 1);
+            if self.len == 1 || compare_dist_idx(item, (self.worst_val, 0)).is_gt() {
+                self.worst_val = item.0;
+                self.worst_idx = self.len - 1;
+            }
             return true;
         }
 
-        let mut worst_idx = 0usize;
-        let mut worst = self.data[0];
-        for i in 1..self.len {
-            if compare_dist_idx(self.data[i], worst).is_gt() {
-                worst = self.data[i];
-                worst_idx = i;
-            }
-        }
+        let worst_idx = self.worst_idx;
+        let worst = self.data[worst_idx];
         if compare_dist_idx(item, worst).is_ge() {
             return false;
         }
@@ -184,6 +197,7 @@ impl<const CAP: usize> FixedHeap<CAP> {
         } else {
             self.sift_down(worst_idx);
         }
+        self.update_worst_cache();
         true
     }
 
@@ -1397,12 +1411,12 @@ impl HnswGraph {
     }
 
     /// Add an edge at a given layer (no duplicates).
+    /// Allows temporary oversubscription beyond max_neighbors for insertion flow.
     fn add_edge(&mut self, from_idx: usize, layer: usize, to_idx: usize, dist: f64) {
         if layer > self.nodes[from_idx].max_layer {
             return;
         }
         let _ = dist;
-        let max_neighbors = Self::layer_max_neighbors(layer);
         let adj = &mut self.layer_neighbors[from_idx];
         if layer == 0 {
             let to_idx_u32 = to_idx as u32;
@@ -1411,9 +1425,6 @@ impl HnswGraph {
                 .iter()
                 .any(|&packed| NodeAdj::unpack_layer0_neighbor(packed) == to_idx_u32)
             {
-                return;
-            }
-            if adj.layer0.len() >= max_neighbors {
                 return;
             }
             let slab_idx = self.layer0_soa.node_to_slab[to_idx];
@@ -1427,9 +1438,6 @@ impl HnswGraph {
             if neighbors.iter().any(|&v| v == to_idx_u32) {
                 return;
             }
-            if neighbors.len() >= max_neighbors {
-                return;
-            }
             neighbors.push(to_idx_u32);
         }
     }
@@ -1441,7 +1449,8 @@ impl HnswGraph {
         }
         let adj = &mut self.layer_neighbors[idx];
         if layer == 0 {
-            adj.layer0.sort_unstable_by_key(|packed| NodeAdj::unpack_layer0_neighbor(*packed));
+            adj.layer0
+                .sort_unstable_by_key(|packed| NodeAdj::unpack_layer0_neighbor(*packed));
             adj.layer0
                 .dedup_by_key(|packed| NodeAdj::unpack_layer0_neighbor(*packed));
             #[cfg(debug_assertions)]

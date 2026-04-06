@@ -675,14 +675,16 @@ fn prepare_laplacian_data(
         .map(NodeId::get)
         .filter(|&raw| raw != u64::MAX && usize::try_from(raw).is_ok())
         .collect();
-    let max_id = node_ids_raw.iter().copied().max().unwrap_or(0) as usize;
-    let map_size = max_id.saturating_add(1).next_power_of_two();
-    if id_to_dense.len() < map_size {
-        id_to_dense.resize(map_size, usize::MAX);
+    let dense_count = node_ids_raw.len();
+    if id_to_dense.len() < dense_count {
+        id_to_dense.resize(dense_count.max(256), usize::MAX);
     }
     let mut touched: SmallVec<[usize; 256]> = SmallVec::new();
     for (dense_idx, &raw) in node_ids_raw.iter().enumerate() {
         let raw_idx = raw as usize;
+        if raw_idx >= id_to_dense.len() {
+            id_to_dense.resize((raw_idx + 1).max(id_to_dense.len() * 2), usize::MAX);
+        }
         id_to_dense[raw_idx] = dense_idx;
         touched.push(raw_idx);
     }
@@ -1075,7 +1077,7 @@ mod tests {
             return 0.0;
         }
 
-        let sigma = degrees.iter().copied().fold(0.0f64, f64::max) + 1.0;
+        let sigma = degrees.iter().copied().fold(0.0f64, f64::max) + 1e-6;
         let mut v = vec![0.0; n];
         let mut y = vec![0.0; n];
         for (i, vi) in v.iter_mut().enumerate().take(n) {
@@ -1340,7 +1342,7 @@ mod tests {
             let power = power_iteration_lambda2_reference(&m, 800);
             let diff = (lanczos - power).abs();
             assert!(
-                diff < 1.0,
+                diff < 1e-6,
                 "lanczos={} power={} diff={} exceeds tolerance",
                 lanczos,
                 power,

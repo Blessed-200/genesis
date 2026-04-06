@@ -631,7 +631,17 @@ pub fn sparse_geometric_product_deterministic_strict(
     let pop_b = b.active_mask.count_ones();
 
     if pop_a == 1 && pop_b == 1 {
-        return Ok(single_blade_product_fast(a, b));
+        let i = a.active_mask.trailing_zeros() as usize;
+        let j = b.active_mask.trailing_zeros() as usize;
+        let k = i ^ j;
+        let coeff = a.coeffs[i] * b.coeffs[j] * f64::from(CAYLEY_SIGN[i][j]);
+        let abs = coeff.abs();
+        if abs <= COGNITIVE_PLANCK_CONSTANT || !coeff.is_finite() {
+            return Ok(None);
+        }
+        let mut result_buf = [0.0_f64; TOTAL_BLADES];
+        result_buf[k] = coeff;
+        return strict_finalize_result(result_buf);
     } else if pop_a == 1 || pop_b == 1 {
         geometric_product_scalar_sparse(
             &a.coeffs,

@@ -38,7 +38,8 @@
 
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo check --workspace 2>&1 | tee /dev/stderr | grep -q "^warning:" && { echo "Compiler warnings detected"; exit 1; } || true`
+- `cargo bench --workspace --no-run`
 
 ## 1.20 CRATE-002 cacheline-aligned SIMD + throughput benchmark phase (2026-04-04)
 
