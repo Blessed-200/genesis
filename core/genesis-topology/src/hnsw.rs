@@ -109,8 +109,6 @@ struct FixedHeap<const CAP: usize> {
     data: [(f32, u32); CAP],
     len: usize,
     limit: usize,
-    worst_val: f32,
-    worst_idx: usize,
 }
 
 impl<const CAP: usize> FixedHeap<CAP> {
@@ -120,8 +118,6 @@ impl<const CAP: usize> FixedHeap<CAP> {
             data: [(f32::INFINITY, u32::MAX); CAP],
             len: 0,
             limit,
-            worst_val: f32::INFINITY,
-            worst_idx: 0,
         }
     }
 
@@ -130,25 +126,11 @@ impl<const CAP: usize> FixedHeap<CAP> {
     }
 
     const fn worst(&self) -> f32 {
-        self.worst_val
-    }
-
-    fn update_worst_cache(&mut self) {
         if self.len == 0 {
-            self.worst_val = f32::INFINITY;
-            self.worst_idx = 0;
-            return;
+            f32::INFINITY
+        } else {
+            self.data[self.len - 1].0
         }
-        let mut worst = self.data[0];
-        let mut worst_idx = 0;
-        for i in 1..self.len {
-            if compare_dist_idx(self.data[i], worst).is_gt() {
-                worst = self.data[i];
-                worst_idx = i;
-            }
-        }
-        self.worst_val = worst.0;
-        self.worst_idx = worst_idx;
     }
 
     fn pop_best(&mut self) -> Option<(f32, u32)> {
@@ -156,15 +138,8 @@ impl<const CAP: usize> FixedHeap<CAP> {
             return None;
         }
         let best = self.data[0];
+        self.data.copy_within(1..self.len, 0);
         self.len -= 1;
-        if self.len > 0 {
-            self.data[0] = self.data[self.len];
-            self.sift_down(0);
-            self.update_worst_cache();
-        } else {
-            self.worst_val = f32::INFINITY;
-            self.worst_idx = 0;
-        }
         Some(best)
     }
 
@@ -172,72 +147,23 @@ impl<const CAP: usize> FixedHeap<CAP> {
         if !dist.is_finite() || self.limit == 0 {
             return false;
         }
-        let item = (dist, idx);
-        if self.len < self.limit {
-            self.data[self.len] = item;
-            self.len += 1;
-            self.sift_up(self.len - 1);
-            // Recompute worst after sift_up, as the inserted element may have moved
-            let mut worst_idx = 0;
-            let mut worst_val = self.data[0].0;
-            for i in 1..self.len {
-                if compare_dist_idx(self.data[i], self.data[worst_idx]).is_gt() {
-                    worst_idx = i;
-                    worst_val = self.data[i].0;
-                }
-            }
-            self.worst_idx = worst_idx;
-            self.worst_val = worst_val;
-            return true;
-        }
-
-        let worst_idx = self.worst_idx;
-        let worst = self.data[worst_idx];
-        if compare_dist_idx(item, worst).is_ge() {
+        if self.len == self.limit && compare_dist_idx((dist, idx), self.data[self.len - 1]).is_ge()
+        {
             return false;
         }
-        self.data[worst_idx] = item;
-        if worst_idx > 0
-            && compare_dist_idx(self.data[worst_idx], self.data[(worst_idx - 1) / 2]).is_lt()
-        {
-            self.sift_up(worst_idx);
+        let mut pos = self.len;
+        if self.len < self.limit {
+            self.len += 1;
         } else {
-            self.sift_down(worst_idx);
+            pos = self.limit - 1;
         }
-        self.update_worst_cache();
+        let item = (dist, idx);
+        while pos > 0 && compare_dist_idx(item, self.data[pos - 1]).is_lt() {
+            self.data[pos] = self.data[pos - 1];
+            pos -= 1;
+        }
+        self.data[pos] = item;
         true
-    }
-
-    fn sift_up(&mut self, mut idx: usize) {
-        while idx > 0 {
-            let parent = (idx - 1) / 2;
-            if compare_dist_idx(self.data[idx], self.data[parent]).is_lt() {
-                self.data.swap(idx, parent);
-                idx = parent;
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn sift_down(&mut self, mut idx: usize) {
-        loop {
-            let left = idx * 2 + 1;
-            if left >= self.len {
-                break;
-            }
-            let right = left + 1;
-            let mut smallest = left;
-            if right < self.len && compare_dist_idx(self.data[right], self.data[left]).is_lt() {
-                smallest = right;
-            }
-            if compare_dist_idx(self.data[smallest], self.data[idx]).is_lt() {
-                self.data.swap(idx, smallest);
-                idx = smallest;
-            } else {
-                break;
-            }
-        }
     }
 
     fn as_slice(&self) -> &[(f32, u32)] {
@@ -756,7 +682,6 @@ impl NodeAdj {
     }
 
     #[inline]
-    #[allow(dead_code)]
     fn add_neighbor(
         &mut self,
         layer: usize,
@@ -1385,15 +1310,10 @@ impl HnswGraph {
 
             // Add bidirectional edges
             let new_idx = self.nodes.len() - 1; // last inserted
-            let mut prune_queue: SmallVec<[usize; 64]> = SmallVec::new();
             for &(nb_idx, dist) in &neighbours {
                 self.add_edge(new_idx, lc, nb_idx, dist);
                 self.add_edge(nb_idx, lc, new_idx, dist);
-                prune_queue.push(nb_idx);
-            }
-            self.sort_adjacency(new_idx, lc);
-            for &nb_idx in &prune_queue {
-                self.sort_adjacency(nb_idx, lc);
+                // Prune nb if it exceeds m_max
                 self.prune_layer(nb_idx, lc, m_max);
             }
 
@@ -1418,55 +1338,20 @@ impl HnswGraph {
     }
 
     /// Add an edge at a given layer (no duplicates).
-    /// Allows temporary oversubscription beyond max_neighbors for insertion flow.
     fn add_edge(&mut self, from_idx: usize, layer: usize, to_idx: usize, dist: f64) {
         if layer > self.nodes[from_idx].max_layer {
             return;
         }
         let _ = dist;
-        let adj = &mut self.layer_neighbors[from_idx];
-        if layer == 0 {
-            let to_idx_u32 = to_idx as u32;
-            if adj
-                .layer0
-                .iter()
-                .any(|&packed| NodeAdj::unpack_layer0_neighbor(packed) == to_idx_u32)
-            {
-                return;
-            }
-            let slab_idx = self.layer0_soa.node_to_slab[to_idx];
-            adj.layer0.push(NodeAdj::pack_layer0(to_idx_u32, slab_idx));
-            adj.update_layer0_group_insert(slab_idx);
+        let max_neighbors = Self::layer_max_neighbors(layer);
+        if self.layer_neighbors[from_idx].add_neighbor(
+            layer,
+            to_idx as u32,
+            self.layer0_soa.node_to_slab[to_idx],
+            max_neighbors,
+        ) && layer == 0
+        {
             self.edge_count_layer0_undirected += 1;
-            return;
-        }
-        if let Some(neighbors) = adj.neighbors_mut(layer) {
-            let to_idx_u32 = to_idx as u32;
-            if neighbors.iter().any(|&v| v == to_idx_u32) {
-                return;
-            }
-            neighbors.push(to_idx_u32);
-        }
-    }
-
-    #[inline]
-    fn sort_adjacency(&mut self, idx: usize, layer: usize) {
-        if layer > self.nodes[idx].max_layer {
-            return;
-        }
-        let adj = &mut self.layer_neighbors[idx];
-        if layer == 0 {
-            adj.layer0
-                .sort_unstable_by_key(|packed| NodeAdj::unpack_layer0_neighbor(*packed));
-            adj.layer0
-                .dedup_by_key(|packed| NodeAdj::unpack_layer0_neighbor(*packed));
-            #[cfg(debug_assertions)]
-            adj.assert_layer0_sorted();
-            return;
-        }
-        if let Some(neighbors) = adj.neighbors_mut(layer) {
-            neighbors.sort_unstable();
-            neighbors.dedup();
         }
     }
 
@@ -1728,9 +1613,6 @@ impl HnswGraph {
                 for &(dist_sq, idx) in results.as_slice() {
                     scratch.out.push((idx as usize, f64::from(dist_sq)));
                 }
-                scratch
-                    .out
-                    .sort_unstable_by(|lhs, rhs| lhs.1.total_cmp(&rhs.1).then_with(|| lhs.0.cmp(&rhs.0)));
                 std::mem::take(&mut scratch.out)
             })
         })
@@ -1839,9 +1721,6 @@ impl HnswGraph {
                 for &(dist_sq, idx) in results.as_slice() {
                     scratch.out.push((idx as usize, f64::from(dist_sq)));
                 }
-                scratch
-                    .out
-                    .sort_unstable_by(|lhs, rhs| lhs.1.total_cmp(&rhs.1).then_with(|| lhs.0.cmp(&rhs.0)));
                 std::mem::take(&mut scratch.out)
             })
         })
