@@ -267,10 +267,7 @@ fn single_blade_product_fast(
     let mask = 1_u16 << k;
     let norm_sq = coeff * coeff * crate::grade::CLIFFORD_NORM_WEIGHTS_F64[k];
     Some(SparseCliffordVector::from_dense_with_metadata(
-        result_buf,
-        mask,
-        abs,
-        norm_sq,
+        result_buf, mask, abs, norm_sq,
     ))
 }
 

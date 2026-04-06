@@ -607,11 +607,17 @@ fn shifted_mv_inplace(
     x: &[f64],
     out: &mut [f64],
 ) {
-    #[cfg(target_arch = "x86_64")]
-    let use_avx = std::arch::is_x86_feature_detected!("avx2")
-        && std::arch::is_x86_feature_detected!("fma");
-    #[cfg(not(target_arch = "x86_64"))]
-    let use_avx = false;
+    let use_avx = {
+        #[cfg(target_arch = "x86_64")]
+        {
+            std::arch::is_x86_feature_detected!("avx2")
+                && std::arch::is_x86_feature_detected!("fma")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    };
 
     for i in 0..n {
         let (start, end) = adj_offsets[i];
