@@ -204,6 +204,7 @@ fn reduce_blocks(
             if !block.states[lane].contributes_to_sync() {
                 continue;
             }
+            #[cfg(target_arch = "x86_64")]
             if use_avx2 {
                 // SAFETY: guarded by runtime AVX2/FMA detection.
                 unsafe {

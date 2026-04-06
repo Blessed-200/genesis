@@ -132,6 +132,7 @@ impl Z2Matrix {
                     if (self.data[row_pivot_idx] & pivot_bit) != 0 {
                         let base = row * wpr + pivot_word;
                         let len = wpr - pivot_word;
+                        #[cfg(target_arch = "x86_64")]
                         if avx2 {
                             let mut i = 0usize;
                             while i + 4 <= len {
@@ -583,6 +584,7 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
     let avx2 = false;
 
     for _ in 0..iterations {
+        #[cfg(target_arch = "x86_64")]
         if avx2 {
             let mut i = 0usize;
             while i + 4 <= words_per_row {

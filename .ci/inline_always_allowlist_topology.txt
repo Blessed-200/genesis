@@ -8,3 +8,5 @@ core/genesis-topology/src/geodesic.rs:66
 core/genesis-topology/src/manifold.rs:278
 core/genesis-topology/src/manifold.rs:467
 core/genesis-topology/src/manifold.rs:474
+core/genesis-topology/src/cohomology.rs:201
+core/genesis-topology/src/manifold.rs:635

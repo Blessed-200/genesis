@@ -617,6 +617,7 @@ fn shifted_mv_inplace(
         let (start, end) = adj_offsets[i];
         out[i] = (sigma - degrees[i]) * x[i];
         let neighbors = &adj_flat[start..end];
+        #[cfg(target_arch = "x86_64")]
         if use_avx {
             // SAFETY: AVX2/FMA feature checks are done at runtime.
             out[i] += unsafe { shifted_mv_sum_neighbors_avx2(x, neighbors) };
@@ -677,20 +678,23 @@ fn prepare_laplacian_data(
     mut seen_generation: u32,
     id_to_dense: &mut Vec<usize>,
 ) -> (f64, u32) {
+    const MAX_VALID: u64 = 1_000_000_000;
     let node_ids_raw: Vec<u64> = graph
         .nodes()
         .map(NodeId::get)
-        .filter(|&raw| raw != u64::MAX && usize::try_from(raw).is_ok())
+        .filter(|&raw| raw != u64::MAX && raw <= MAX_VALID && usize::try_from(raw).is_ok())
         .collect();
     let dense_count = node_ids_raw.len();
-    if id_to_dense.len() < dense_count {
-        id_to_dense.resize(dense_count.max(256), usize::MAX);
+    let max_raw = node_ids_raw.iter().copied().max().unwrap_or(0) as usize;
+    let required_len = max_raw.saturating_add(1).min(dense_count.saturating_mul(2).max(256));
+    if id_to_dense.len() < required_len {
+        id_to_dense.resize(required_len, usize::MAX);
     }
     let mut touched: SmallVec<[usize; 256]> = SmallVec::new();
     for (dense_idx, &raw) in node_ids_raw.iter().enumerate() {
         let raw_idx = raw as usize;
         if raw_idx >= id_to_dense.len() {
-            id_to_dense.resize((raw_idx + 1).max(id_to_dense.len() * 2), usize::MAX);
+            continue;
         }
         id_to_dense[raw_idx] = dense_idx;
         touched.push(raw_idx);
