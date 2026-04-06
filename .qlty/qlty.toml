@@ -3,6 +3,9 @@ minimum_grade = "A"
 new_code_minimum_grade = "A"
 no_new_debt = true
 
+[coverage]
+minimum_coverage = 85.0
+
 [security.thresholds]
 critical = 0
 high = 0
