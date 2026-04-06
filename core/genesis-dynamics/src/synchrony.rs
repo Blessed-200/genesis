@@ -191,8 +191,8 @@ fn reduce_blocks(
         KahanAccumulator::new(),
     ); 5];
     #[cfg(target_arch = "x86_64")]
-    let use_avx2 = std::arch::is_x86_feature_detected!("avx2")
-        && std::arch::is_x86_feature_detected!("fma");
+    let use_avx2 =
+        std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma");
     #[cfg(not(target_arch = "x86_64"))]
     let use_avx2 = false;
 

@@ -157,8 +157,6 @@ impl Z2Matrix {
                                 i += 1;
                             }
                         }
-                        #[cfg(not(target_arch = "x86_64"))]
-                        let avx2 = false;
                         if !avx2 {
                             let mut i = 0;
                             while i + 4 <= len {

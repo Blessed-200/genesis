@@ -683,18 +683,14 @@ fn prepare_laplacian_data(
         .map(NodeId::get)
         .filter(|&raw| raw != u64::MAX && usize::try_from(raw).is_ok())
         .collect();
-    let dense_count = node_ids_raw.len();
     let max_raw = node_ids_raw.iter().copied().max().unwrap_or(0) as usize;
-    let required_len = max_raw.saturating_add(1).min(dense_count.saturating_mul(2).max(256));
+    let required_len = max_raw.saturating_add(1);
     if id_to_dense.len() < required_len {
         id_to_dense.resize(required_len, usize::MAX);
     }
     let mut touched: SmallVec<[usize; 256]> = SmallVec::new();
     for (dense_idx, &raw) in node_ids_raw.iter().enumerate() {
         let raw_idx = raw as usize;
-        if raw_idx >= id_to_dense.len() {
-            continue;
-        }
         id_to_dense[raw_idx] = dense_idx;
         touched.push(raw_idx);
     }
