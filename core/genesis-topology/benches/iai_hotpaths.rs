@@ -4,30 +4,15 @@ use std::sync::OnceLock;
 
 use genesis_math::{fast_metric_distance_sq, SparseCliffordVector};
 use genesis_topology::{HnswGraph, RipsComplex};
-use genesis_types::NodeId;
 use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 
-fn make_vec(seed: u64) -> SparseCliffordVector {
-    let s = (seed as f64).mul_add(0.01, 0.05);
-    SparseCliffordVector::from_iter((0..4).map(|b| (b, s * (b as f64 + 1.0))))
-        .expect("finite vector")
-}
-
-fn graph_fixture(nodes: usize) -> HnswGraph {
-    let mut graph = HnswGraph::new(16);
-    for i in 0..nodes {
-        let v = make_vec(i as u64);
-        graph
-            .insert(NodeId::try_new(i as u64).expect("valid NodeId"), &v)
-            .expect("insert must succeed");
-    }
-    graph
-}
+mod bench_utils;
+use bench_utils::{build_test_graph, make_vec};
 
 fn hnsw_fixture() -> &'static (HnswGraph, SparseCliffordVector) {
     static FIXTURE: OnceLock<(HnswGraph, SparseCliffordVector)> = OnceLock::new();
     FIXTURE.get_or_init(|| {
-        let graph = graph_fixture(8_192);
+        let graph = build_test_graph(8_192);
         let query = make_vec(4_096);
         (graph, query)
     })
@@ -44,7 +29,7 @@ fn distance_fixture() -> &'static (SparseCliffordVector, Vec<SparseCliffordVecto
 
 fn rips_fixture() -> &'static HnswGraph {
     static FIXTURE: OnceLock<HnswGraph> = OnceLock::new();
-    FIXTURE.get_or_init(|| graph_fixture(4_096))
+    FIXTURE.get_or_init(|| build_test_graph(4_096))
 }
 
 #[library_benchmark]

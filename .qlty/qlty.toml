@@ -1,0 +1,47 @@
+[project]
+minimum_grade = "A"
+new_code_minimum_grade = "A"
+no_new_debt = true
+
+[coverage]
+minimum_coverage = 85.0
+
+[security.thresholds]
+critical = 0
+high = 0
+medium = 0
+low = 2
+max_finding_age_days = 30
+confirmed_secret_leaks = 0
+
+[maintainability.thresholds]
+new_critical = 0
+new_high = 0
+technical_debt_ratio_percent = 3.0
+global_duplication_percent = 2.0
+new_code_duplication_percent = 1.0
+max_cyclomatic_non_hot_path = 10
+max_cyclomatic_hot_path = 6
+
+[[path_rules]]
+pattern = "**/benches/**"
+style_severity = "low"
+security_severity = "high"
+correctness_severity = "high"
+
+[[path_rules]]
+pattern = "**/tests/**"
+style_severity = "low"
+security_severity = "high"
+correctness_severity = "high"
+
+[[path_rules]]
+pattern = "core/**"
+style_severity = "high"
+security_severity = "high"
+correctness_severity = "high"
+performance_severity = "high"
+
+[sca]
+enabled = true
+tool = "cargo-deny"

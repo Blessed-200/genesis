@@ -16,10 +16,8 @@ use genesis_topology::{
 };
 use genesis_types::NodeId;
 
-fn make_vec(id: u64) -> SparseCliffordVector {
-    let s = (id as f64).mul_add(0.01, 0.05);
-    SparseCliffordVector::from_iter((0..4).map(|b| (b, s * (b as f64 + 1.0)))).unwrap()
-}
+mod bench_utils;
+use bench_utils::make_vec;
 
 fn bench_rank_by_gaussian_elimination_throughput(c: &mut Criterion) {
     c.bench_function("rank_by_gaussian_elimination_throughput", |b| {

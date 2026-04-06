@@ -422,15 +422,16 @@ impl ManifoldCollector {
                 seen_generation: seen_generation_ref,
             } = &mut *ws;
 
-            let (sigma, seen_generation) = prepare_laplacian_data(
-                &self.graph,
-                n,
-                &mut degrees[..n],
+            let mut laplacian_workspace = LaplacianWorkspace {
+                degrees: &mut degrees[..n],
                 adj_flat,
-                &mut adj_offsets[..n],
-                &mut seen_marks[..n],
-                *seen_generation_ref,
-            );
+                adj_offsets: &mut adj_offsets[..n],
+                seen_marks: &mut seen_marks[..n],
+                seen_generation: *seen_generation_ref,
+            };
+
+            let (sigma, seen_generation) =
+                prepare_laplacian_data(&self.graph, n, &mut laplacian_workspace);
             *seen_generation_ref = seen_generation;
 
             if sigma == 0.0 {
@@ -610,15 +611,26 @@ fn shifted_mv_inplace(
     }
 }
 
+struct LaplacianWorkspace<'a> {
+    degrees: &'a mut [f64],
+    adj_flat: &'a mut Vec<usize>,
+    adj_offsets: &'a mut [(usize, usize)],
+    seen_marks: &'a mut [u32],
+    seen_generation: u32,
+}
+
 fn prepare_laplacian_data(
     graph: &HnswGraph,
     n: usize,
-    degrees: &mut [f64],
-    adj_flat: &mut Vec<usize>,
-    adj_offsets: &mut [(usize, usize)],
-    seen_marks: &mut [u32],
-    mut seen_generation: u32,
+    workspace: &mut LaplacianWorkspace<'_>,
 ) -> (f64, u32) {
+    let LaplacianWorkspace {
+        degrees,
+        adj_flat,
+        adj_offsets,
+        seen_marks,
+        seen_generation,
+    } = workspace;
     let node_ids_raw: Vec<u64> = graph
         .nodes()
         .map(NodeId::get)
@@ -635,16 +647,16 @@ fn prepare_laplacian_data(
 
     for (idx, &raw_id) in node_ids_raw.iter().enumerate().take(n) {
         let start = adj_flat.len();
-        seen_generation = seen_generation.wrapping_add(1);
-        if seen_generation == 0 {
+        *seen_generation = seen_generation.wrapping_add(1);
+        if *seen_generation == 0 {
             seen_marks.fill(0);
-            seen_generation = 1;
+            *seen_generation = 1;
         }
 
         let pushed = graph.extend_neighbors_dedup(
             NodeId::try_new(raw_id).expect("NodeId válido por construcción"),
             seen_marks,
-            seen_generation,
+            *seen_generation,
             adj_flat,
         );
         let end = adj_flat.len();
@@ -666,7 +678,7 @@ fn prepare_laplacian_data(
     }
 
     if degrees.iter().sum::<f64>() == 0.0 {
-        return (0.0, seen_generation);
+        return (0.0, *seen_generation);
     }
 
     (
@@ -675,7 +687,7 @@ fn prepare_laplacian_data(
         // Lanczos spectrum and inflating λ₂ estimates. 1e-6 is a minimal
         // regulariser that prevents division by zero without spectral distortion.
         degrees.iter().copied().fold(0.0f64, f64::max) + 1e-6_f64,
-        seen_generation,
+        *seen_generation,
     )
 }
 

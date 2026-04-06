@@ -484,26 +484,7 @@ pub fn sparse_geometric_product(
             .flatten();
     }
 
-    // ── CS gate (Mandato §2.3) ────────────────────────────────────────────────
-    // Non-finite max_abs_coeff = upstream corruption. Quarantine immediately.
-    if !a.max_abs_coeff.is_finite() || !b.max_abs_coeff.is_finite() {
-        return None;
-    }
-    // Provable upper bound: for each blade k of the result,
-    //   |result[k]| ≤ Σ_{i⊕j=k} |aᵢ||bⱼ| ≤ 16 · max_abs_a · max_abs_b
-    // (exactly 16 pairs `(i, i⊕k)` for each fixed k).
-    // If 16 · max_abs_a · max_abs_b < PLANCK → all blades are sub-Planck.
-    // Fix [B1]: previous bound (without factor 16) suppressed real products in [PLANCK/16, PLANCK].
-    #[allow(clippy::cast_precision_loss)]
-    // TOTAL_BLADES = 16, exactly representable as f64.
-    // f64 mantissa = 52 bits; 16 = 2^4, without precision loss.
-    if a.max_abs_coeff * b.max_abs_coeff * (TOTAL_BLADES as f64) < COGNITIVE_PLANCK_CONSTANT {
-        return None;
-    }
-    // Zero multivectors (active_mask = 0) have max_abs_coeff = 0.0, so they
-    // are already caught by the threshold test above. This guard is belt-and-
-    // suspenders for the case where max_abs_coeff was manually zeroed.
-    if a.active_mask == 0 || b.active_mask == 0 {
+    if !validate_product_inputs(a, b) {
         return None;
     }
 
@@ -546,6 +527,23 @@ pub fn sparse_geometric_product(
         metadata.max_abs_coeff,
         metadata.clifford_norm_sq,
     ))
+}
+
+#[inline]
+fn validate_product_inputs(a: &SparseCliffordVector, b: &SparseCliffordVector) -> bool {
+    if !a.max_abs_coeff.is_finite() || !b.max_abs_coeff.is_finite() {
+        return false;
+    }
+    #[allow(clippy::cast_precision_loss)]
+    // TOTAL_BLADES = 16, exactly representable as f64.
+    // f64 mantissa = 52 bits; 16 = 2^4, without precision loss.
+    if a.max_abs_coeff * b.max_abs_coeff * (TOTAL_BLADES as f64) < COGNITIVE_PLANCK_CONSTANT {
+        return false;
+    }
+    // Zero multivectors (active_mask = 0) have max_abs_coeff = 0.0, so they
+    // are already caught by the threshold test above. This guard is belt-and-
+    // suspenders for the case where max_abs_coeff was manually zeroed.
+    a.active_mask != 0 && b.active_mask != 0
 }
 
 /// Computes A * B using an explicit execution mode.
@@ -673,6 +671,33 @@ const BIVECTOR_LANE_MAP: [i8; 16] = [-1, -1, -1, 0, -1, 1, 2, -1, -1, 3, 4, -1, 
 /// Packed Lorentz weights aligned with lane order [3, 5, 6, 9, 10, 12].
 const BIVECTOR_LANE_WEIGHTS: [f64; 6] = [-1.0, -1.0, 1.0, -1.0, 1.0, 1.0];
 
+#[inline]
+fn accumulate_bivector_contributions(
+    coeffs_a: &[f64; TOTAL_BLADES],
+    mut mask_a: u16,
+    coeffs_b: &[f64; TOTAL_BLADES],
+    mask_b: u16,
+    result_buf: &mut [f64; 6],
+) {
+    while mask_a != 0 {
+        let i = mask_a.trailing_zeros() as usize;
+        let coef_a = coeffs_a[i];
+        let row = &CAYLEY_SIGN[i];
+        let mut active_b = mask_b;
+        while active_b != 0 {
+            let j = active_b.trailing_zeros() as usize;
+            let lane = BIVECTOR_LANE_MAP[i ^ j];
+            if lane >= 0 {
+                let lane_idx = lane as usize;
+                result_buf[lane_idx] =
+                    coef_a.mul_add(coeffs_b[j] * f64::from(row[j]), result_buf[lane_idx]);
+            }
+            active_b &= active_b - 1;
+        }
+        mask_a &= mask_a - 1;
+    }
+}
+
 /// Computes the Lorentz-signed bivector norm squared of the geometric product \(AB\).
 ///
 /// Mathematical definition:
@@ -711,24 +736,13 @@ pub fn bivector_norm_sq_of_product(
 
     // Inner loop identical to the path general of sparse_geometric_product.
     // The compiler vectorizes this loop with VFMADD when active_mask = 0xFFFF.
-    let mut mask_a = a.active_mask;
-    while mask_a != 0 {
-        let i = mask_a.trailing_zeros() as usize;
-        let coef_a = a.coeffs[i];
-        let row = &CAYLEY_SIGN[i];
-        let mut mask_b = b.active_mask;
-        while mask_b != 0 {
-            let j = mask_b.trailing_zeros() as usize;
-            let k = i ^ j;
-            let lane = BIVECTOR_LANE_MAP[k];
-            if lane >= 0 {
-                bivector_buf[lane as usize] =
-                    coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
-            }
-            mask_b &= mask_b - 1;
-        }
-        mask_a &= mask_a - 1;
-    }
+    accumulate_bivector_contributions(
+        &a.coeffs,
+        a.active_mask,
+        &b.coeffs,
+        b.active_mask,
+        &mut bivector_buf,
+    );
 
     let mut norm_sq = 0.0f64;
     let mut has_signal = false;
@@ -790,24 +804,7 @@ pub fn bivector_norm_sq_of_product_lhs_dense(
 
     let mut bivector_buf = [0.0f64; 6];
 
-    let mut mask_a = a_mask;
-    while mask_a != 0 {
-        let i = mask_a.trailing_zeros() as usize;
-        let coef_a = a_dense[i];
-        let row = &CAYLEY_SIGN[i];
-        let mut mask_b = b.active_mask;
-        while mask_b != 0 {
-            let j = mask_b.trailing_zeros() as usize;
-            let k = i ^ j;
-            let lane = BIVECTOR_LANE_MAP[k];
-            if lane >= 0 {
-                bivector_buf[lane as usize] =
-                    coef_a.mul_add(b.coeffs[j] * f64::from(row[j]), bivector_buf[lane as usize]);
-            }
-            mask_b &= mask_b - 1;
-        }
-        mask_a &= mask_a - 1;
-    }
+    accumulate_bivector_contributions(a_dense, a_mask, &b.coeffs, b.active_mask, &mut bivector_buf);
 
     let mut norm_sq = 0.0f64;
     let mut has_signal = false;

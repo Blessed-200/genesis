@@ -1,0 +1,13 @@
+version: 1
+last_updated: 2026-04-06
+owner: "GENESIS Security Owners"
+policy:
+  max_waiver_duration_days: 14
+  required_fields:
+    - id
+    - owner
+    - justification
+    - expires_on
+    - ticket
+    - approved_by
+waivers: []

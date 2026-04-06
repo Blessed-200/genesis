@@ -1775,3 +1775,80 @@ Remaining risk:
 - `cargo test --workspace`
 - `cargo clippy --workspace --all-targets`
 - `! cargo check --workspace 2>&1 | grep -q '^warning:'`
+
+## 1.21 Laplacian workspace parameter grouping + benchmark helper dedup (2026-04-06)
+
+### Root cause
+
+- Benchmark fixtures in `core/genesis-topology/benches/hnsw_hotpaths.rs` and `core/genesis-topology/benches/iai_hotpaths.rs` duplicate the same vector fixture and graph-construction logic, increasing maintenance cost and drift risk.
+- `prepare_laplacian_data` in `core/genesis-topology/src/manifold.rs` currently takes many mutable buffers as separate parameters, inflating call-site complexity and obscuring the workspace contract.
+
+### File-level actions
+
+1. `core/genesis-topology/benches/bench_utils.rs`
+   - Add canonical `make_vec(seed: u64) -> SparseCliffordVector` helper.
+   - Add shared `build_test_graph(size: usize) -> HnswGraph` fixture builder.
+2. `core/genesis-topology/benches/hnsw_hotpaths.rs`
+   - Import shared helpers from `bench_utils` and remove local duplicated helper definitions.
+3. `core/genesis-topology/benches/iai_hotpaths.rs`
+   - Import shared helpers from `bench_utils` and remove local duplicated helper definitions.
+4. `core/genesis-topology/benches/topology.rs`
+   - Reuse shared `make_vec` helper for benchmark consistency.
+5. `core/genesis-topology/src/manifold.rs`
+   - Introduce private `LaplacianWorkspace<'a>` grouping mutable laplacian-preparation buffers.
+   - Refactor `prepare_laplacian_data` signature to accept `&mut LaplacianWorkspace<'_>`.
+   - Update `compute_lambda2` call site to construct and pass the grouped workspace.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.22 CRATE-002 product.rs complexity reduction (2026-04-06)
+
+### Root cause
+
+- `sparse_geometric_product` duplicates early-return guard logic (non-finite metadata, CS-gate threshold, and zero active mask), increasing branch count and control-flow complexity.
+- Bivector norm helpers duplicate nested active-blade traversal loops in two functions, increasing nesting depth and file-level cyclomatic complexity.
+
+### File-level actions
+
+1. `core/genesis-math/src/product.rs`
+   - Add private `validate_product_inputs(a, b) -> bool` and replace three guard blocks in `sparse_geometric_product` with a single gate.
+   - Extract shared active-blade accumulation logic into private `accumulate_bivector_contributions(...)`.
+   - Reuse the helper in both `bivector_norm_sq_of_product` and `bivector_norm_sq_of_product_lhs_dense`.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-math -- geometric_product --output-format bencher`
+
+## 1.23 CI coverage + Qlty gate hardening (2026-04-06)
+
+### Root cause
+
+- The main CI workflow does not yet include a dedicated coverage publication job, so coverage data is not uploaded to Qlty as a first-class gate signal.
+- There is no explicit Qlty quality/security gate job wired into the production decision path.
+- Dependency SCA (`cargo deny`) is not executed as an isolated CI quality step.
+
+### File-level actions
+
+1. `.github/workflows/Rust.yml`
+   - Add `coverage` job after `invariants`, using `cargo llvm-cov` and Qlty coverage upload.
+   - Add `qlty-gate` job after `lint-build-test` with standalone `cargo deny check`.
+   - Keep existing debug/release workspace test steps unchanged.
+   - Extend `production-gate` dependencies/decision logic to include `coverage` and `qlty-gate`.
+2. `.qlty/qlty.toml`
+   - Add repository-level quality/security thresholds and path-sensitive policy.
+3. `security/waivers.yaml`
+   - Add signed-exception registry scaffold for expiring security waivers.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `python -c "import yaml; yaml.safe_load(open('security/waivers.yaml'))"`
