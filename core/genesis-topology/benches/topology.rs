@@ -8,7 +8,10 @@
 
 use std::time::{Duration, Instant};
 
+mod bench_utils;
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use bench_utils::make_vec;
 use genesis_math::{fast_metric_distance, fast_metric_distance_sq, SparseCliffordVector};
 use genesis_topology::{
     benchmark_rank_by_gaussian_elimination, benchmark_xor_row_elimination, geometric_distance,
@@ -16,10 +19,6 @@ use genesis_topology::{
 };
 use genesis_types::NodeId;
 
-fn make_vec(id: u64) -> SparseCliffordVector {
-    let s = (id as f64).mul_add(0.01, 0.05);
-    SparseCliffordVector::from_iter((0..4).map(|b| (b, s * (b as f64 + 1.0)))).unwrap()
-}
 
 fn bench_rank_by_gaussian_elimination_throughput(c: &mut Criterion) {
     c.bench_function("rank_by_gaussian_elimination_throughput", |b| {
