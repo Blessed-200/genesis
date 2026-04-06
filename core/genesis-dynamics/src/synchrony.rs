@@ -234,7 +234,7 @@ fn reduce_blocks(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[inline(always)]
+#[inline]
 unsafe fn reduce_lane_avx2(
     block: &crate::oscillator::OscillatorBlock,
     lane: usize,

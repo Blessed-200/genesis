@@ -678,11 +678,10 @@ fn prepare_laplacian_data(
     mut seen_generation: u32,
     id_to_dense: &mut Vec<usize>,
 ) -> (f64, u32) {
-    const MAX_VALID: u64 = 1_000_000_000;
     let node_ids_raw: Vec<u64> = graph
         .nodes()
         .map(NodeId::get)
-        .filter(|&raw| raw != u64::MAX && raw <= MAX_VALID && usize::try_from(raw).is_ok())
+        .filter(|&raw| raw != u64::MAX && usize::try_from(raw).is_ok())
         .collect();
     let dense_count = node_ids_raw.len();
     let max_raw = node_ids_raw.iter().copied().max().unwrap_or(0) as usize;
@@ -870,7 +869,7 @@ fn power_refine_shifted_eigenvalue(
         for yi in y.iter_mut() {
             *yi /= y_norm;
         }
-        if (rayleigh - lambda_prev).abs() < 1e-8 {
+        if (rayleigh - lambda_prev).abs() < 1e-10 {
             v.copy_from_slice(y);
             break;
         }
@@ -1350,7 +1349,7 @@ mod tests {
             }
 
             let lanczos = m.compute_lambda2();
-            let power = power_iteration_lambda2_reference(&m, 800);
+            let power = power_iteration_lambda2_reference(&m, POWER_REFINE_MAX_ITERS);
             let diff = (lanczos - power).abs();
             assert!(
                 diff < 1e-6,
@@ -1498,6 +1497,47 @@ mod tests {
         assert!(
             (got - expected).abs() < 1e-12,
             "d(0,(0.5,0)) = {got}, esperado {expected}"
+        );
+    }
+
+    /// Test power refinement eigenvalue accuracy on a small matrix with known λ₂.
+    /// Uses a path graph: 0—1—2—3—4, which has known eigenvalues.
+    /// The second smallest eigenvalue of the normalized Laplacian of a path graph
+    /// can be computed analytically. For n=5, λ₂ ≈ 0.382 (1 - cos(π/5)).
+    #[test]
+    fn power_refine_eigenvalue_accuracy() {
+        let mut m = ManifoldCollector::new(16);
+        // Create a path graph: vectors arranged so HNSW builds near-linear connections
+        for i in 0..5u64 {
+            let base = (i as f64) * 0.5;
+            let vec = SparseCliffordVector::from_iter((0..4).map(|b| (b, base * (b as f64 + 1.0))))
+                .expect("vector must be valid");
+            m.insert(NodeId::try_new(i).unwrap(), &vec).unwrap();
+        }
+
+        let lambda2 = m.compute_lambda2();
+
+        // For a connected graph, λ₂ should be positive
+        assert!(
+            lambda2 > 0.0,
+            "λ₂ must be positive for connected graph, got {lambda2}"
+        );
+
+        // For a path graph of 5 nodes, λ₂ ≈ 0.382 (theoretical),
+        // but HNSW may add extra edges. We check λ₂ is in reasonable range [0.1, 1.5].
+        assert!(
+            lambda2 >= 0.1 && lambda2 <= 1.5,
+            "λ₂ should be in reasonable range for small connected graph, got {lambda2}"
+        );
+
+        // Verify convergence by running power iteration reference with same parameters
+        let power_lambda2 = power_iteration_lambda2_reference(&m, POWER_REFINE_MAX_ITERS);
+        let error = (lambda2 - power_lambda2).abs();
+
+        // The tightened 1e-10 convergence criterion should give error < 1e-8
+        assert!(
+            error < 1e-8,
+            "Power refinement eigenvalue error {error} exceeds 1e-8 tolerance (lanczos={lambda2}, power={power_lambda2})"
         );
     }
 

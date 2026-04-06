@@ -156,7 +156,10 @@ impl Z2Matrix {
                                 }
                                 i += 1;
                             }
-                        } else {
+                        }
+                        #[cfg(not(target_arch = "x86_64"))]
+                        let avx2 = false;
+                        if !avx2 {
                             let mut i = 0;
                             while i + 4 <= len {
                                 // SAFETY: `base + i + k < base + len <= row * wpr + wpr`, so all
@@ -598,7 +601,10 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
                 dst[i] ^= pivot[i];
                 i += 1;
             }
-        } else {
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let avx2 = false;
+        if !avx2 {
             for (dst_word, pivot_word) in dst.iter_mut().zip(pivot.iter()) {
                 *dst_word ^= *pivot_word;
             }
