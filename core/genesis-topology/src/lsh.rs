@@ -231,30 +231,22 @@ impl CliffordHashTable {
         let packed = pack_bivector_coeffs(query);
         let bucket_slices: [&[NodeId]; N_TABLES] =
             core::array::from_fn(|t| self.tables[t].get(self.hash_packed_bivector(&packed, t)));
-        let bucket_lens: [usize; N_TABLES] = core::array::from_fn(|i| bucket_slices[i].len());
         let mut cursors = [0usize; N_TABLES];
         let mut last_emitted: Option<NodeId> = None;
-        let mut heap = SmallMergeHeap::new();
-        for table_idx in 0..N_TABLES {
-            if bucket_lens[table_idx] == 0 {
-                continue;
-            }
-            heap.push(HeapEntry {
-                id: bucket_slices[table_idx][0],
-                table_idx,
-            });
-        }
         core::iter::from_fn(move || loop {
-            let entry = heap.pop()?;
-            let table_idx = entry.table_idx;
-            let id = entry.id;
-            cursors[table_idx] += 1;
-            if cursors[table_idx] < bucket_lens[table_idx] {
-                heap.push(HeapEntry {
-                    id: bucket_slices[table_idx][cursors[table_idx]],
-                    table_idx,
-                });
+            let mut best: Option<(u64, usize, NodeId)> = None;
+            for table_idx in 0..N_TABLES {
+                let cursor = cursors[table_idx];
+                let Some(&id) = bucket_slices[table_idx].get(cursor) else {
+                    continue;
+                };
+                let candidate = (id.get(), table_idx, id);
+                if best.as_ref().is_none_or(|current| candidate < *current) {
+                    best = Some(candidate);
+                }
             }
+            let (_, table_idx, id) = best?;
+            cursors[table_idx] += 1;
             if last_emitted == Some(id) {
                 continue;
             }
@@ -267,111 +259,6 @@ impl CliffordHashTable {
 impl Default for CliffordHashTable {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[derive(Clone, Copy)]
-struct HeapEntry {
-    id: NodeId,
-    table_idx: usize,
-}
-
-struct SmallMergeHeap {
-    data: [Option<HeapEntry>; N_TABLES],
-    len: usize,
-}
-
-impl SmallMergeHeap {
-    #[inline]
-    const fn new() -> Self {
-        Self {
-            data: [None, None, None, None],
-            len: 0,
-        }
-    }
-
-    #[inline]
-    fn push(&mut self, entry: HeapEntry) {
-        self.data[self.len] = Some(entry);
-        self.len += 1;
-        self.sift_up(self.len - 1);
-    }
-
-    #[inline]
-    fn pop(&mut self) -> Option<HeapEntry> {
-        if self.len == 0 {
-            return None;
-        }
-        let best = self.data[0].take();
-        self.len -= 1;
-        if self.len > 0 {
-            self.data[0] = self.data[self.len].take();
-            self.sift_down(0);
-        }
-        best
-    }
-
-    #[inline]
-    fn less(lhs: HeapEntry, rhs: HeapEntry) -> bool {
-        lhs.id
-            .get()
-            .cmp(&rhs.id.get())
-            .then(lhs.table_idx.cmp(&rhs.table_idx))
-            .is_lt()
-    }
-
-    #[inline]
-    fn sift_up(&mut self, mut idx: usize) {
-        while idx > 0 {
-            let parent = (idx - 1) / 2;
-            let Some(lhs) = self.data[idx] else {
-                break;
-            };
-            let Some(rhs) = self.data[parent] else {
-                break;
-            };
-            if Self::less(lhs, rhs) {
-                self.data.swap(idx, parent);
-                idx = parent;
-            } else {
-                break;
-            }
-        }
-    }
-
-    #[inline]
-    fn sift_down(&mut self, mut idx: usize) {
-        loop {
-            let left = idx * 2 + 1;
-            if left >= self.len {
-                break;
-            }
-            let right = left + 1;
-            let mut smallest = left;
-            if right < self.len {
-                let Some(rhs) = self.data[right] else {
-                    break;
-                };
-                let Some(lhs) = self.data[left] else {
-                    break;
-                };
-                if Self::less(rhs, lhs) {
-                    smallest = right;
-                }
-            }
-            let Some(child) = self.data[smallest] else {
-                break;
-            };
-            let Some(current) = self.data[idx] else {
-                break;
-            };
-            if Self::less(child, current) {
-                self.data.swap(idx, smallest);
-                idx = smallest;
-            } else {
-                break;
-            }
-        }
     }
 }
 
