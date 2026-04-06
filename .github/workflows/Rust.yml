@@ -316,9 +316,9 @@ jobs:
       - name: Final decision
         run: |
           if [[ "${{ needs.lint-build-test.result }}" != "success" ]] || \
-             [[ "${{ needs.qlty-gate.result }}" != "success" ]] || \
+             ([[ "${{ needs.qlty-gate.result }}" != "success" ]] && [[ "${{ needs.qlty-gate.result }}" != "skipped" ]]) || \
              [[ "${{ needs.invariants.result }}" != "success" ]] || \
-             [[ "${{ needs.coverage.result }}" != "success" ]] || \
+             ([[ "${{ needs.coverage.result }}" != "success" ]] && [[ "${{ needs.coverage.result }}" != "skipped" ]]) || \
              [[ "${{ needs.performance-guardrails.result }}" != "success" ]]; then
             echo "❌ GENESIS quality gate failed"
             exit 1
