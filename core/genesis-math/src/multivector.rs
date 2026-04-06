@@ -242,7 +242,6 @@ where
     let mut active_mask = 0_u16;
     let mut max_abs = 0.0_f64;
     let mut clifford_norm_sq = 0.0_f64;
-    let mut needs_max_rescan = false;
 
     for (idx, coef) in iter.by_ref() {
         if idx >= TOTAL_BLADES {
@@ -259,31 +258,20 @@ where
         buf[idx] = next;
     }
 
-    // Defer Planck cutoff until after all duplicates are combined
-    active_mask = 0;
-    max_abs = 0.0;
-    clifford_norm_sq = 0.0;
-    for idx in 0..TOTAL_BLADES {
-        let coef = buf[idx];
-        let abs = coef.abs();
-        if abs > COGNITIVE_PLANCK_CONSTANT {
-            active_mask |= 1_u16 << idx;
-            max_abs = max_abs.max(abs);
-            clifford_norm_sq += coef * coef * CLIFFORD_NORM_WEIGHTS_F64[idx];
-        } else {
-            buf[idx] = 0.0;
-        }
-    }
+    // Defer Planck cutoff until after all duplicates are combined.
+    // Use derive_all_metadata to ensure consistent Kahan-compensated accumulation.
+    let mut buf_owned = *buf;
+    let metadata = derive_all_metadata(&mut buf_owned);
 
-    if active_mask == 0 {
+    if metadata.active_mask == 0 {
         return Ok(SparseCliffordVector::zero());
     }
 
     Ok(SparseCliffordVector::from_dense_with_metadata(
-        *buf,
-        active_mask,
-        max_abs,
-        clifford_norm_sq,
+        buf_owned,
+        metadata.active_mask as u16,
+        metadata.max_abs_coeff,
+        metadata.clifford_norm_sq,
     ))
 }
 
@@ -1519,4 +1507,5 @@ mod tests {
             );
         }
     }
+
 }

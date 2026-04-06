@@ -190,6 +190,12 @@ fn reduce_blocks(
         KahanAccumulator::new(),
         KahanAccumulator::new(),
     ); 5];
+    #[cfg(target_arch = "x86_64")]
+    let use_avx2 = std::arch::is_x86_feature_detected!("avx2")
+        && std::arch::is_x86_feature_detected!("fma");
+    #[cfg(not(target_arch = "x86_64"))]
+    let use_avx2 = false;
+
     for (block_index, block) in blocks.iter().enumerate() {
         let block_start = block_index * 8;
         let remaining = valid_lanes.saturating_sub(block_start);
@@ -198,10 +204,7 @@ fn reduce_blocks(
             if !block.states[lane].contributes_to_sync() {
                 continue;
             }
-            #[cfg(target_arch = "x86_64")]
-            if std::arch::is_x86_feature_detected!("avx2")
-                && std::arch::is_x86_feature_detected!("fma")
-            {
+            if use_avx2 {
                 // SAFETY: guarded by runtime AVX2/FMA detection.
                 unsafe {
                     reduce_lane_avx2(block, lane, &mut acc);
@@ -236,9 +239,7 @@ unsafe fn reduce_lane_avx2(
     lane: usize,
     acc: &mut [(KahanAccumulator, KahanAccumulator, KahanAccumulator); 5],
 ) {
-    use std::arch::x86_64::{
-        _mm256_loadu_pd, _mm256_mul_pd, _mm256_storeu_pd,
-    };
+    use std::arch::x86_64::{_mm256_loadu_pd, _mm256_mul_pd, _mm256_storeu_pd};
 
     let phases = [
         block.phases[0][lane],

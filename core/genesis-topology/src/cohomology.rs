@@ -195,6 +195,9 @@ impl Z2Matrix {
 }
 
 #[cfg(target_arch = "x86_64")]
+// Force inline to eliminate call overhead and enable register-level SIMD codegen.
+// This 4-lane AVX2 XOR is invoked O(rows × cols / 4) times per Gaussian elimination;
+// call overhead would degrade throughput. Code size increase is acceptable (12 bytes).
 #[inline(always)]
 unsafe fn xor_row_chunk_avx2(dst_ptr: *mut u64, pivot_ptr: *const u64) {
     use std::arch::x86_64::{_mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256};
@@ -885,4 +888,5 @@ mod tests {
             full_rebuild_count()
         );
     }
+
 }

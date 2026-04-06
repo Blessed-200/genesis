@@ -177,10 +177,17 @@ impl<const CAP: usize> FixedHeap<CAP> {
             self.data[self.len] = item;
             self.len += 1;
             self.sift_up(self.len - 1);
-            if self.len == 1 || compare_dist_idx(item, (self.worst_val, 0)).is_gt() {
-                self.worst_val = item.0;
-                self.worst_idx = self.len - 1;
+            // Recompute worst after sift_up, as the inserted element may have moved
+            let mut worst_idx = 0;
+            let mut worst_val = self.data[0].0;
+            for i in 1..self.len {
+                if compare_dist_idx(self.data[i], self.data[worst_idx]).is_gt() {
+                    worst_idx = i;
+                    worst_val = self.data[i].0;
+                }
             }
+            self.worst_idx = worst_idx;
+            self.worst_val = worst_val;
             return true;
         }
 
