@@ -1906,7 +1906,7 @@ Remaining risk:
 3. `core/genesis-topology/src/rips.rs`
    - Fast-path consecutive `NodeId` indexing to bypass per-neighbor binary search.
    - Hoist CSR row pointer loads outside inner two-pointer scans.
-   - Replace heap scratch triangle buffer with `SmallVec<[u32; 64]>`.
+   - Replace heap scratch triangle buffer with `SmallVec<[usize; 64]>`.
 
 ### Validation
 

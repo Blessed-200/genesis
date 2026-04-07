@@ -59,7 +59,10 @@ impl RipsComplex {
     /// AX-ID: AXIOMA-007
     #[allow(clippy::similar_names, clippy::too_many_lines)]
     pub fn build(graph: &HnswGraph, epsilon: f64) -> Result<Self, GenesisError> {
-        let node_ids: Vec<NodeId> = graph.nodes().collect();
+        let node_ids: Vec<NodeId> = graph
+            .nodes()
+            .filter_map(|id| NodeId::try_new(id.get()).ok())
+            .collect();
         let node_count = node_ids.len();
         let dim0 = node_ids.iter().copied().map(|id| [id]).collect();
 
