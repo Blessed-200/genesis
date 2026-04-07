@@ -2,7 +2,7 @@
 /// Vietoris-Rips complex up to dimension 2.
 /// Used by `CohomologyValidator` to compute H¹.
 /// No external libraries. No persistent homology.
-use genesis_types::NodeId;
+use genesis_types::{GenesisError, NodeId};
 use smallvec::SmallVec;
 
 use crate::geodesic::geometric_distance;
@@ -58,19 +58,19 @@ impl RipsComplex {
     ///
     /// AX-ID: AXIOMA-007
     #[allow(clippy::similar_names, clippy::too_many_lines)]
-    pub fn build(graph: &HnswGraph, epsilon: f64) -> Self {
+    pub fn build(graph: &HnswGraph, epsilon: f64) -> Result<Self, GenesisError> {
         let node_ids: Vec<NodeId> = graph.nodes().collect();
         let node_count = node_ids.len();
         let dim0 = node_ids.iter().copied().map(|id| [id]).collect();
 
         if node_count == 0 {
-            return Self {
+            return Ok(Self {
                 dim0,
                 dim1: Vec::new(),
                 dim2: Vec::new(),
                 adjacency_data: Vec::new(),
                 adjacency_offsets: vec![0],
-            };
+            });
         }
 
         let mut id_to_idx: Vec<(u64, usize)> = node_ids
@@ -90,7 +90,12 @@ impl RipsComplex {
             consecutive_lookup.resize(node_count, usize::MAX);
             for (idx, &id) in node_ids.iter().enumerate() {
                 let raw = id.get();
-                let offset = (raw - min_id) as usize;
+                let Some(delta) = raw.checked_sub(min_id) else {
+                    return Err(GenesisError::InvariantViolation { axiom_id: 7 });
+                };
+                let Ok(offset) = usize::try_from(delta) else {
+                    return Err(GenesisError::InvariantViolation { axiom_id: 7 });
+                };
                 consecutive_lookup[offset] = idx;
             }
         }
@@ -100,7 +105,10 @@ impl RipsComplex {
         let observed_avg_degree = observed_degree_sum as f64 / node_count as f64;
         let epsilon_scale = (epsilon / (1.0 + epsilon.abs())).clamp(0.05, 1.0);
         let expected_avg_degree = (observed_avg_degree * epsilon_scale).ceil().max(1.0) as usize;
-        let expected_edge_count = (node_count * expected_avg_degree) / 2;
+        let expected_edge_count = node_count
+            .checked_mul(expected_avg_degree)
+            .map(|v| v / 2)
+            .ok_or(GenesisError::InvariantViolation { axiom_id: 7 })?;
 
         let mut edges: Vec<Edge> = Vec::with_capacity(expected_edge_count);
         let mut accepted_edges: Vec<(usize, usize)> = Vec::with_capacity(expected_edge_count);
@@ -169,7 +177,7 @@ impl RipsComplex {
         // neighbour lists. This avoids per-edge bitset clear/fill churn and
         // keeps memory accesses linear and branch-stable.
         let mut triangles: Vec<Triangle> = Vec::new();
-        let mut triangle_scratch: SmallVec<[u32; 64]> = SmallVec::new();
+        let mut triangle_scratch: SmallVec<[usize; 64]> = SmallVec::new();
 
         for u_idx in 0..node_count {
             let u_row_start = adjacency_offsets[u_idx];
@@ -195,10 +203,7 @@ impl RipsComplex {
                     }
                     match left_neighbor.cmp(&right_neighbor) {
                         std::cmp::Ordering::Equal => {
-                            if left_neighbor > u32::MAX as usize {
-                                panic!("triangle index exceeds u32 scratch capacity");
-                            }
-                            triangle_scratch.push(left_neighbor as u32);
+                            triangle_scratch.push(left_neighbor);
                             left_cursor += 1;
                             right_cursor += 1;
                         }
@@ -210,7 +215,7 @@ impl RipsComplex {
                     triangles.push(Triangle {
                         u: node_ids[u_idx],
                         v: node_ids[v_idx],
-                        w: node_ids[w_idx as usize],
+                        w: node_ids[w_idx],
                     });
                 }
             }
@@ -220,13 +225,13 @@ impl RipsComplex {
         triangles.dedup();
         let dim2 = triangles.iter().map(|t| [t.u, t.v, t.w]).collect();
 
-        Self {
+        Ok(Self {
             dim0,
             dim1,
             dim2,
             adjacency_data,
             adjacency_offsets,
-        }
+        })
     }
 
     /// Iterate simplices of a given dimension (0, 1, or 2).
@@ -258,7 +263,7 @@ impl RipsComplex {
     ///         .expect("finite vector");
     ///     graph.insert(NodeId::try_new(i).expect("valid id"), &v).expect("insert");
     /// }
-    /// let rips = RipsComplex::build(&graph, 10.0);
+    /// let rips = RipsComplex::build(&graph, 10.0).expect("rips build");
     /// let (_n0, _n1, _n2) = rips.counts();
     /// ```
     ///
@@ -284,7 +289,7 @@ impl RipsComplex {
     ///         .expect("finite vector");
     ///     graph.insert(NodeId::try_new(i).expect("valid id"), &v).expect("insert");
     /// }
-    /// let rips = RipsComplex::build(&graph, 10.0);
+    /// let rips = RipsComplex::build(&graph, 10.0).expect("rips build");
     /// let csr = rips.adjacency_csr();
     /// assert_eq!(csr.offsets.len(), rips.counts().0 + 1);
     /// assert!(csr.offsets.windows(2).all(|w| w[0] <= w[1]));
@@ -349,7 +354,7 @@ mod tests {
             )
             .unwrap();
         }
-        let complex = RipsComplex::build(&g, 1.0);
+        let complex = RipsComplex::build(&g, 1.0).expect("rips build");
         let (n0, n1, n2) = complex.counts();
         assert_eq!(n0, 5, "expected 5 vertices");
         // 1 and 2-simplices depend on connectivity — just verify no panic
@@ -366,7 +371,7 @@ mod tests {
             )
             .unwrap();
         }
-        let rips = RipsComplex::build(&g, 1.0);
+        let rips = RipsComplex::build(&g, 1.0).expect("rips build");
         let csr = rips.adjacency_csr();
         assert_eq!(csr.data, rips.adjacency_data.as_slice());
         assert_eq!(csr.offsets, rips.adjacency_offsets.as_slice());

@@ -593,9 +593,7 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
     }
 
     for _ in 0..iterations {
-        for (dst_word, pivot_word) in dst.iter_mut().zip(pivot.iter()) {
-            *dst_word ^= *pivot_word;
-        }
+        xor_row_dispatch(&mut dst, &pivot);
     }
 
     dst.iter().fold(0_u64, |acc, &word| acc ^ word)
@@ -745,7 +743,7 @@ mod tests {
             )
             .unwrap();
         }
-        let complex = RipsComplex::build(&g, 10.0);
+        let complex = RipsComplex::build(&g, 10.0).expect("rips build should succeed");
         let result = CohomologyValidator::check_h1(&complex);
         println!("H1 zero for cycle-free-like graph: {}", result);
     }
@@ -815,7 +813,7 @@ mod tests {
             }
 
             let epsilon = ((xorshift64(&mut seed) % 700) as f64).mul_add(0.001, 0.15);
-            let complex = RipsComplex::build(&g, epsilon);
+            let complex = RipsComplex::build(&g, epsilon).expect("rips build should succeed");
 
             let incremental = CohomologyValidator::check_h1(&complex);
             let full = check_h1_full_for_test(&complex);
@@ -833,7 +831,7 @@ mod tests {
             g2.insert(id, &make_vec(i + 100)).unwrap();
         }
 
-        let c1 = RipsComplex::build(&g1, 0.001);
+        let c1 = RipsComplex::build(&g1, 0.001).expect("rips build should succeed");
         let _ = CohomologyValidator::check_h1(&c1);
         let key1 = H1CacheKey {
             ptr: std::ptr::from_ref(&c1),
@@ -841,7 +839,7 @@ mod tests {
             fingerprint: complex_fingerprint(&c1),
         };
 
-        let c2 = RipsComplex::build(&g2, 10.0);
+        let c2 = RipsComplex::build(&g2, 10.0).expect("rips build should succeed");
         let _ = CohomologyValidator::check_h1(&c2);
         let key2 = H1CacheKey {
             ptr: std::ptr::from_ref(&c2),
@@ -870,7 +868,7 @@ mod tests {
                 .unwrap();
         }
 
-        let complex = RipsComplex::build(&hnsw, 0.2);
+        let complex = RipsComplex::build(&hnsw, 0.2).expect("rips build should succeed");
         let first = CohomologyValidator::check_h1(&complex);
         let first_count = fingerprint_count();
         let second = CohomologyValidator::check_h1(&complex);
@@ -891,7 +889,7 @@ mod tests {
             .unwrap();
         }
 
-        let complex = RipsComplex::build(&g, 2.5);
+        let complex = RipsComplex::build(&g, 2.5).expect("rips build should succeed");
         reset_full_rebuild_count();
 
         for _ in 0..1000 {

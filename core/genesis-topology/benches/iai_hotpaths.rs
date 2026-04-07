@@ -51,7 +51,7 @@ fn metric_distance_sq_hotpath() -> f64 {
 #[library_benchmark]
 fn rips_build_hotpath() -> usize {
     let graph = rips_fixture();
-    RipsComplex::build(graph, 0.5).counts().0
+    RipsComplex::build(graph, 0.5).expect("rips build").counts().0
 }
 
 library_benchmark_group!(

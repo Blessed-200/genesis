@@ -1884,7 +1884,7 @@ Remaining risk:
 - `cargo check --workspace 2>&1 | grep "^warning:"`
 - `python -c "import yaml; yaml.safe_load(open('security/waivers.yaml'))"`
 
-## 1.22 CRATE-003 SIMD Z2 elimination + Lanczos convergence + Rips allocation tuning (2026-04-07)
+## 1.24 CRATE-003 SIMD Z2 elimination + Lanczos convergence + Rips allocation tuning (2026-04-07)
 
 ### Root cause
 
@@ -1911,4 +1911,4 @@ Remaining risk:
 
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `if cargo check --workspace 2>&1 | grep -q "^warning:"; then echo "Warnings found"; exit 1; fi`

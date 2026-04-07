@@ -17,6 +17,7 @@ const LANCZOS_CONVERGENCE_EPS: f64 = 1e-9;
 const POWER_REFINE_MAX_ITERS: usize = 200;
 const POWER_REFINE_DELTA_EPS: f64 = 1e-8;
 const POWER_REFINE_STABLE_ITERS: usize = 3;
+const POWER_REFINE_RESIDUAL_EPS: f64 = 1e-6;
 
 // Policy of maintenance for collectors topological critical.
 //
@@ -485,7 +486,9 @@ impl ManifoldCollector {
     ///
     /// AX-ID: AXIOMA-007, AXIOMA-009
     pub fn compute_h1(&self) -> usize {
-        let complex = RipsComplex::build(&self.graph, REDUNDANCY_RADIUS);
+        let Ok(complex) = RipsComplex::build(&self.graph, REDUNDANCY_RADIUS) else {
+            return 1;
+        };
         usize::from(!CohomologyValidator::check_h1(&complex))
     }
 
@@ -806,6 +809,7 @@ fn power_refine_shifted_eigenvalue(
             break;
         }
         let rayleigh = dot(v, y);
+        let residual_norm = refinement_residual_norm(v, y, rayleigh);
         for yi in y.iter_mut() {
             *yi /= y_norm;
         }
@@ -815,7 +819,9 @@ fn power_refine_shifted_eigenvalue(
             } else {
                 stable_delta_iters = 0;
             }
-            if stable_delta_iters >= POWER_REFINE_STABLE_ITERS {
+            if stable_delta_iters >= POWER_REFINE_STABLE_ITERS
+                && residual_norm < POWER_REFINE_RESIDUAL_EPS
+            {
                 v.copy_from_slice(y);
                 break;
             }
@@ -826,6 +832,30 @@ fn power_refine_shifted_eigenvalue(
 
     shifted_mv_inplace(n, sigma, degrees, adj_offsets, adj_flat, v, y);
     dot(v, y) / dot(v, v).max(1e-14)
+}
+
+#[inline]
+fn refinement_residual_norm(v: &[f64], av: &[f64], lambda: f64) -> f64 {
+    let n = v.len();
+    let mut acc = 0.0;
+    let mut i = 0usize;
+    while i + 4 <= n {
+        let r0 = av[i] - lambda * v[i];
+        let r1 = av[i + 1] - lambda * v[i + 1];
+        let r2 = av[i + 2] - lambda * v[i + 2];
+        let r3 = av[i + 3] - lambda * v[i + 3];
+        acc = r0.mul_add(r0, acc);
+        acc = r1.mul_add(r1, acc);
+        acc = r2.mul_add(r2, acc);
+        acc = r3.mul_add(r3, acc);
+        i += 4;
+    }
+    while i < n {
+        let r = av[i] - lambda * v[i];
+        acc = r.mul_add(r, acc);
+        i += 1;
+    }
+    acc.sqrt()
 }
 
 fn vec_norm(v: &[f64]) -> f64 {
@@ -1433,6 +1463,64 @@ mod tests {
                 "refined eigenvalue mismatch for n={n}: refined={refined}, reference={reference}, diff={diff}"
             );
         }
+    }
+
+    #[test]
+    fn power_refine_near_threshold_fixture_respects_residual_gate() {
+        let n = 10usize;
+        let mut neighbors = vec![Vec::<usize>::new(); n];
+        for i in 0..(n - 1) {
+            neighbors[i].push(i + 1);
+            neighbors[i + 1].push(i);
+        }
+
+        let mut degrees = vec![0.0; n];
+        let mut adj_offsets = vec![(0usize, 0usize); n];
+        let mut adj_flat = Vec::new();
+        for i in 0..n {
+            neighbors[i].sort_unstable();
+            let start = adj_flat.len();
+            adj_flat.extend_from_slice(&neighbors[i]);
+            let end = adj_flat.len();
+            degrees[i] = (end - start) as f64;
+            adj_offsets[i] = (start, end);
+        }
+
+        let sigma = degrees.iter().copied().fold(0.0f64, f64::max) + 1e-6;
+        let mut v = vec![0.0; n];
+        let mut y = vec![0.0; n];
+        for (i, vi) in v.iter_mut().enumerate() {
+            *vi = if i % 2 == 0 { 1.0 } else { -1.0 };
+        }
+
+        let refined = power_refine_shifted_eigenvalue(
+            n,
+            sigma,
+            &degrees,
+            &adj_offsets,
+            &adj_flat,
+            &mut v,
+            &mut y,
+            POWER_REFINE_MAX_ITERS,
+        );
+
+        let mut v_ref = v.clone();
+        let mut y_ref = y.clone();
+        let reference = power_refine_shifted_eigenvalue(
+            n,
+            sigma,
+            &degrees,
+            &adj_offsets,
+            &adj_flat,
+            &mut v_ref,
+            &mut y_ref,
+            5_000,
+        );
+
+        assert!(
+            (refined - reference).abs() <= 1e-3,
+            "near-threshold eigenvalue drift: refined={refined}, reference={reference}"
+        );
     }
 
     // ── HyperbolicCoord contract tests ────────────────────────────────────────
