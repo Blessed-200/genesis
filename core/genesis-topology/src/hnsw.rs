@@ -1363,7 +1363,7 @@ impl HnswGraph {
             let degree_cap = ((((self.nodes.len() + 1) as f64).log2().ceil() as usize) * 2).max(1);
             let m_max = layer_m.min(degree_cap);
             debug_assert!(m_max <= M0);
-            let candidates = self.search_layer(vec, current, self.ef_construction, lc, true);
+            let candidates = self.search_layer(vec, current, self.ef_construction, lc);
             let connect_limit = if lc == 0 { layer_m } else { m_max };
             // Take top-M by distance
             let neighbours: SmallVec<[(usize, f64); M0]> =
@@ -1389,10 +1389,9 @@ impl HnswGraph {
                         let dist_sq = self.distance_to_layer0_node_sq(&query_f32, nb_idx) as f32;
                         cache.push((nb_idx_u32, dist_sq));
                     }
-                });
-                INSERT_DISTANCE_CACHE.with(|cache_cell| {
-                    let cache = cache_cell.borrow();
-                    self.prune_layer(new_idx, lc, m_max, Some(cache.as_slice()));
+                    let cache_ref = cache.as_slice();
+                    drop(cache);
+                    self.prune_layer(new_idx, lc, m_max, Some(cache_ref));
                 });
             }
 
@@ -1613,7 +1612,6 @@ impl HnswGraph {
         entry_idx: usize,
         ef: usize,
         layer: usize,
-        is_insert_context: bool,
     ) -> Vec<(usize, f64)> {
         SEARCH_SCRATCH.with(|cell| {
             let mut scratch = cell.borrow_mut();
@@ -1843,7 +1841,7 @@ impl HnswGraph {
 
         // Beam search at layer 0
         let ef = k.max(self.ef_construction);
-        let results = self.search_layer(query, current, ef, 0, false);
+        let results = self.search_layer(query, current, ef, 0);
 
         results
             .iter()
