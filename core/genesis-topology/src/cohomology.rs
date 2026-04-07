@@ -3,6 +3,11 @@
 /// All arithmetic in Z₂ (bit operations). No external linear algebra libraries.
 /// Boundary matrices stored as bitmaps (Vec<u64> packed rows).
 use std::cell::RefCell;
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::{
+    __m256i, __m512i, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256,
+    _mm512_loadu_si512, _mm512_storeu_si512, _mm512_xor_si512,
+};
 
 // Política de mantenimiento para validación cohomológica crítica.
 //
@@ -127,30 +132,9 @@ impl Z2Matrix {
                     if (self.data[row_pivot_idx] & pivot_bit) != 0 {
                         let base = row * wpr + pivot_word;
                         let len = wpr - pivot_word;
-                        let mut i = 0;
-                        while i + 4 <= len {
-                            // SAFETY: `base + i + k < base + len <= row * wpr + wpr`, so all
-                            // indices are within the current row and corresponding pivot tail.
-                            unsafe {
-                                *self.data.get_unchecked_mut(base + i) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i);
-                                *self.data.get_unchecked_mut(base + i + 1) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i + 1);
-                                *self.data.get_unchecked_mut(base + i + 2) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i + 2);
-                                *self.data.get_unchecked_mut(base + i + 3) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i + 3);
-                            }
-                            i += 4;
-                        }
-                        while i < len {
-                            // SAFETY: `i < len` implies `base + i` and `pivot_word + i` are in bounds.
-                            unsafe {
-                                *self.data.get_unchecked_mut(base + i) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i);
-                            }
-                            i += 1;
-                        }
+                        let row_tail = &mut self.data[base..base + len];
+                        let pivot_tail = &pivot_row_buf[pivot_word..pivot_word + len];
+                        xor_row_dispatch(row_tail, pivot_tail);
                     }
                 }
 
@@ -162,6 +146,84 @@ impl Z2Matrix {
         debug_assert_matrix_invariants(self);
         rank
     }
+}
+
+#[inline]
+fn xor_row_dispatch(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    debug_assert_eq!(row_tail.len(), pivot_tail.len());
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            // SAFETY: Runtime feature detection guarantees AVX-512F availability.
+            unsafe {
+                xor_row_avx512(row_tail, pivot_tail);
+            }
+            return;
+        }
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: Runtime feature detection guarantees AVX2 availability.
+            unsafe {
+                xor_row_avx2(row_tail, pivot_tail);
+            }
+            return;
+        }
+    }
+
+    xor_row_scalar(row_tail, pivot_tail);
+}
+
+#[inline]
+fn xor_row_scalar(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    let len = row_tail.len();
+    let mut i = 0usize;
+    while i + 4 <= len {
+        row_tail[i] ^= pivot_tail[i];
+        row_tail[i + 1] ^= pivot_tail[i + 1];
+        row_tail[i + 2] ^= pivot_tail[i + 2];
+        row_tail[i + 3] ^= pivot_tail[i + 3];
+        i += 4;
+    }
+    while i < len {
+        row_tail[i] ^= pivot_tail[i];
+        i += 1;
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn xor_row_avx512(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    let len = row_tail.len();
+    let mut i = 0usize;
+    while i + 8 <= len {
+        // SAFETY: `i + 8 <= len` keeps all pointer arithmetic in-bounds for both slices.
+        unsafe {
+            let lhs = _mm512_loadu_si512(row_tail.as_ptr().add(i).cast::<__m512i>());
+            let rhs = _mm512_loadu_si512(pivot_tail.as_ptr().add(i).cast::<__m512i>());
+            let out = _mm512_xor_si512(lhs, rhs);
+            _mm512_storeu_si512(row_tail.as_mut_ptr().add(i).cast::<__m512i>(), out);
+        }
+        i += 8;
+    }
+    xor_row_scalar(&mut row_tail[i..], &pivot_tail[i..]);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn xor_row_avx2(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    let len = row_tail.len();
+    let mut i = 0usize;
+    while i + 4 <= len {
+        // SAFETY: `i + 4 <= len` keeps all pointer arithmetic in-bounds for both slices.
+        unsafe {
+            let lhs = _mm256_loadu_si256(row_tail.as_ptr().add(i).cast::<__m256i>());
+            let rhs = _mm256_loadu_si256(pivot_tail.as_ptr().add(i).cast::<__m256i>());
+            let out = _mm256_xor_si256(lhs, rhs);
+            _mm256_storeu_si256(row_tail.as_mut_ptr().add(i).cast::<__m256i>(), out);
+        }
+        i += 4;
+    }
+    xor_row_scalar(&mut row_tail[i..], &pivot_tail[i..]);
 }
 
 fn debug_assert_matrix_invariants(matrix: &Z2Matrix) {

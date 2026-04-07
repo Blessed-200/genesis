@@ -1883,3 +1883,32 @@ Remaining risk:
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
 - `python -c "import yaml; yaml.safe_load(open('security/waivers.yaml'))"`
+
+## 1.22 CRATE-003 SIMD Z2 elimination + Lanczos convergence + Rips allocation tuning (2026-04-07)
+
+### Root cause
+
+- `rank_by_gaussian_elimination` in cohomology still performs row XOR in scalar loops, leaving x86 SIMD width unused in the dominant elimination inner loop.
+- Lanczos refinement in `manifold.rs` uses a fixed high iteration cap and lacks stability-driven early stop logic tied to Rayleigh quotient deltas.
+- Rips triangle generation repeatedly resolves neighbor indices via binary search and uses a heap-backed scratch vector in common low-degree cases.
+
+### File-level actions
+
+1. `core/genesis-topology/src/cohomology.rs`
+   - Add x86_64 runtime dispatch in `rank_by_gaussian_elimination` consistent with existing SIMD dispatch style.
+   - Implement `xor_row_avx512` (`_mm512_loadu_si512` / `_mm512_xor_si512` / `_mm512_storeu_si512`) over 8-word chunks plus scalar tail.
+   - Implement `xor_row_avx2` (`_mm256_loadu_si256` / `_mm256_xor_si256` / `_mm256_storeu_si256`) over 4-word chunks plus scalar tail.
+2. `core/genesis-topology/src/manifold.rs`
+   - Reduce `POWER_REFINE_MAX_ITERS` from 800 to 200.
+   - Add consecutive small-delta Rayleigh quotient stopping (delta < `1e-8` for 3 consecutive iterations).
+   - Extend/add tests that assert eigenvalue agreement with reference values within `1e-6`.
+3. `core/genesis-topology/src/rips.rs`
+   - Fast-path consecutive `NodeId` indexing to bypass per-neighbor binary search.
+   - Hoist CSR row pointer loads outside inner two-pointer scans.
+   - Replace heap scratch triangle buffer with `SmallVec<[u32; 64]>`.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`

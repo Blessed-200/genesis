@@ -3,6 +3,7 @@
 /// Used by `CohomologyValidator` to compute H¹.
 /// No external libraries. No persistent homology.
 use genesis_types::NodeId;
+use smallvec::SmallVec;
 
 use crate::geodesic::geometric_distance;
 use crate::hnsw::HnswGraph;
@@ -78,6 +79,21 @@ impl RipsComplex {
             .map(|(idx, id)| (id.get(), idx))
             .collect();
         id_to_idx.sort_unstable_by_key(|&(id, _)| id);
+        let min_id = id_to_idx.first().map_or(0, |&(id, _)| id);
+        let max_id = id_to_idx.last().map_or(0, |&(id, _)| id);
+        let has_consecutive_ids = max_id
+            .checked_sub(min_id)
+            .and_then(|span| span.checked_add(1))
+            .is_some_and(|span| span == node_count as u64);
+        let mut consecutive_lookup = Vec::new();
+        if has_consecutive_ids {
+            consecutive_lookup.resize(node_count, usize::MAX);
+            for (idx, &id) in node_ids.iter().enumerate() {
+                let raw = id.get();
+                let offset = (raw - min_id) as usize;
+                consecutive_lookup[offset] = idx;
+            }
+        }
 
         let observed_degree_sum: usize =
             node_ids.iter().map(|&id| graph.neighbors(id).count()).sum();
@@ -92,10 +108,25 @@ impl RipsComplex {
         for (u_idx, &u) in node_ids.iter().enumerate() {
             if let Some(u_vec) = graph.vector(u) {
                 for v in graph.neighbors(u).filter(|&v| u.get() < v.get()) {
-                    let Ok(pos) = id_to_idx.binary_search_by_key(&v.get(), |&(id, _)| id) else {
-                        continue;
+                    let v_idx = if has_consecutive_ids {
+                        let raw = v.get();
+                        let Some(offset) = raw.checked_sub(min_id) else {
+                            continue;
+                        };
+                        let Ok(offset_idx) = usize::try_from(offset) else {
+                            continue;
+                        };
+                        consecutive_lookup.get(offset_idx).copied().unwrap_or(usize::MAX)
+                    } else {
+                        let Ok(pos) = id_to_idx.binary_search_by_key(&v.get(), |&(id, _)| id)
+                        else {
+                            continue;
+                        };
+                        id_to_idx[pos].1
                     };
-                    let v_idx = id_to_idx[pos].1;
+                    if v_idx == usize::MAX {
+                        continue;
+                    }
                     if let Some(v_vec) = graph.vector(v) {
                         let d = geometric_distance(u_vec, v_vec);
                         if d <= epsilon {
@@ -138,15 +169,17 @@ impl RipsComplex {
         // neighbour lists. This avoids per-edge bitset clear/fill churn and
         // keeps memory accesses linear and branch-stable.
         let mut triangles: Vec<Triangle> = Vec::new();
+        let mut triangle_scratch: SmallVec<[u32; 64]> = SmallVec::new();
 
         for u_idx in 0..node_count {
-            let u_start = adjacency_offsets[u_idx];
-            let u_end = adjacency_offsets[u_idx + 1];
-            let u_nb = &adjacency_data[u_start..u_end];
+            let u_row_start = adjacency_offsets[u_idx];
+            let u_row_end = adjacency_offsets[u_idx + 1];
+            let u_nb = &adjacency_data[u_row_start..u_row_end];
             for &v_idx in u_nb.iter().filter(|&&v_idx| v_idx > u_idx) {
-                let v_start = adjacency_offsets[v_idx];
-                let v_end = adjacency_offsets[v_idx + 1];
-                let v_nb = &adjacency_data[v_start..v_end];
+                let v_row_start = adjacency_offsets[v_idx];
+                let v_row_end = adjacency_offsets[v_idx + 1];
+                let v_nb = &adjacency_data[v_row_start..v_row_end];
+                triangle_scratch.clear();
                 let mut left_cursor = 0usize;
                 let mut right_cursor = 0usize;
                 while left_cursor < u_nb.len() && right_cursor < v_nb.len() {
@@ -162,17 +195,23 @@ impl RipsComplex {
                     }
                     match left_neighbor.cmp(&right_neighbor) {
                         std::cmp::Ordering::Equal => {
-                            triangles.push(Triangle {
-                                u: node_ids[u_idx],
-                                v: node_ids[v_idx],
-                                w: node_ids[left_neighbor],
-                            });
+                            if left_neighbor > u32::MAX as usize {
+                                panic!("triangle index exceeds u32 scratch capacity");
+                            }
+                            triangle_scratch.push(left_neighbor as u32);
                             left_cursor += 1;
                             right_cursor += 1;
                         }
                         std::cmp::Ordering::Less => left_cursor += 1,
                         std::cmp::Ordering::Greater => right_cursor += 1,
                     }
+                }
+                for &w_idx in &triangle_scratch {
+                    triangles.push(Triangle {
+                        u: node_ids[u_idx],
+                        v: node_ids[v_idx],
+                        w: node_ids[w_idx as usize],
+                    });
                 }
             }
         }
