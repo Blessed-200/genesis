@@ -322,6 +322,9 @@ unsafe fn slab_distance_avx2(
     out
 }
 
+/// Inline helper for layer-0 slab distance computation in hot search paths.
+/// Dispatches to AVX2 or scalar kernel based on compile-time target features.
+#[inline(always)]
 fn slab_distance(
     slab_ptr: *const f32,
     block: usize,
@@ -334,36 +337,8 @@ fn slab_distance(
     ))]
     {
         // SAFETY: target-feature gated at compile time, pointer invariants are
-        // enforced by the caller and match the scalar kernel requirements.
-        return unsafe { slab_distance_avx2(slab_ptr, block, query_f32) };
-    }
-    #[cfg(not(all(
-        target_arch = "x86_64",
-        target_feature = "avx2",
-        target_feature = "fma"
-    )))]
-    {
-        slab_distance_scalar(slab_ptr, block, query_f32)
-    }
-}
-
-/// Inline helper for layer-0 slab distance computation in hot search paths.
-/// Dispatches to AVX2 or scalar kernel based on compile-time target features.
-#[inline(always)]
-fn compute_slab_distances(
-    slab_ptr: *const f32,
-    block: usize,
-    query_f32: &[f32; SLAB_DIM],
-) -> [f32; SLAB_LANES] {
-    #[cfg(all(
-        target_arch = "x86_64",
-        target_feature = "avx2",
-        target_feature = "fma"
-    ))]
-    {
-        // SAFETY: target-feature gated at compile time, pointer invariants are
         // enforced by the caller and match the kernel requirements.
-        unsafe { slab_distance_avx2(slab_ptr, block, query_f32) }
+        return unsafe { slab_distance_avx2(slab_ptr, block, query_f32) };
     }
     #[cfg(not(all(
         target_arch = "x86_64",
@@ -1390,7 +1365,6 @@ impl HnswGraph {
                         cache.push((nb_idx_u32, dist_sq));
                     }
                     let cache_ref = cache.as_slice();
-                    drop(cache);
                     self.prune_layer(new_idx, lc, m_max, Some(cache_ref));
                 });
             }
@@ -1662,7 +1636,7 @@ impl HnswGraph {
                             debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
                             // SAFETY: `block < slab_blocks`, slab is persistently materialized and
                             // 64-byte aligned; query buffer has fixed 16-lane shape.
-                            let distances = compute_slab_distances(slab_ptr, block, &query_f32);
+                            let distances = slab_distance(slab_ptr, block, &query_f32);
                             let mut effective_mask = group.lane_mask;
                             let mut m = group.lane_mask;
                             while m != 0 {
@@ -1770,7 +1744,7 @@ impl HnswGraph {
                             debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
                             // SAFETY: `block < slab_blocks`, slab is persistently materialized and
                             // 64-byte aligned; query buffer has fixed 16-lane shape.
-                            let distances = compute_slab_distances(slab_ptr, block, &query_f32);
+                            let distances = slab_distance(slab_ptr, block, &query_f32);
                             let mut effective_mask = group.lane_mask;
                             let mut m = group.lane_mask;
                             while m != 0 {
