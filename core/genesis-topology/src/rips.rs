@@ -114,36 +114,38 @@ impl RipsComplex {
         let mut accepted_edges: Vec<(usize, usize)> = Vec::with_capacity(expected_edge_count);
 
         for (u_idx, &u) in node_ids.iter().enumerate() {
-            if let Some(u_vec) = graph.vector(u) {
-                for v in graph.neighbors(u).filter(|&v| u.get() < v.get()) {
-                    let v_idx = if has_consecutive_ids {
-                        let raw = v.get();
-                        let Some(offset) = raw.checked_sub(min_id) else {
-                            return Err(GenesisError::NodeNotFound { id: v });
-                        };
-                        let Ok(offset_idx) = usize::try_from(offset) else {
-                            return Err(GenesisError::InternalIndexOverflow { index: usize::MAX });
-                        };
-                        let Some(&dense_idx) = consecutive_lookup.get(offset_idx) else {
-                            return Err(GenesisError::NodeNotFound { id: v });
-                        };
-                        dense_idx
-                    } else {
-                        let pos = id_to_idx
-                            .binary_search_by_key(&v.get(), |&(id, _)| id)
-                            .map_err(|_| GenesisError::NodeNotFound { id: v })?;
-                        id_to_idx[pos].1
-                    };
-                    if v_idx == usize::MAX {
+            let u_vec = graph
+                .vector(u)
+                .ok_or(GenesisError::NodeNotFound { id: u })?;
+            for v in graph.neighbors(u).filter(|&v| u.get() < v.get()) {
+                let v_idx = if has_consecutive_ids {
+                    let raw = v.get();
+                    let Some(offset) = raw.checked_sub(min_id) else {
                         return Err(GenesisError::NodeNotFound { id: v });
-                    }
-                    if let Some(v_vec) = graph.vector(v) {
-                        let d = geometric_distance(u_vec, v_vec);
-                        if d <= epsilon {
-                            edges.push(Edge { u, v });
-                            accepted_edges.push((u_idx, v_idx));
-                        }
-                    }
+                    };
+                    let Ok(offset_idx) = usize::try_from(offset) else {
+                        return Err(GenesisError::InternalIndexOverflow { index: usize::MAX });
+                    };
+                    let Some(&dense_idx) = consecutive_lookup.get(offset_idx) else {
+                        return Err(GenesisError::NodeNotFound { id: v });
+                    };
+                    dense_idx
+                } else {
+                    let pos = id_to_idx
+                        .binary_search_by_key(&v.get(), |&(id, _)| id)
+                        .map_err(|_| GenesisError::NodeNotFound { id: v })?;
+                    id_to_idx[pos].1
+                };
+                if v_idx == usize::MAX {
+                    return Err(GenesisError::NodeNotFound { id: v });
+                }
+                let v_vec = graph
+                    .vector(v)
+                    .ok_or(GenesisError::NodeNotFound { id: v })?;
+                let d = geometric_distance(u_vec, v_vec);
+                if d <= epsilon {
+                    edges.push(Edge { u, v });
+                    accepted_edges.push((u_idx, v_idx));
                 }
             }
         }

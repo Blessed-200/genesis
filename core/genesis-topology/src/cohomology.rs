@@ -84,6 +84,7 @@ impl Z2Matrix {
         let mut rank = 0usize;
         let mut r = 0usize;
         let mut pivot_row_buf = vec![0_u64; wpr];
+        // HOT PATH: O(N) — no heap allocation, no trait-object dispatch, no recursion, no HashMap/BTreeMap.
         let xor_kernel = select_xor_kernel();
 
         debug_assert_eq!(self.data.len(), self.rows * wpr);
@@ -153,6 +154,7 @@ impl Z2Matrix {
 
 #[inline]
 fn select_xor_kernel() -> XorKernel {
+    // HOT PATH: O(N) kernel selection boundary — one-time runtime dispatch per elimination call.
     #[cfg(target_arch = "x86_64")]
     {
         if std::arch::is_x86_feature_detected!("avx512f") {

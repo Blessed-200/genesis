@@ -1502,8 +1502,11 @@ mod tests {
             POWER_REFINE_MAX_ITERS,
         );
 
-        let mut v_ref = v.clone();
-        let mut y_ref = y.clone();
+        let mut v_ref = vec![0.0; n];
+        let mut y_ref = vec![0.0; n];
+        for (i, vi) in v_ref.iter_mut().enumerate() {
+            *vi = if i % 2 == 0 { 1.0 } else { -1.0 };
+        }
         let reference = power_refine_shifted_eigenvalue(
             n,
             sigma,
