@@ -208,16 +208,13 @@ fn bench_h1_check_10k(c: &mut Criterion) {
     }
     let complex = RipsComplex::build(&g, 0.5);
 
-    let cold_start_begin = Instant::now();
-    let cold_start_result = CohomologyValidator::check_h1(&complex);
-    let cold_start_elapsed = cold_start_begin.elapsed();
-    eprintln!(
-        "[cohomology h1 cold-start] result={cold_start_result}, elapsed_ns={}",
-        cold_start_elapsed.as_nanos()
-    );
+    CohomologyValidator::invalidate_cache();
 
     c.bench_function("cohomology_h1_check_10k", |b| {
-        b.iter(|| black_box(CohomologyValidator::check_h1(black_box(&complex))))
+        b.iter(|| {
+            CohomologyValidator::invalidate_cache();
+            black_box(CohomologyValidator::check_h1(black_box(&complex)))
+        })
     });
 }
 fn percentile(sorted: &[u128], p: f64) -> u128 {

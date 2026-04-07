@@ -545,7 +545,18 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
 pub struct CohomologyValidator;
 
 impl CohomologyValidator {
+    /// Invalidates the thread-local H¹ cache.
+    ///
+    /// Use this method before measurements that require cold-start execution.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
+    pub fn invalidate_cache() {
+        H1_CACHE.with(|cache_cell| cache_cell.borrow_mut().invalidate());
+    }
+
     /// Returns `true` if H¹(complex) = 0 (no independent cycles), `false` otherwise.
+    ///
+    /// AX-ID: AXIOMA-007, AXIOMA-009
     pub fn check_h1(complex: &RipsComplex) -> bool {
         let n_edges = complex.simplices_of_dim(1).count();
         if n_edges == 0 {
@@ -771,7 +782,7 @@ mod tests {
 
     #[test]
     fn h1_cache_hit_avoids_fingerprint_rescan() {
-        H1_CACHE.with(|cache| cache.borrow_mut().invalidate());
+        CohomologyValidator::invalidate_cache();
         reset_fingerprint_count();
 
         let mut hnsw = HnswGraph::new(8);
