@@ -545,13 +545,23 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
 pub struct CohomologyValidator;
 
 impl CohomologyValidator {
-    /// Invalidates the thread-local H¹ cache.
+    /// Invalidates thread-local H¹ memoization and scratch workspaces.
     ///
     /// Use this method before measurements that require cold-start execution.
     ///
     /// AX-ID: AXIOMA-007, AXIOMA-009
     pub fn invalidate_cache() {
-        H1_CACHE.with(|cache_cell| cache_cell.borrow_mut().invalidate());
+        H1_CACHE.with(|cache_cell| {
+            let mut cache = cache_cell.borrow_mut();
+            cache.invalidate();
+            cache.uf_parent.clear();
+            cache.uf_rank.clear();
+        });
+        HOMOLOGY_WORKSPACE.with(|ws_cell| {
+            let mut ws = ws_cell.borrow_mut();
+            ws.id_to_vertex.clear();
+            ws.edge_lookup.clear();
+        });
     }
 
     /// Returns `true` if H¹(complex) = 0 (no independent cycles), `false` otherwise.

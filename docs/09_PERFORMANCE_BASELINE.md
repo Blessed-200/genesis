@@ -1,6 +1,7 @@
-# 09 — Performance Baseline (Pre-optimization)
+# 09 — Performance Baseline (Branch post-change snapshot)
 
-This document establishes reproducible baseline measurements before optimization work.
+This document records reproducible baseline measurements for this branch snapshot
+after recent topology-path updates in `core/genesis-topology/src/hnsw.rs`.
 
 ## Scope
 
@@ -69,14 +70,18 @@ cache key/result are cleared prior to `check_h1`, forcing cold-start execution.
 # Mandatory validation before collecting baseline
 cargo check --workspace
 cargo test --workspace
-cargo check --workspace 2>&1 | grep "^warning:"
+if cargo check --workspace 2>&1 | grep -q "^warning:"; then
+  echo "Warnings found"
+  exit 1
+fi
 
 # Criterion subset for topology (reference names)
 cargo bench -p genesis-topology --bench topology -- \
   '(hnsw_insert_1000|hnsw_search_k10_in_1000|rips_build_10k|manifold_compute_lambda2_p50_p95_p99|rank_by_gaussian_elimination_throughput)'
 
-# Cold-start cohomology guard run (current environment: times out)
-/usr/bin/timeout 300s cargo run --release --manifest-path /tmp/genesis_baseline_probe/Cargo.toml
+# Cold-start cohomology guard run (in-repo, reproducible)
+/usr/bin/timeout 300s cargo bench -p genesis-topology --bench topology -- \
+  cohomology_h1_check_10k --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2
 ```
 
 ## Interpretation

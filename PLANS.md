@@ -29,7 +29,7 @@
 
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `if cargo check --workspace 2>&1 | grep -q "^warning:"; then echo "Warnings found"; exit 1; fi`
 
 ## 1.20 CRATE-002 cacheline-aligned SIMD + throughput benchmark phase (2026-04-04)
 

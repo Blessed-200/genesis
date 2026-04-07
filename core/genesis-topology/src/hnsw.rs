@@ -1335,9 +1335,10 @@ impl HnswGraph {
             let m_max = layer_m.min(degree_cap);
             debug_assert!(m_max <= M0);
             let candidates = self.search_layer(vec, current, self.ef_construction, lc, true);
+            let connect_limit = if lc == 0 { layer_m } else { m_max };
             // Take top-M by distance
             let neighbours: SmallVec<[(usize, f64); M0]> =
-                candidates.into_iter().take(m_max).collect();
+                candidates.into_iter().take(connect_limit).collect();
 
             // Add bidirectional edges
             let new_idx = self.nodes.len() - 1; // last inserted
@@ -1348,7 +1349,7 @@ impl HnswGraph {
                 self.prune_layer(nb_idx, lc, m_max, None);
             }
 
-            if lc == 0 {
+            if lc == 0 && connect_limit > m_max {
                 INSERT_DISTANCE_CACHE.with(|cache_cell| {
                     let cache = cache_cell.borrow();
                     self.prune_layer(new_idx, lc, m_max, Some(cache.as_slice()));
@@ -1446,8 +1447,8 @@ impl HnswGraph {
         let mut scored: SmallVec<[u128; M0]> = SmallVec::with_capacity(degree);
         if let Some(cached_distances) = precomputed_distances {
             for &(nb_idx_u32, dist_sq) in cached_distances {
-                let key =
-                    (u128::from(ordered_f64_bits(f64::from(dist_sq))) << 64) | u128::from(nb_idx_u32);
+                let key = (u128::from(ordered_f64_bits(f64::from(dist_sq))) << 64)
+                    | u128::from(nb_idx_u32);
                 scored.push(key);
             }
         } else {

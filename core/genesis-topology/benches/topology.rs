@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use genesis_math::{fast_metric_distance, fast_metric_distance_sq, SparseCliffordVector};
 use genesis_topology::{
     benchmark_rank_by_gaussian_elimination, benchmark_xor_row_elimination, geometric_distance,
@@ -211,10 +211,14 @@ fn bench_h1_check_10k(c: &mut Criterion) {
     CohomologyValidator::invalidate_cache();
 
     c.bench_function("cohomology_h1_check_10k", |b| {
-        b.iter(|| {
-            CohomologyValidator::invalidate_cache();
-            black_box(CohomologyValidator::check_h1(black_box(&complex)))
-        })
+        b.iter_batched(
+            || {
+                CohomologyValidator::invalidate_cache();
+                &complex
+            },
+            |complex| black_box(CohomologyValidator::check_h1(black_box(complex))),
+            BatchSize::SmallInput,
+        )
     });
 }
 fn percentile(sorted: &[u128], p: f64) -> u128 {
