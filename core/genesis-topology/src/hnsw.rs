@@ -13,7 +13,6 @@
 /// PROHIBITED: Delaunay triangulation. PROHIBITED: `HashMap` in hot path.
 /// Adjacency lists stored as sorted Vec<(`NodeId`, f64)> with binary search.
 use std::cell::RefCell;
-use std::cmp::Ordering;
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
@@ -102,6 +101,7 @@ struct SearchScratch {
 thread_local! {
     static SEARCH_SCRATCH: RefCell<SearchScratch> = RefCell::new(SearchScratch::default());
     static VISITED_EPOCH: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+    static INSERT_DISTANCE_CACHE: RefCell<Vec<(u32, f32)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone)]
@@ -133,12 +133,23 @@ impl<const CAP: usize> FixedHeap<CAP> {
         }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     fn pop_best(&mut self) -> Option<(f32, u32)> {
         if self.len == 0 {
             return None;
         }
         let best = self.data[0];
-        self.data.copy_within(1..self.len, 0);
+        if self.len > 1 {
+            // SAFETY: source and destination are within `self.data`, overlap is allowed,
+            // and we move exactly `self.len - 1` initialized elements one slot left.
+            unsafe {
+                std::ptr::copy(
+                    self.data.as_ptr().add(1),
+                    self.data.as_mut_ptr(),
+                    self.len - 1,
+                );
+            }
+        }
         self.len -= 1;
         Some(best)
     }
@@ -147,19 +158,45 @@ impl<const CAP: usize> FixedHeap<CAP> {
         if !dist.is_finite() || self.limit == 0 {
             return false;
         }
-        if self.len == self.limit && compare_dist_idx((dist, idx), self.data[self.len - 1]).is_ge()
-        {
-            return false;
-        }
-        let mut pos = self.len;
-        if self.len < self.limit {
-            self.len += 1;
-        } else {
-            pos = self.limit - 1;
+        if self.len == self.limit {
+            let worst = self.data[self.len - 1];
+            let ge_worst = dist > worst.0 || (dist == worst.0 && idx >= worst.1);
+            if ge_worst {
+                return false;
+            }
         }
         let item = (dist, idx);
-        while pos > 0 && compare_dist_idx(item, self.data[pos - 1]).is_lt() {
-            self.data[pos] = self.data[pos - 1];
+        if self.len < self.limit && self.len < 4 {
+            let mut pos = self.len;
+            while pos > 0 {
+                let prev = self.data[pos - 1];
+                let is_lt = item.0 < prev.0 || (item.0 == prev.0 && item.1 < prev.1);
+                if !is_lt {
+                    break;
+                }
+                self.data[pos] = prev;
+                pos -= 1;
+            }
+            self.data[pos] = item;
+            self.len += 1;
+            return true;
+        }
+
+        let mut pos = if self.len < self.limit {
+            let current = self.len;
+            self.len += 1;
+            current
+        } else {
+            self.limit - 1
+        };
+
+        while pos > 0 {
+            let prev = self.data[pos - 1];
+            let is_lt = item.0 < prev.0 || (item.0 == prev.0 && item.1 < prev.1);
+            if !is_lt {
+                break;
+            }
+            self.data[pos] = prev;
             pos -= 1;
         }
         self.data[pos] = item;
@@ -169,11 +206,6 @@ impl<const CAP: usize> FixedHeap<CAP> {
     fn as_slice(&self) -> &[(f32, u32)] {
         &self.data[..self.len]
     }
-}
-
-#[inline]
-fn compare_dist_idx(lhs: (f32, u32), rhs: (f32, u32)) -> Ordering {
-    lhs.0.total_cmp(&rhs.0).then_with(|| lhs.1.cmp(&rhs.1))
 }
 
 #[inline]
@@ -290,6 +322,9 @@ unsafe fn slab_distance_avx2(
     out
 }
 
+/// Inline helper for layer-0 slab distance computation in hot search paths.
+/// Dispatches to AVX2 or scalar kernel based on compile-time target features.
+#[inline(always)]
 fn slab_distance(
     slab_ptr: *const f32,
     block: usize,
@@ -302,7 +337,7 @@ fn slab_distance(
     ))]
     {
         // SAFETY: target-feature gated at compile time, pointer invariants are
-        // enforced by the caller and match the scalar kernel requirements.
+        // enforced by the caller and match the kernel requirements.
         return unsafe { slab_distance_avx2(slab_ptr, block, query_f32) };
     }
     #[cfg(not(all(
@@ -1304,9 +1339,10 @@ impl HnswGraph {
             let m_max = layer_m.min(degree_cap);
             debug_assert!(m_max <= M0);
             let candidates = self.search_layer(vec, current, self.ef_construction, lc);
+            let connect_limit = if lc == 0 { layer_m } else { m_max };
             // Take top-M by distance
             let neighbours: SmallVec<[(usize, f64); M0]> =
-                candidates.into_iter().take(m_max).collect();
+                candidates.into_iter().take(connect_limit).collect();
 
             // Add bidirectional edges
             let new_idx = self.nodes.len() - 1; // last inserted
@@ -1314,7 +1350,23 @@ impl HnswGraph {
                 self.add_edge(new_idx, lc, nb_idx, dist);
                 self.add_edge(nb_idx, lc, new_idx, dist);
                 // Prune nb if it exceeds m_max
-                self.prune_layer(nb_idx, lc, m_max);
+                self.prune_layer(nb_idx, lc, m_max, None);
+            }
+
+            if lc == 0 && connect_limit > m_max {
+                // Populate cache from actual neighbors after insertion, respecting connect_limit
+                INSERT_DISTANCE_CACHE.with(|cache_cell| {
+                    let mut cache = cache_cell.borrow_mut();
+                    cache.clear();
+                    let query_f32 = Self::dense_to_query_f32(vec);
+                    for nb_idx_u32 in self.node_neighbors_iter(new_idx, lc) {
+                        let nb_idx = nb_idx_u32 as usize;
+                        let dist_sq = self.distance_to_layer0_node_sq(&query_f32, nb_idx) as f32;
+                        cache.push((nb_idx_u32, dist_sq));
+                    }
+                    let cache_ref = cache.as_slice();
+                    self.prune_layer(new_idx, lc, m_max, Some(cache_ref));
+                });
             }
 
             if let Some(&(closest, _)) = neighbours.first() {
@@ -1386,7 +1438,13 @@ impl HnswGraph {
 
     /// Prune a node's adjacency list at a layer to at most `m_max` neighbours
     /// (keep the closest by distance).
-    fn prune_layer(&mut self, idx: usize, layer: usize, m_max: usize) {
+    fn prune_layer(
+        &mut self,
+        idx: usize,
+        layer: usize,
+        m_max: usize,
+        precomputed_distances: Option<&[(u32, f32)]>,
+    ) {
         if layer > self.nodes[idx].max_layer {
             return;
         }
@@ -1400,15 +1458,23 @@ impl HnswGraph {
         debug_assert!(degree <= M0);
         let query_f32 = (layer == 0).then(|| Self::dense_to_query_f32(&self.nodes[idx].vec));
         let mut scored: SmallVec<[u128; M0]> = SmallVec::with_capacity(degree);
-        for nb_idx_u32 in self.node_neighbors_iter(idx, layer) {
-            let nb_idx = nb_idx_u32 as usize;
-            let dist = if let Some(query_f32) = &query_f32 {
-                self.distance_to_layer0_node_sq(query_f32, nb_idx)
-            } else {
-                self.distance_to_node_sq(&self.nodes[idx].vec, nb_idx, layer)
-            };
-            let key = (u128::from(ordered_f64_bits(dist)) << 64) | u128::from(nb_idx_u32);
-            scored.push(key);
+        if let Some(cached_distances) = precomputed_distances {
+            for &(nb_idx_u32, dist_sq) in cached_distances {
+                let key = (u128::from(ordered_f64_bits(f64::from(dist_sq))) << 64)
+                    | u128::from(nb_idx_u32);
+                scored.push(key);
+            }
+        } else {
+            for nb_idx_u32 in self.node_neighbors_iter(idx, layer) {
+                let nb_idx = nb_idx_u32 as usize;
+                let dist = if let Some(query_f32) = &query_f32 {
+                    self.distance_to_layer0_node_sq(query_f32, nb_idx)
+                } else {
+                    self.distance_to_node_sq(&self.nodes[idx].vec, nb_idx, layer)
+                };
+                let key = (u128::from(ordered_f64_bits(dist)) << 64) | u128::from(nb_idx_u32);
+                scored.push(key);
+            }
         }
 
         // Deterministic full ordering over (distance_bits, node_idx).
@@ -1542,6 +1608,7 @@ impl HnswGraph {
                 let query_f32 = Self::dense_to_query_f32(query);
                 let slab_ptr = self.layer0_slab_ptr();
                 let slab_blocks = self.layer0_soa.blocks.len();
+                let nodes_len = self.nodes.len();
 
                 let d0 = self.distance_to_node_sq(query, entry_idx, layer) as f32;
                 visited[entry_idx] = search_epoch;
@@ -1562,34 +1629,35 @@ impl HnswGraph {
                         // Layer-0 block projection is materialized at insertion/removal time.
                         for group in self.node_layer0_groups(c_idx) {
                             let block = group.block as usize;
-                            let base = block * SLAB_LANES;
-                            let mut effective_mask = group.lane_mask;
-                            let mut m = effective_mask;
-                            while m != 0 {
-                                let lane_u8 = m.trailing_zeros() as u8;
-                                let nb_idx = base + usize::from(lane_u8);
-                                if nb_idx >= self.nodes.len() || visited[nb_idx] == search_epoch {
-                                    effective_mask &= !(1_u8 << lane_u8);
-                                }
-                                m &= m - 1;
-                            }
-                            if effective_mask == 0 {
+                            if block >= slab_blocks {
                                 continue;
                             }
-                            debug_assert!(block < slab_blocks, "block in bounds");
+                            let base = block * SLAB_LANES;
                             debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
+                            // SAFETY: `block < slab_blocks`, slab is persistently materialized and
+                            // 64-byte aligned; query buffer has fixed 16-lane shape.
                             let distances = slab_distance(slab_ptr, block, &query_f32);
-                            let mut m = effective_mask;
+                            let mut effective_mask = group.lane_mask;
+                            let mut m = group.lane_mask;
                             while m != 0 {
-                                let lane = m.trailing_zeros() as usize;
+                                let lane_u8 = m.trailing_zeros() as u8;
+                                let lane = usize::from(lane_u8);
+                                let original_bit = 1_u8 << lane_u8;
                                 let nb_idx = base + lane;
-                                if nb_idx >= self.nodes.len() {
-                                    break;
+                                if nb_idx >= nodes_len {
+                                    m &= m - 1;
+                                    continue;
                                 }
-                                visited[nb_idx] = search_epoch;
-                                let d = distances[lane];
-                                if results.push_or_replace(d, nb_idx as u32) {
-                                    candidates.push_or_replace(d, nb_idx as u32);
+                                // Branch-free visited check: clears lane bit when visited, equivalent to `if visited[nb_idx] == search_epoch { continue; }`
+                                effective_mask &= ((visited[nb_idx] != search_epoch) as u8
+                                    * original_bit)
+                                    | !original_bit;
+                                if (effective_mask & original_bit) != 0 {
+                                    visited[nb_idx] = search_epoch;
+                                    let d = distances[lane];
+                                    if results.push_or_replace(d, nb_idx as u32) {
+                                        candidates.push_or_replace(d, nb_idx as u32);
+                                    }
                                 }
                                 m &= m - 1;
                             }
@@ -1649,6 +1717,7 @@ impl HnswGraph {
                 let query_f32 = Self::dense_to_query_f32(query);
                 let slab_ptr = self.layer0_slab_ptr();
                 let slab_blocks = self.layer0_soa.blocks.len();
+                let nodes_len = self.nodes.len();
 
                 let d0 = self.distance_to_node_sq(query, entry_idx, layer) as f32;
                 *work_count += 1;
@@ -1668,35 +1737,36 @@ impl HnswGraph {
                     if layer == 0 && !slab_ptr.is_null() {
                         for group in self.node_layer0_groups(c_idx) {
                             let block = group.block as usize;
-                            let base = block * SLAB_LANES;
-                            let mut effective_mask = group.lane_mask;
-                            let mut m = effective_mask;
-                            while m != 0 {
-                                let lane_u8 = m.trailing_zeros() as u8;
-                                let nb_idx = base + usize::from(lane_u8);
-                                if nb_idx >= self.nodes.len() || visited[nb_idx] == search_epoch {
-                                    effective_mask &= !(1_u8 << lane_u8);
-                                }
-                                m &= m - 1;
-                            }
-                            if effective_mask == 0 {
+                            if block >= slab_blocks {
                                 continue;
                             }
-                            debug_assert!(block < slab_blocks, "block in bounds");
+                            let base = block * SLAB_LANES;
                             debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
+                            // SAFETY: `block < slab_blocks`, slab is persistently materialized and
+                            // 64-byte aligned; query buffer has fixed 16-lane shape.
                             let distances = slab_distance(slab_ptr, block, &query_f32);
-                            let mut m = effective_mask;
+                            let mut effective_mask = group.lane_mask;
+                            let mut m = group.lane_mask;
                             while m != 0 {
-                                let lane = m.trailing_zeros() as usize;
+                                let lane_u8 = m.trailing_zeros() as u8;
+                                let lane = usize::from(lane_u8);
+                                let original_bit = 1_u8 << lane_u8;
                                 let nb_idx = base + lane;
-                                if nb_idx >= self.nodes.len() {
-                                    break;
+                                if nb_idx >= nodes_len {
+                                    m &= m - 1;
+                                    continue;
                                 }
-                                visited[nb_idx] = search_epoch;
-                                let d = distances[lane];
-                                *work_count += 1;
-                                if results.push_or_replace(d, nb_idx as u32) {
-                                    candidates.push_or_replace(d, nb_idx as u32);
+                                // Branch-free visited check: clears lane bit when visited, equivalent to `if visited[nb_idx] == search_epoch { continue; }`
+                                effective_mask &= ((visited[nb_idx] != search_epoch) as u8
+                                    * original_bit)
+                                    | !original_bit;
+                                if (effective_mask & original_bit) != 0 {
+                                    visited[nb_idx] = search_epoch;
+                                    let d = distances[lane];
+                                    *work_count += 1;
+                                    if results.push_or_replace(d, nb_idx as u32) {
+                                        candidates.push_or_replace(d, nb_idx as u32);
+                                    }
                                 }
                                 m &= m - 1;
                             }
@@ -3026,7 +3096,7 @@ mod tests {
         );
 
         let (expected_keep, expected_drop) = expected_keep_and_drop(&g, idx, 0, m_max);
-        g.prune_layer(idx, 0, m_max);
+        g.prune_layer(idx, 0, m_max, None);
 
         let after: Vec<u32> = g.node_neighbors_iter(idx, 0).collect();
         assert_eq!(after.len(), m_max);
@@ -3051,7 +3121,7 @@ mod tests {
         let idx = 0usize;
         let m_max = 2usize;
         assert!(g.node_neighbors_len(idx, 0) > m_max);
-        g.prune_layer(idx, 0, m_max);
+        g.prune_layer(idx, 0, m_max, None);
 
         for (node_idx, adj) in g.layer_neighbors.iter().enumerate() {
             for window in adj.layer0.windows(2) {
@@ -3092,7 +3162,7 @@ mod tests {
         let idx = 0usize;
         let m_max = 3usize;
         let (_expected_keep, expected_drop) = expected_keep_and_drop(&g, idx, 0, m_max);
-        g.prune_layer(idx, 0, m_max);
+        g.prune_layer(idx, 0, m_max, None);
 
         let after: Vec<u32> = g.node_neighbors_iter(idx, 0).collect();
         for dropped in expected_drop {
