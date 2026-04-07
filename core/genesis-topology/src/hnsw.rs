@@ -347,6 +347,34 @@ fn slab_distance(
     }
 }
 
+/// Inline helper for layer-0 slab distance computation in hot search paths.
+/// Dispatches to AVX2 or scalar kernel based on compile-time target features.
+#[inline(always)]
+fn compute_slab_distances(
+    slab_ptr: *const f32,
+    block: usize,
+    query_f32: &[f32; SLAB_DIM],
+) -> [f32; SLAB_LANES] {
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    ))]
+    {
+        // SAFETY: target-feature gated at compile time, pointer invariants are
+        // enforced by the caller and match the kernel requirements.
+        unsafe { slab_distance_avx2(slab_ptr, block, query_f32) }
+    }
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        target_feature = "avx2",
+        target_feature = "fma"
+    )))]
+    {
+        slab_distance_scalar(slab_ptr, block, query_f32)
+    }
+}
+
 // Maintenance policy for critical topology modules.
 //
 // - `#[inline(always)]` is prohibited except for a documented exception with
@@ -1351,6 +1379,17 @@ impl HnswGraph {
             }
 
             if lc == 0 && connect_limit > m_max {
+                // Populate cache from actual neighbors after insertion, respecting connect_limit
+                INSERT_DISTANCE_CACHE.with(|cache_cell| {
+                    let mut cache = cache_cell.borrow_mut();
+                    cache.clear();
+                    let query_f32 = Self::dense_to_query_f32(vec);
+                    for nb_idx_u32 in self.node_neighbors_iter(new_idx, lc) {
+                        let nb_idx = nb_idx_u32 as usize;
+                        let dist_sq = self.distance_to_layer0_node_sq(&query_f32, nb_idx) as f32;
+                        cache.push((nb_idx_u32, dist_sq));
+                    }
+                });
                 INSERT_DISTANCE_CACHE.with(|cache_cell| {
                     let cache = cache_cell.borrow();
                     self.prune_layer(new_idx, lc, m_max, Some(cache.as_slice()));
@@ -1623,26 +1662,9 @@ impl HnswGraph {
                             }
                             let base = block * SLAB_LANES;
                             debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
-                            let distances = {
-                                #[cfg(all(
-                                    target_arch = "x86_64",
-                                    target_feature = "avx2",
-                                    target_feature = "fma"
-                                ))]
-                                {
-                                    // SAFETY: `block < slab_blocks`, slab is persistently materialized and
-                                    // 64-byte aligned; query buffer has fixed 16-lane shape.
-                                    unsafe { slab_distance_avx2(slab_ptr, block, &query_f32) }
-                                }
-                                #[cfg(not(all(
-                                    target_arch = "x86_64",
-                                    target_feature = "avx2",
-                                    target_feature = "fma"
-                                )))]
-                                {
-                                    slab_distance_scalar(slab_ptr, block, &query_f32)
-                                }
-                            };
+                            // SAFETY: `block < slab_blocks`, slab is persistently materialized and
+                            // 64-byte aligned; query buffer has fixed 16-lane shape.
+                            let distances = compute_slab_distances(slab_ptr, block, &query_f32);
                             let mut effective_mask = group.lane_mask;
                             let mut m = group.lane_mask;
                             while m != 0 {
@@ -1654,6 +1676,7 @@ impl HnswGraph {
                                     m &= m - 1;
                                     continue;
                                 }
+                                // Branch-free visited check: clears lane bit when visited, equivalent to `if visited[nb_idx] == search_epoch { continue; }`
                                 effective_mask &= ((visited[nb_idx] != search_epoch) as u8
                                     * original_bit)
                                     | !original_bit;
@@ -1685,16 +1708,6 @@ impl HnswGraph {
                 scratch.out.reserve(results.len());
                 for &(dist_sq, idx) in results.as_slice() {
                     scratch.out.push((idx as usize, f64::from(dist_sq)));
-                }
-                if is_insert_context && layer == 0 {
-                    INSERT_DISTANCE_CACHE.with(|cache_cell| {
-                        let mut cache = cache_cell.borrow_mut();
-                        cache.clear();
-                        cache.reserve(results.len());
-                        for &(dist_sq, idx) in results.as_slice() {
-                            cache.push((idx, dist_sq));
-                        }
-                    });
                 }
                 std::mem::take(&mut scratch.out)
             })
@@ -1757,26 +1770,9 @@ impl HnswGraph {
                             }
                             let base = block * SLAB_LANES;
                             debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
-                            let distances = {
-                                #[cfg(all(
-                                    target_arch = "x86_64",
-                                    target_feature = "avx2",
-                                    target_feature = "fma"
-                                ))]
-                                {
-                                    // SAFETY: `block < slab_blocks`, slab is persistently materialized and
-                                    // 64-byte aligned; query buffer has fixed 16-lane shape.
-                                    unsafe { slab_distance_avx2(slab_ptr, block, &query_f32) }
-                                }
-                                #[cfg(not(all(
-                                    target_arch = "x86_64",
-                                    target_feature = "avx2",
-                                    target_feature = "fma"
-                                )))]
-                                {
-                                    slab_distance_scalar(slab_ptr, block, &query_f32)
-                                }
-                            };
+                            // SAFETY: `block < slab_blocks`, slab is persistently materialized and
+                            // 64-byte aligned; query buffer has fixed 16-lane shape.
+                            let distances = compute_slab_distances(slab_ptr, block, &query_f32);
                             let mut effective_mask = group.lane_mask;
                             let mut m = group.lane_mask;
                             while m != 0 {
@@ -1788,6 +1784,7 @@ impl HnswGraph {
                                     m &= m - 1;
                                     continue;
                                 }
+                                // Branch-free visited check: clears lane bit when visited, equivalent to `if visited[nb_idx] == search_epoch { continue; }`
                                 effective_mask &= ((visited[nb_idx] != search_epoch) as u8
                                     * original_bit)
                                     | !original_bit;
