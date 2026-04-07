@@ -1,5 +1,36 @@
 # PLANS
 
+## 1.21 CRATE-003 HNSW insert/search hot-path de-duplication (2026-04-07)
+
+### Root cause
+
+- Insert phase at layer 0 computes candidate distances during beam search, then prune scoring can recompute equivalent layer-0 distances in the same insertion cycle.
+- `FixedHeap` hot-path operations still pay avoidable overhead (`copy_within` and comparator call churn) under high-frequency beam maintenance.
+- Layer-0 block-group scan in `search_layer` performs a two-pass mask walk and repeated branch checks that can be fused into a single tighter pass.
+
+### File-level actions
+
+1. `core/genesis-topology/src/hnsw.rs`
+   - Add thread-local `INSERT_DISTANCE_CACHE: RefCell<Vec<(u32, f32)>>` adjacent to `SEARCH_SCRATCH` / `VISITED_EPOCH`.
+   - Extend `search_layer` with insert-context cache population path and record `(node_idx, dist_sq)` results for reuse.
+   - Update `prune_layer` to accept optional precomputed distances (`Option<&[(u32, f32)]>`), using cached values directly when supplied and preserving existing fallback distance materialization.
+   - Use cached distances in insert path when pruning the newly inserted node in layer 0.
+   - Optimize `FixedHeap::push_or_replace` and `FixedHeap::pop_best`:
+     - inline comparator logic,
+     - add fast path for `len < 4`,
+     - replace `copy_within` in `pop_best` with pointer memmove.
+   - Streamline layer-0 scan:
+     - hoist `nodes.len()` outside group loop,
+     - fuse visited filtering + consumption pass,
+     - use branchless mask update for visited state,
+     - inline slab-distance call site with direct scalar/AVX2 dispatch.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
 ## 1.20 CRATE-002 cacheline-aligned SIMD + throughput benchmark phase (2026-04-04)
 
 ### Root cause
