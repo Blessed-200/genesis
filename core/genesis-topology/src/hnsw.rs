@@ -133,6 +133,7 @@ impl<const CAP: usize> FixedHeap<CAP> {
         }
     }
 
+    #[allow(clippy::missing_const_for_fn)]
     fn pop_best(&mut self) -> Option<(f32, u32)> {
         if self.len == 0 {
             return None;

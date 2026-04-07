@@ -10,7 +10,7 @@ Tracked workloads:
 - `hnsw_insert_1000`
 - `hnsw_search_k10_in_1000`
 - `rips_build_10k`
-- `manifold_compute_lambda2`
+- `manifold_compute_lambda2_p50_p95_p99`
 - `synchrony_order_fast_1000_nodes`
 - `cohomology_h1_check_10k` (cold-start)
 - `rank_by_gaussian_elimination_throughput`
@@ -59,12 +59,14 @@ cache key/result are cleared prior to `check_h1`, forcing cold-start execution.
 | `hnsw_insert_1000` | 50,292,495 ns | 53,134,316 ns | 53,326,516 ns | 30 | Deterministic fixture vectors |
 | `hnsw_search_k10_in_1000` | 12,034 ns | 12,086 ns | 12,253 ns | 30 | Query = fixture id 500 |
 | `rips_build_10k` | 27,864,230 ns | 28,654,267 ns | 28,895,003 ns | 30 | `epsilon=0.5` |
-| `manifold_compute_lambda2` | 171,401,807 ns | 175,001,206 ns | 175,251,002 ns | 30 | 5k-node manifold fixture |
+| `manifold_compute_lambda2_p50_p95_p99` | 171,401,807 ns | 175,001,206 ns | 175,251,002 ns | 30 | 5k-node manifold fixture |
 | `synchrony_order_fast_1000_nodes` | 39,365 ns | 47,905 ns | 66,328 ns | 30 | 1000-node sparse ring (`k=8`) |
 | `cohomology_h1_check_10k` (cold-start) | N/A | N/A | N/A | N/A | Timed out at 300 s before completing first sample in cold-start mode |
 | `rank_by_gaussian_elimination_throughput` | 296,688 ns | 324,303 ns | 364,339 ns | 30 | Matrix params `(128,256)` |
 
 ## Reproduction commands
+
+### A) Baseline collection protocol (table above)
 
 ```bash
 # Mandatory validation before collecting baseline
@@ -78,8 +80,12 @@ fi
 # Criterion subset for topology (reference names)
 cargo bench -p genesis-topology --bench topology -- \
   '(hnsw_insert_1000|hnsw_search_k10_in_1000|rips_build_10k|manifold_compute_lambda2_p50_p95_p99|rank_by_gaussian_elimination_throughput)'
+```
 
-# Cold-start cohomology guard run (in-repo, reproducible)
+### B) Timeout-guard probe for cohomology cold-start
+
+```bash
+# Guard probe only (not used for 30-sample percentile table)
 /usr/bin/timeout 300s cargo bench -p genesis-topology --bench topology -- \
   cohomology_h1_check_10k --sample-size 10 --warm-up-time 0.1 --measurement-time 0.2
 ```
