@@ -1,13 +1,13 @@
-/// AX-ID: AXIOMA-007, AXIOMA-009
-/// Cohomology validator: computes H¹ = ker(∂₁) / im(∂₂) over Z₂.
-/// All arithmetic in Z₂ (bit operations). No external linear algebra libraries.
-/// Boundary matrices stored as bitmaps (Vec<u64> packed rows).
-use std::cell::RefCell;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
     __m256i, __m512i, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256,
     _mm512_loadu_si512, _mm512_storeu_si512, _mm512_xor_si512,
 };
+/// AX-ID: AXIOMA-007, AXIOMA-009
+/// Cohomology validator: computes H¹ = ker(∂₁) / im(∂₂) over Z₂.
+/// All arithmetic in Z₂ (bit operations). No external linear algebra libraries.
+/// Boundary matrices stored as bitmaps (Vec<u64> packed rows).
+use std::cell::RefCell;
 
 // Política de mantenimiento para validación cohomológica crítica.
 //

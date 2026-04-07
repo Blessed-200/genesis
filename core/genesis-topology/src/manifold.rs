@@ -1372,7 +1372,10 @@ mod tests {
 
     #[test]
     fn power_refine_matches_reference_on_test_graphs() {
-        fn build_graph_csr(n: usize, edges: &[(usize, usize)]) -> (Vec<f64>, Vec<(usize, usize)>, Vec<usize>) {
+        fn build_graph_csr(
+            n: usize,
+            edges: &[(usize, usize)],
+        ) -> (Vec<f64>, Vec<(usize, usize)>, Vec<usize>) {
             let mut neighbors = vec![Vec::<usize>::new(); n];
             for &(u, v) in edges {
                 neighbors[u].push(v);
