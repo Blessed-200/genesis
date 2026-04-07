@@ -49,6 +49,16 @@ pub struct RipsComplex {
 }
 
 impl RipsComplex {
+    #[inline]
+    fn validate_epsilon(epsilon: f64) -> Result<(), GenesisError> {
+        if !epsilon.is_finite() || epsilon < 0.0 {
+            return Err(GenesisError::InvalidInput(
+                "RipsComplex::build requires a finite epsilon >= 0.0",
+            ));
+        }
+        Ok(())
+    }
+
     /// Build the Rips complex from the HNSW graph.
     ///
     /// Only edges already present in the graph (at layer 0) are considered,
@@ -59,6 +69,7 @@ impl RipsComplex {
     /// AX-ID: AXIOMA-007
     #[allow(clippy::similar_names, clippy::too_many_lines)]
     pub fn build(graph: &HnswGraph, epsilon: f64) -> Result<Self, GenesisError> {
+        Self::validate_epsilon(epsilon)?;
         let node_ids: Vec<NodeId> = graph
             .nodes()
             .filter_map(|id| NodeId::try_new(id.get()).ok())
@@ -382,5 +393,19 @@ mod tests {
         let csr = rips.adjacency_csr();
         assert_eq!(csr.data, rips.adjacency_data.as_slice());
         assert_eq!(csr.offsets, rips.adjacency_offsets.as_slice());
+    }
+
+    #[test]
+    fn rips_build_rejects_nan_epsilon() {
+        let g = HnswGraph::new(16);
+        let result = RipsComplex::build(&g, f64::NAN);
+        assert!(matches!(result, Err(GenesisError::InvalidInput(_))));
+    }
+
+    #[test]
+    fn rips_build_rejects_negative_epsilon() {
+        let g = HnswGraph::new(16);
+        let result = RipsComplex::build(&g, -0.001);
+        assert!(matches!(result, Err(GenesisError::InvalidInput(_))));
     }
 }

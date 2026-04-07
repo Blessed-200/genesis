@@ -1343,6 +1343,34 @@ mod tests {
     }
 
     #[test]
+    fn lambda2_public_boundary_test() {
+        let mut manifold = ManifoldCollector::new(2);
+        for i in 0..20u64 {
+            let base = i as f64 * 0.2;
+            let vector = SparseCliffordVector::from_iter(
+                (0..4).map(|blade| (blade, base + blade as f64 * 1e-3)),
+            )
+            .expect("vector must be finite");
+            manifold
+                .insert(
+                    NodeId::try_new(i).expect("valid NodeId by construction"),
+                    &vector,
+                )
+                .expect("insert must succeed");
+        }
+
+        let lambda2 = manifold.compute_lambda2();
+        assert!(
+            lambda2 >= 0.1,
+            "public compute_lambda2 must keep the boundary fixture on the contract side: lambda2={lambda2}"
+        );
+        assert!(
+            lambda2 < 0.25,
+            "boundary fixture must remain near the 0.1 threshold: lambda2={lambda2}"
+        );
+    }
+
+    #[test]
     fn power_refine_matches_reference_on_test_graphs() {
         fn build_graph_csr(n: usize, edges: &[(usize, usize)]) -> (Vec<f64>, Vec<(usize, usize)>, Vec<usize>) {
             let mut neighbors = vec![Vec::<usize>::new(); n];
