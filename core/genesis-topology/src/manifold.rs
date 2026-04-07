@@ -485,11 +485,9 @@ impl ManifoldCollector {
     /// Builds a `RipsComplex` and runs `CohomologyValidator`.
     ///
     /// AX-ID: AXIOMA-007, AXIOMA-009
-    pub fn compute_h1(&self) -> usize {
-        let Ok(complex) = RipsComplex::build(&self.graph, REDUNDANCY_RADIUS) else {
-            return 1;
-        };
-        usize::from(!CohomologyValidator::check_h1(&complex))
+    pub fn compute_h1(&self) -> Result<usize, GenesisError> {
+        let complex = RipsComplex::build(&self.graph, REDUNDANCY_RADIUS)?;
+        Ok(usize::from(!CohomologyValidator::check_h1(&complex)))
     }
 
     /// Verifica H¹ = 0 using the state incremental (O(1)).
@@ -1267,7 +1265,7 @@ mod tests {
             )
             .unwrap();
         }
-        let h1 = m.compute_h1();
+        let h1 = m.compute_h1().expect("compute_h1 should succeed");
         assert!(h1 == 0 || h1 == 1, "H1 result must be 0 or 1, got {}", h1);
     }
 

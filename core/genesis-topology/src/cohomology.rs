@@ -34,6 +34,8 @@ struct Z2Matrix {
     data: Vec<u64>,
 }
 
+type XorKernel = fn(&mut [u64], &[u64]);
+
 impl Z2Matrix {
     fn new(rows: usize, cols: usize) -> Self {
         let words_per_row = cols.div_ceil(64);
@@ -82,6 +84,7 @@ impl Z2Matrix {
         let mut rank = 0usize;
         let mut r = 0usize;
         let mut pivot_row_buf = vec![0_u64; wpr];
+        let xor_kernel = select_xor_kernel();
 
         debug_assert_eq!(self.data.len(), self.rows * wpr);
 
@@ -134,7 +137,7 @@ impl Z2Matrix {
                         let len = wpr - pivot_word;
                         let row_tail = &mut self.data[base..base + len];
                         let pivot_tail = &pivot_row_buf[pivot_word..pivot_word + len];
-                        xor_row_dispatch(row_tail, pivot_tail);
+                        xor_kernel(row_tail, pivot_tail);
                     }
                 }
 
@@ -149,28 +152,17 @@ impl Z2Matrix {
 }
 
 #[inline]
-fn xor_row_dispatch(row_tail: &mut [u64], pivot_tail: &[u64]) {
-    debug_assert_eq!(row_tail.len(), pivot_tail.len());
-
+fn select_xor_kernel() -> XorKernel {
     #[cfg(target_arch = "x86_64")]
     {
         if std::arch::is_x86_feature_detected!("avx512f") {
-            // SAFETY: Runtime feature detection guarantees AVX-512F availability.
-            unsafe {
-                xor_row_avx512(row_tail, pivot_tail);
-            }
-            return;
+            return xor_row_avx512_entry;
         }
         if std::arch::is_x86_feature_detected!("avx2") {
-            // SAFETY: Runtime feature detection guarantees AVX2 availability.
-            unsafe {
-                xor_row_avx2(row_tail, pivot_tail);
-            }
-            return;
+            return xor_row_avx2_entry;
         }
     }
-
-    xor_row_scalar(row_tail, pivot_tail);
+    xor_row_scalar
 }
 
 #[inline]
@@ -209,6 +201,13 @@ unsafe fn xor_row_avx512(row_tail: &mut [u64], pivot_tail: &[u64]) {
 }
 
 #[cfg(target_arch = "x86_64")]
+#[inline]
+fn xor_row_avx512_entry(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    // SAFETY: selected only after runtime AVX-512 feature detection.
+    unsafe { xor_row_avx512(row_tail, pivot_tail) }
+}
+
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn xor_row_avx2(row_tail: &mut [u64], pivot_tail: &[u64]) {
     let len = row_tail.len();
@@ -224,6 +223,13 @@ unsafe fn xor_row_avx2(row_tail: &mut [u64], pivot_tail: &[u64]) {
         i += 4;
     }
     xor_row_scalar(&mut row_tail[i..], &pivot_tail[i..]);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn xor_row_avx2_entry(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    // SAFETY: selected only after runtime AVX2 feature detection.
+    unsafe { xor_row_avx2(row_tail, pivot_tail) }
 }
 
 fn debug_assert_matrix_invariants(matrix: &Z2Matrix) {
@@ -592,8 +598,9 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
         pivot[word] = state.rotate_left(11);
     }
 
+    let xor_kernel = select_xor_kernel();
     for _ in 0..iterations {
-        xor_row_dispatch(&mut dst, &pivot);
+        xor_kernel(&mut dst, &pivot);
     }
 
     dst.iter().fold(0_u64, |acc, &word| acc ^ word)
@@ -745,7 +752,7 @@ mod tests {
         }
         let complex = RipsComplex::build(&g, 10.0).expect("rips build should succeed");
         let result = CohomologyValidator::check_h1(&complex);
-        println!("H1 zero for cycle-free-like graph: {}", result);
+        assert!(result, "expected H¹=0 for cycle-free graph");
     }
 
     #[test]
