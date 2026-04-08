@@ -1,7 +1,8 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m256i, __m512i, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256,
-    _mm512_loadu_si512, _mm512_storeu_si512, _mm512_xor_si512,
+    __m256i, __m512i, _mm256_load_si256, _mm256_loadu_si256, _mm256_store_si256,
+    _mm256_storeu_si256, _mm256_xor_si256, _mm512_load_si512, _mm512_loadu_si512,
+    _mm512_store_si512, _mm512_storeu_si512, _mm512_xor_si512,
 };
 
 /// AX-ID: AXIOMA-007, AXIOMA-009
@@ -189,22 +190,26 @@ fn xor_row_scalar(row_tail: &mut [u64], pivot_tail: &[u64]) {
 #[target_feature(enable = "avx512f")]
 unsafe fn xor_row_avx512(row_tail: &mut [u64], pivot_tail: &[u64]) {
     let len = row_tail.len();
+    let aligned =
+        (row_tail.as_ptr() as usize & 63) == 0 && (pivot_tail.as_ptr() as usize & 63) == 0;
     let mut i = 0usize;
     while i + 8 <= len {
         // SAFETY: `i + 8 <= len` keeps all pointer arithmetic in-bounds for both slices.
         unsafe {
-            #[allow(clippy::cast_ptr_alignment)]
-            // SAFETY: `_mm512_loadu_si512` performs an explicit unaligned load.
-            // The cast matches the intrinsic signature and does not impose
-            // additional alignment requirements for this load path.
-            let lhs = _mm512_loadu_si512(row_tail.as_ptr().add(i).cast::<__m512i>());
-            #[allow(clippy::cast_ptr_alignment)]
-            // SAFETY: same contract as `lhs`; unaligned load is intentional.
-            let rhs = _mm512_loadu_si512(pivot_tail.as_ptr().add(i).cast::<__m512i>());
-            let out = _mm512_xor_si512(lhs, rhs);
-            #[allow(clippy::cast_ptr_alignment)]
-            // SAFETY: `_mm512_storeu_si512` performs an explicit unaligned store.
-            _mm512_storeu_si512(row_tail.as_mut_ptr().add(i).cast::<__m512i>(), out);
+            if aligned {
+                let lhs = _mm512_load_si512(row_tail.as_ptr().add(i).cast::<__m512i>());
+                let rhs = _mm512_load_si512(pivot_tail.as_ptr().add(i).cast::<__m512i>());
+                let out = _mm512_xor_si512(lhs, rhs);
+                _mm512_store_si512(row_tail.as_mut_ptr().add(i).cast::<__m512i>(), out);
+            } else {
+                #[allow(clippy::cast_ptr_alignment)]
+                let lhs = _mm512_loadu_si512(row_tail.as_ptr().add(i).cast::<__m512i>());
+                #[allow(clippy::cast_ptr_alignment)]
+                let rhs = _mm512_loadu_si512(pivot_tail.as_ptr().add(i).cast::<__m512i>());
+                let out = _mm512_xor_si512(lhs, rhs);
+                #[allow(clippy::cast_ptr_alignment)]
+                _mm512_storeu_si512(row_tail.as_mut_ptr().add(i).cast::<__m512i>(), out);
+            }
         }
         i += 8;
     }
@@ -222,20 +227,26 @@ fn xor_row_avx512_entry(row_tail: &mut [u64], pivot_tail: &[u64]) {
 #[target_feature(enable = "avx2")]
 unsafe fn xor_row_avx2(row_tail: &mut [u64], pivot_tail: &[u64]) {
     let len = row_tail.len();
+    let aligned =
+        (row_tail.as_ptr() as usize & 31) == 0 && (pivot_tail.as_ptr() as usize & 31) == 0;
     let mut i = 0usize;
     while i + 4 <= len {
         // SAFETY: `i + 4 <= len` keeps all pointer arithmetic in-bounds for both slices.
         unsafe {
-            #[allow(clippy::cast_ptr_alignment)]
-            // SAFETY: `_mm256_loadu_si256` performs an explicit unaligned load.
-            let lhs = _mm256_loadu_si256(row_tail.as_ptr().add(i).cast::<__m256i>());
-            #[allow(clippy::cast_ptr_alignment)]
-            // SAFETY: same contract as `lhs`; unaligned load is intentional.
-            let rhs = _mm256_loadu_si256(pivot_tail.as_ptr().add(i).cast::<__m256i>());
-            let out = _mm256_xor_si256(lhs, rhs);
-            #[allow(clippy::cast_ptr_alignment)]
-            // SAFETY: `_mm256_storeu_si256` performs an explicit unaligned store.
-            _mm256_storeu_si256(row_tail.as_mut_ptr().add(i).cast::<__m256i>(), out);
+            if aligned {
+                let lhs = _mm256_load_si256(row_tail.as_ptr().add(i).cast::<__m256i>());
+                let rhs = _mm256_load_si256(pivot_tail.as_ptr().add(i).cast::<__m256i>());
+                let out = _mm256_xor_si256(lhs, rhs);
+                _mm256_store_si256(row_tail.as_mut_ptr().add(i).cast::<__m256i>(), out);
+            } else {
+                #[allow(clippy::cast_ptr_alignment)]
+                let lhs = _mm256_loadu_si256(row_tail.as_ptr().add(i).cast::<__m256i>());
+                #[allow(clippy::cast_ptr_alignment)]
+                let rhs = _mm256_loadu_si256(pivot_tail.as_ptr().add(i).cast::<__m256i>());
+                let out = _mm256_xor_si256(lhs, rhs);
+                #[allow(clippy::cast_ptr_alignment)]
+                _mm256_storeu_si256(row_tail.as_mut_ptr().add(i).cast::<__m256i>(), out);
+            }
         }
         i += 4;
     }

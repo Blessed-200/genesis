@@ -216,10 +216,10 @@ fn reduce_blocks(
         for (grade, grade_acc) in acc.iter_mut().enumerate() {
             let amplitudes = &block.amplitudes[grade];
             let phases = &block.phases[grade];
-            for lane in 0..lane_limit {
-                if (contributes_mask & (1 << lane)) == 0 {
-                    continue;
-                }
+            let mut mask = contributes_mask;
+            while mask != 0 {
+                let lane = mask.trailing_zeros() as usize;
+                mask &= mask - 1;
                 let amplitude = amplitudes[lane];
                 let phase = phases[lane];
                 #[cfg(feature = "poly_trig")]
