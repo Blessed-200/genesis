@@ -1,5 +1,28 @@
 # PLANS
 
+## 1.22 CRATE-003 manifold/rips allocation and topology materialization hardening (2026-04-08)
+
+### Root cause
+
+- `compute_lambda2` still rebuilds temporary ID-mapping vectors each call, causing avoidable heap traffic and allocator churn in a topology hot path.
+- `RipsComplex::build` eagerly materializes triangles even when downstream cohomology checks can early-exit without consuming 2-simplices.
+
+### File-level actions
+
+1. `core/genesis-topology/src/manifold.rs`
+   - Extend persistent `LambdaWorkspace` with reusable ID-mapping buffers (`node_ids_raw`, `id_to_dense`).
+   - Replace per-call vector allocation patterns with capacity reuse (`clear`/`extend`/`resize`) in `compute_lambda2`.
+2. `core/genesis-topology/src/rips.rs`
+   - Convert triangle storage to lazy materialization via `OnceLock<Vec<[NodeId; 3]>>`.
+   - Keep `build()` focused on vertices/edges only; defer triangle computation to `triangles()` first access.
+   - Ensure all existing callers/tests still observe identical triangle contents, order, and invariants.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"` (expect no output)
+
 ## 1.21 CRATE-003 HNSW insert/search hot-path de-duplication (2026-04-07)
 
 ### Root cause

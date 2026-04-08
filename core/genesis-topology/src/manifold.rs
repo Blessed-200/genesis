@@ -136,6 +136,8 @@ impl HyperbolicCoord {
 #[repr(C, align(32))]
 #[derive(Default)]
 struct LambdaWorkspace {
+    node_ids_raw: Vec<u64>,
+    id_to_dense: Vec<usize>,
     degrees: Vec<f64>,
     adj_flat: Vec<usize>,
     adj_offsets: Vec<(usize, usize)>,
@@ -409,6 +411,8 @@ impl ManifoldCollector {
             }
 
             let LambdaWorkspace {
+                node_ids_raw,
+                id_to_dense,
                 degrees,
                 adj_flat,
                 adj_offsets,
@@ -426,6 +430,8 @@ impl ManifoldCollector {
             } = &mut *ws;
 
             let mut laplacian_workspace = LaplacianWorkspace {
+                node_ids_raw,
+                id_to_dense,
                 degrees: &mut degrees[..n],
                 adj_flat,
                 adj_offsets: &mut adj_offsets[..n],
@@ -615,6 +621,8 @@ fn shifted_mv_inplace(
 }
 
 struct LaplacianWorkspace<'a> {
+    node_ids_raw: &'a mut Vec<u64>,
+    id_to_dense: &'a mut Vec<usize>,
     degrees: &'a mut [f64],
     adj_flat: &'a mut Vec<usize>,
     adj_offsets: &'a mut [(usize, usize)],
@@ -628,19 +636,28 @@ fn prepare_laplacian_data(
     workspace: &mut LaplacianWorkspace<'_>,
 ) -> (f64, u32) {
     let LaplacianWorkspace {
+        node_ids_raw,
+        id_to_dense,
         degrees,
         adj_flat,
         adj_offsets,
         seen_marks,
         seen_generation,
     } = workspace;
-    let node_ids_raw: Vec<u64> = graph
-        .nodes()
-        .map(NodeId::get)
-        .filter(|&raw| raw != u64::MAX && usize::try_from(raw).is_ok())
-        .collect();
+    node_ids_raw.clear();
+    node_ids_raw.extend(
+        graph
+            .nodes()
+            .map(NodeId::get)
+            .filter(|&raw| raw != u64::MAX && usize::try_from(raw).is_ok()),
+    );
     let max_id = node_ids_raw.iter().copied().max().unwrap_or(0) as usize;
-    let mut id_to_dense = vec![usize::MAX; max_id.saturating_add(1)];
+    let dense_len = max_id.saturating_add(1);
+    if id_to_dense.len() < dense_len {
+        id_to_dense.resize(dense_len, usize::MAX);
+    } else {
+        id_to_dense.fill(usize::MAX);
+    }
     for (dense_idx, &raw) in node_ids_raw.iter().enumerate() {
         id_to_dense[raw as usize] = dense_idx;
     }
