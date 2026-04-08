@@ -370,12 +370,24 @@ mod layer0_codec {
 
     #[cfg(feature = "hnsw-f16")]
     mod f16_kernel {
+        const F16_MAX_FINITE_BITS: u16 = 0x7BFF;
+
         #[inline]
         pub(in super::super) const fn f32_to_f16_bits_core(value: f32) -> u16 {
             let bits = value.to_bits();
             let sign = ((bits >> 16) & 0x8000) as u16;
             let exp = ((bits >> 23) & 0xFF) as i32;
             let frac = bits & 0x7F_FFFF;
+            if exp == 0xFF {
+                // Keep the codec total over all f32 bit patterns:
+                // - ±Inf saturates to ±max_finite_f16
+                // - NaN canonicalizes to +0.0
+                return if frac == 0 {
+                    sign | F16_MAX_FINITE_BITS
+                } else {
+                    0
+                };
+            }
             if exp <= 112 {
                 if exp < 103 {
                     return sign;
@@ -384,9 +396,15 @@ mod layer0_codec {
                 return sign | (((mant >> (126 - exp)) + 0x1000) >> 13) as u16;
             }
             if exp >= 143 {
-                return sign | 0x7C00;
+                return sign | F16_MAX_FINITE_BITS;
             }
-            sign | ((((exp - 112) as u32) << 10) as u16) | (((frac + 0x1000) >> 13) as u16)
+            let rounded =
+                sign | ((((exp - 112) as u32) << 10) as u16) | (((frac + 0x1000) >> 13) as u16);
+            if (rounded & 0x7C00) == 0x7C00 {
+                sign | F16_MAX_FINITE_BITS
+            } else {
+                rounded
+            }
         }
 
         #[inline]
@@ -3442,6 +3460,26 @@ mod tests {
             let tol = 5.0e-3;
             assert!((x - y).abs() <= tol, "x={x} y={y} tol={tol}");
         }
+    }
+
+    #[cfg(feature = "hnsw-f16")]
+    #[test]
+    fn f16_encoder_saturates_extreme_finite_values_to_finite_range() {
+        let large_pos = f16_bits_to_f32(f32_to_f16_bits(1.0e20));
+        let large_neg = f16_bits_to_f32(f32_to_f16_bits(-1.0e20));
+        assert!(large_pos.is_finite() && large_neg.is_finite());
+        assert!(large_pos <= 65_504.0 && large_neg >= -65_504.0);
+    }
+
+    #[cfg(feature = "hnsw-f16")]
+    #[test]
+    fn f16_encoder_never_emits_non_finite_for_non_finite_inputs() {
+        let nan_decoded = f16_bits_to_f32(f32_to_f16_bits(f32::NAN));
+        let inf_decoded = f16_bits_to_f32(f32_to_f16_bits(f32::INFINITY));
+        let neg_inf_decoded = f16_bits_to_f32(f32_to_f16_bits(f32::NEG_INFINITY));
+        assert!(nan_decoded.is_finite());
+        assert!(inf_decoded.is_finite());
+        assert!(neg_inf_decoded.is_finite());
     }
 
     #[cfg(all(feature = "hnsw-f16", genesis_const_layer0_codec))]
