@@ -30,6 +30,7 @@
 - `cargo check --workspace`
 - `cargo test --workspace`
 - `if cargo check --workspace 2>&1 | grep -q "^warning:"; then echo "Warnings found"; exit 1; fi`
+- Planning policy: for complex fixes, keep this section scoped to HNSW root causes and map each cause to concrete file actions + validation steps (per `./PLANS.md` workflow rule).
 
 ## 1.20 CRATE-002 cacheline-aligned SIMD + throughput benchmark phase (2026-04-04)
 
@@ -1883,3 +1884,49 @@ Remaining risk:
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
 - `python -c "import yaml; yaml.safe_load(open('security/waivers.yaml'))"`
+
+## 1.24 CRATE-003 SIMD Z2 elimination + Lanczos convergence + Rips allocation tuning (2026-04-07)
+
+### Root cause
+
+- `rank_by_gaussian_elimination` in cohomology still performs row XOR in scalar loops, leaving x86 SIMD width unused in the dominant elimination inner loop.
+- Lanczos refinement in `manifold.rs` uses a fixed high iteration cap and lacks stability-driven early stop logic tied to Rayleigh quotient deltas.
+- Rips triangle generation repeatedly resolves neighbor indices via binary search and uses a heap-backed scratch vector in common low-degree cases.
+
+### File-level actions
+
+1. `core/genesis-topology/src/cohomology.rs`
+   - Add x86_64 runtime dispatch in `rank_by_gaussian_elimination` consistent with existing SIMD dispatch style.
+   - Implement `xor_row_avx512` (`_mm512_loadu_si512` / `_mm512_xor_si512` / `_mm512_storeu_si512`) over 8-word chunks plus scalar tail.
+   - Implement `xor_row_avx2` (`_mm256_loadu_si256` / `_mm256_xor_si256` / `_mm256_storeu_si256`) over 4-word chunks plus scalar tail.
+2. `core/genesis-topology/src/manifold.rs`
+   - Reduce `POWER_REFINE_MAX_ITERS` from 800 to 200.
+   - Add consecutive small-delta Rayleigh quotient stopping (delta < `1e-8` for 3 consecutive iterations).
+   - Extend/add tests that assert eigenvalue agreement with reference values within `1e-6`.
+3. `core/genesis-topology/src/rips.rs`
+   - Fast-path consecutive `NodeId` indexing to bypass per-neighbor binary search.
+   - Hoist CSR row pointer loads outside inner two-pointer scans.
+   - Replace heap scratch triangle buffer with `SmallVec<[usize; 64]>`.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `if cargo check --workspace 2>&1 | grep -q "^warning:"; then echo "Warnings found"; exit 1; fi`
+- `cargo bench -p genesis-topology --bench topology -- xor_row_elimination_throughput`
+- `cargo bench -p genesis-topology --bench topology -- h1_query_loop_latency`
+- `cargo bench -p genesis-topology --bench iai_hotpaths --no-run`
+- `perf stat -d target/release/deps/topology-* --bench` (IPC, branch-miss, LLC-miss telemetry)
+- `valgrind --tool=cachegrind target/release/deps/topology-* --bench` (cache locality + instruction mix)
+- `hyperfine --warmup 3 'cargo bench -p genesis-topology --bench topology -- xor_row_elimination_throughput'`
+
+Performance evidence checklist:
+- Complexity deltas:
+  - Elimination kernel remains `O(rows * cols / 64)`; runtime feature probing moved out of the per-row loop.
+  - Consecutive-ID path in Rips reduces lookup from `O(log V)` to `O(1)` when IDs are contiguous.
+- Cache behavior expectations:
+  - Selected XOR kernel runs contiguous packed-row sweeps with branch-stable tails.
+  - Triangle intersection scratch stays stack-first (`SmallVec<[usize; 64]>`) in common-degree regimes.
+- Allocation impact:
+  - XOR hot loop allocation count unchanged at zero.
+  - Triangle scratch avoids heap allocation until intersections exceed inline capacity.

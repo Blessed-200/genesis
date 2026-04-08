@@ -41,7 +41,7 @@ fn bench_h1_query_loop_latency(c: &mut Criterion) {
         )
         .unwrap();
     }
-    let complex = RipsComplex::build(&g, 0.5);
+    let complex = RipsComplex::build(&g, 0.5).expect("rips build");
 
     c.bench_function("h1_query_loop_latency", |b| {
         b.iter_custom(|iters| {
@@ -190,7 +190,7 @@ fn bench_rips_build_10k(c: &mut Criterion) {
 
     c.bench_function("rips_build_10k", |b| {
         b.iter(|| {
-            let complex = RipsComplex::build(black_box(&g), black_box(0.5));
+            let complex = RipsComplex::build(black_box(&g), black_box(0.5)).expect("rips build");
             black_box(complex.counts())
         })
     });
@@ -206,7 +206,7 @@ fn bench_h1_check_10k(c: &mut Criterion) {
         )
         .unwrap();
     }
-    let complex = RipsComplex::build(&g, 0.5);
+    let complex = RipsComplex::build(&g, 0.5).expect("rips build");
 
     CohomologyValidator::invalidate_cache();
 

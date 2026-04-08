@@ -1,3 +1,9 @@
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::{
+    __m256i, __m512i, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256,
+    _mm512_loadu_si512, _mm512_storeu_si512, _mm512_xor_si512,
+};
+
 /// AX-ID: AXIOMA-007, AXIOMA-009
 /// Cohomology validator: computes H¹ = ker(∂₁) / im(∂₂) over Z₂.
 /// All arithmetic in Z₂ (bit operations). No external linear algebra libraries.
@@ -28,6 +34,8 @@ struct Z2Matrix {
     words_per_row: usize,
     data: Vec<u64>,
 }
+
+type XorKernel = fn(&mut [u64], &[u64]);
 
 impl Z2Matrix {
     fn new(rows: usize, cols: usize) -> Self {
@@ -77,6 +85,8 @@ impl Z2Matrix {
         let mut rank = 0usize;
         let mut r = 0usize;
         let mut pivot_row_buf = vec![0_u64; wpr];
+        // HOT PATH: O(N) — no heap allocation, no trait-object dispatch, no recursion, no HashMap/BTreeMap.
+        let xor_kernel = select_xor_kernel();
 
         debug_assert_eq!(self.data.len(), self.rows * wpr);
 
@@ -127,30 +137,9 @@ impl Z2Matrix {
                     if (self.data[row_pivot_idx] & pivot_bit) != 0 {
                         let base = row * wpr + pivot_word;
                         let len = wpr - pivot_word;
-                        let mut i = 0;
-                        while i + 4 <= len {
-                            // SAFETY: `base + i + k < base + len <= row * wpr + wpr`, so all
-                            // indices are within the current row and corresponding pivot tail.
-                            unsafe {
-                                *self.data.get_unchecked_mut(base + i) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i);
-                                *self.data.get_unchecked_mut(base + i + 1) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i + 1);
-                                *self.data.get_unchecked_mut(base + i + 2) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i + 2);
-                                *self.data.get_unchecked_mut(base + i + 3) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i + 3);
-                            }
-                            i += 4;
-                        }
-                        while i < len {
-                            // SAFETY: `i < len` implies `base + i` and `pivot_word + i` are in bounds.
-                            unsafe {
-                                *self.data.get_unchecked_mut(base + i) ^=
-                                    *pivot_row_buf.get_unchecked(pivot_word + i);
-                            }
-                            i += 1;
-                        }
+                        let row_tail = &mut self.data[base..base + len];
+                        let pivot_tail = &pivot_row_buf[pivot_word..pivot_word + len];
+                        xor_kernel(row_tail, pivot_tail);
                     }
                 }
 
@@ -162,6 +151,88 @@ impl Z2Matrix {
         debug_assert_matrix_invariants(self);
         rank
     }
+}
+
+#[inline]
+fn select_xor_kernel() -> XorKernel {
+    // HOT PATH: O(N) kernel selection boundary — one-time runtime dispatch per elimination call.
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            return xor_row_avx512_entry;
+        }
+        if std::arch::is_x86_feature_detected!("avx2") {
+            return xor_row_avx2_entry;
+        }
+    }
+    xor_row_scalar
+}
+
+#[inline]
+fn xor_row_scalar(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    let len = row_tail.len();
+    let mut i = 0usize;
+    while i + 4 <= len {
+        row_tail[i] ^= pivot_tail[i];
+        row_tail[i + 1] ^= pivot_tail[i + 1];
+        row_tail[i + 2] ^= pivot_tail[i + 2];
+        row_tail[i + 3] ^= pivot_tail[i + 3];
+        i += 4;
+    }
+    while i < len {
+        row_tail[i] ^= pivot_tail[i];
+        i += 1;
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn xor_row_avx512(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    let len = row_tail.len();
+    let mut i = 0usize;
+    while i + 8 <= len {
+        // SAFETY: `i + 8 <= len` keeps all pointer arithmetic in-bounds for both slices.
+        unsafe {
+            let lhs = _mm512_loadu_si512(row_tail.as_ptr().add(i).cast::<__m512i>());
+            let rhs = _mm512_loadu_si512(pivot_tail.as_ptr().add(i).cast::<__m512i>());
+            let out = _mm512_xor_si512(lhs, rhs);
+            _mm512_storeu_si512(row_tail.as_mut_ptr().add(i).cast::<__m512i>(), out);
+        }
+        i += 8;
+    }
+    xor_row_scalar(&mut row_tail[i..], &pivot_tail[i..]);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn xor_row_avx512_entry(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    // SAFETY: selected only after runtime AVX-512 feature detection.
+    unsafe { xor_row_avx512(row_tail, pivot_tail) }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn xor_row_avx2(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    let len = row_tail.len();
+    let mut i = 0usize;
+    while i + 4 <= len {
+        // SAFETY: `i + 4 <= len` keeps all pointer arithmetic in-bounds for both slices.
+        unsafe {
+            let lhs = _mm256_loadu_si256(row_tail.as_ptr().add(i).cast::<__m256i>());
+            let rhs = _mm256_loadu_si256(pivot_tail.as_ptr().add(i).cast::<__m256i>());
+            let out = _mm256_xor_si256(lhs, rhs);
+            _mm256_storeu_si256(row_tail.as_mut_ptr().add(i).cast::<__m256i>(), out);
+        }
+        i += 4;
+    }
+    xor_row_scalar(&mut row_tail[i..], &pivot_tail[i..]);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn xor_row_avx2_entry(row_tail: &mut [u64], pivot_tail: &[u64]) {
+    // SAFETY: selected only after runtime AVX2 feature detection.
+    unsafe { xor_row_avx2(row_tail, pivot_tail) }
 }
 
 fn debug_assert_matrix_invariants(matrix: &Z2Matrix) {
@@ -530,10 +601,9 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
         pivot[word] = state.rotate_left(11);
     }
 
+    let xor_kernel = select_xor_kernel();
     for _ in 0..iterations {
-        for (dst_word, pivot_word) in dst.iter_mut().zip(pivot.iter()) {
-            *dst_word ^= *pivot_word;
-        }
+        xor_kernel(&mut dst, &pivot);
     }
 
     dst.iter().fold(0_u64, |acc, &word| acc ^ word)
@@ -683,9 +753,9 @@ mod tests {
             )
             .unwrap();
         }
-        let complex = RipsComplex::build(&g, 10.0);
+        let complex = RipsComplex::build(&g, 10.0).expect("rips build should succeed");
         let result = CohomologyValidator::check_h1(&complex);
-        println!("H1 zero for cycle-free-like graph: {}", result);
+        assert!(result, "expected H¹=0 for cycle-free graph");
     }
 
     #[test]
@@ -753,7 +823,7 @@ mod tests {
             }
 
             let epsilon = ((xorshift64(&mut seed) % 700) as f64).mul_add(0.001, 0.15);
-            let complex = RipsComplex::build(&g, epsilon);
+            let complex = RipsComplex::build(&g, epsilon).expect("rips build should succeed");
 
             let incremental = CohomologyValidator::check_h1(&complex);
             let full = check_h1_full_for_test(&complex);
@@ -771,7 +841,7 @@ mod tests {
             g2.insert(id, &make_vec(i + 100)).unwrap();
         }
 
-        let c1 = RipsComplex::build(&g1, 0.001);
+        let c1 = RipsComplex::build(&g1, 0.001).expect("rips build should succeed");
         let _ = CohomologyValidator::check_h1(&c1);
         let key1 = H1CacheKey {
             ptr: std::ptr::from_ref(&c1),
@@ -779,7 +849,7 @@ mod tests {
             fingerprint: complex_fingerprint(&c1),
         };
 
-        let c2 = RipsComplex::build(&g2, 10.0);
+        let c2 = RipsComplex::build(&g2, 10.0).expect("rips build should succeed");
         let _ = CohomologyValidator::check_h1(&c2);
         let key2 = H1CacheKey {
             ptr: std::ptr::from_ref(&c2),
@@ -808,7 +878,7 @@ mod tests {
                 .unwrap();
         }
 
-        let complex = RipsComplex::build(&hnsw, 0.2);
+        let complex = RipsComplex::build(&hnsw, 0.2).expect("rips build should succeed");
         let first = CohomologyValidator::check_h1(&complex);
         let first_count = fingerprint_count();
         let second = CohomologyValidator::check_h1(&complex);
@@ -829,7 +899,7 @@ mod tests {
             .unwrap();
         }
 
-        let complex = RipsComplex::build(&g, 2.5);
+        let complex = RipsComplex::build(&g, 2.5).expect("rips build should succeed");
         reset_full_rebuild_count();
 
         for _ in 0..1000 {
