@@ -47,6 +47,12 @@ impl AlignedU64Buffer {
             .expect("valid aligned u64 layout");
         // SAFETY: layout was validated and non-zero.
         let raw = unsafe { std::alloc::alloc_zeroed(layout) };
+        debug_assert_eq!(
+            (raw as usize) & (Z2MATRIX_ALIGNMENT_BYTES - 1),
+            0,
+            "allocator returned pointer that violates 64-byte alignment contract"
+        );
+        #[allow(clippy::cast_ptr_alignment)]
         let ptr = NonNull::new(raw.cast::<u64>())
             .unwrap_or_else(|| std::alloc::handle_alloc_error(layout));
         Self { ptr, len }
@@ -73,12 +79,12 @@ impl AlignedU64Buffer {
         std::mem::swap(self, &mut replacement);
     }
 
-    fn as_slice(&self) -> &[u64] {
+    const fn as_slice(&self) -> &[u64] {
         // SAFETY: `ptr` points to an allocation of `len` elements or is dangling with len=0.
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
-    fn as_mut_slice(&mut self) -> &mut [u64] {
+    const fn as_mut_slice(&mut self) -> &mut [u64] {
         // SAFETY: same as `as_slice`, with unique mutable access through `&mut self`.
         unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
@@ -182,7 +188,7 @@ impl Z2Matrix {
         let wpr = self.words_per_row;
         let mut rank = 0usize;
         let mut r = 0usize;
-        let mut pivot_row_buf = vec![0_u64; wpr];
+        let mut pivot_row_buf = AlignedU64Buffer::new_zeroed(wpr);
         // HOT PATH: O(N) — no heap allocation, no trait-object dispatch, no recursion, no HashMap/BTreeMap.
         let xor_kernel = select_xor_kernel();
 
@@ -300,10 +306,19 @@ unsafe fn xor_row_avx512(row_tail: &mut [u64], pivot_tail: &[u64]) {
         // SAFETY: `i + 8 <= len` keeps all pointer arithmetic in-bounds for both slices.
         // Row stride and buffer allocation guarantee both pointers share identical
         // 64-byte alignment at this offset.
+        let row_ptr = row_tail.as_ptr().wrapping_add(i) as usize;
+        let pivot_ptr = pivot_tail.as_ptr().wrapping_add(i) as usize;
+        debug_assert!(row_ptr.trailing_zeros() >= 6);
+        debug_assert!(pivot_ptr.trailing_zeros() >= 6);
+        // SAFETY: pointer arithmetic is in-bounds (`i + 8 <= len`) and both
+        // vectors are 64-byte aligned at this offset by contract.
         unsafe {
+            #[allow(clippy::cast_ptr_alignment)]
             let lhs = _mm512_load_si512(row_tail.as_ptr().add(i).cast::<__m512i>());
+            #[allow(clippy::cast_ptr_alignment)]
             let rhs = _mm512_load_si512(pivot_tail.as_ptr().add(i).cast::<__m512i>());
             let out = _mm512_xor_si512(lhs, rhs);
+            #[allow(clippy::cast_ptr_alignment)]
             _mm512_store_si512(row_tail.as_mut_ptr().add(i).cast::<__m512i>(), out);
         }
         i += 8;
@@ -333,10 +348,19 @@ unsafe fn xor_row_avx2(row_tail: &mut [u64], pivot_tail: &[u64]) {
         // SAFETY: `i + 4 <= len` keeps all pointer arithmetic in-bounds for both slices.
         // Row stride and buffer allocation guarantee both pointers share identical
         // 32-byte alignment at this offset.
+        let row_ptr = row_tail.as_ptr().wrapping_add(i) as usize;
+        let pivot_ptr = pivot_tail.as_ptr().wrapping_add(i) as usize;
+        debug_assert!(row_ptr.trailing_zeros() >= 5);
+        debug_assert!(pivot_ptr.trailing_zeros() >= 5);
+        // SAFETY: pointer arithmetic is in-bounds (`i + 4 <= len`) and both
+        // vectors are 32-byte aligned at this offset by contract.
         unsafe {
+            #[allow(clippy::cast_ptr_alignment)]
             let lhs = _mm256_load_si256(row_tail.as_ptr().add(i).cast::<__m256i>());
+            #[allow(clippy::cast_ptr_alignment)]
             let rhs = _mm256_load_si256(pivot_tail.as_ptr().add(i).cast::<__m256i>());
             let out = _mm256_xor_si256(lhs, rhs);
+            #[allow(clippy::cast_ptr_alignment)]
             _mm256_store_si256(row_tail.as_mut_ptr().add(i).cast::<__m256i>(), out);
         }
         i += 4;
