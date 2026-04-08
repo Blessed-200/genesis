@@ -1,14 +1,16 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m256i, __m512i, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256,
-    _mm512_loadu_si512, _mm512_storeu_si512, _mm512_xor_si512,
+    __m256i, __m512i, _mm256_load_si256, _mm256_store_si256, _mm256_xor_si256, _mm512_load_si512,
+    _mm512_store_si512, _mm512_xor_si512,
 };
 
 /// AX-ID: AXIOMA-007, AXIOMA-009
 /// Cohomology validator: computes H¹ = ker(∂₁) / im(∂₂) over Z₂.
 /// All arithmetic in Z₂ (bit operations). No external linear algebra libraries.
-/// Boundary matrices stored as bitmaps (Vec<u64> packed rows).
+/// Boundary matrices stored as packed bitmaps on a 64-byte aligned word buffer.
 use std::cell::RefCell;
+use std::ops::{Deref, DerefMut};
+use std::ptr::NonNull;
 
 // Política de mantenimiento para validación cohomológica crítica.
 //
@@ -21,6 +23,103 @@ use std::cell::RefCell;
 
 use crate::rips::RipsComplex;
 
+const Z2MATRIX_ALIGNMENT_BYTES: usize = 64;
+const Z2MATRIX_WORDS_ALIGNMENT: usize = Z2MATRIX_ALIGNMENT_BYTES / std::mem::size_of::<u64>();
+
+#[derive(Debug)]
+struct AlignedU64Buffer {
+    ptr: NonNull<u64>,
+    len: usize,
+}
+
+impl AlignedU64Buffer {
+    fn new_zeroed(len: usize) -> Self {
+        if len == 0 {
+            return Self {
+                ptr: NonNull::dangling(),
+                len: 0,
+            };
+        }
+        let size = len
+            .checked_mul(std::mem::size_of::<u64>())
+            .expect("aligned buffer size overflow");
+        let layout = std::alloc::Layout::from_size_align(size, Z2MATRIX_ALIGNMENT_BYTES)
+            .expect("valid aligned u64 layout");
+        // SAFETY: layout was validated and non-zero.
+        let raw = unsafe { std::alloc::alloc_zeroed(layout) };
+        debug_assert_eq!(
+            (raw as usize) & (Z2MATRIX_ALIGNMENT_BYTES - 1),
+            0,
+            "allocator returned pointer that violates 64-byte alignment contract"
+        );
+        #[allow(clippy::cast_ptr_alignment)]
+        let ptr = NonNull::new(raw.cast::<u64>())
+            .unwrap_or_else(|| std::alloc::handle_alloc_error(layout));
+        Self { ptr, len }
+    }
+
+    #[cfg(test)]
+    fn resize_zeroed(&mut self, new_len: usize) {
+        if new_len == self.len {
+            return;
+        }
+        let mut replacement = Self::new_zeroed(new_len);
+        let copy_len = self.len.min(new_len);
+        if copy_len > 0 {
+            // SAFETY: both buffers are valid for `copy_len` contiguous u64 elements
+            // and do not overlap because they are distinct allocations.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    self.ptr.as_ptr(),
+                    replacement.ptr.as_ptr(),
+                    copy_len,
+                );
+            }
+        }
+        std::mem::swap(self, &mut replacement);
+    }
+
+    const fn as_slice(&self) -> &[u64] {
+        // SAFETY: `ptr` points to an allocation of `len` elements or is dangling with len=0.
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
+    const fn as_mut_slice(&mut self) -> &mut [u64] {
+        // SAFETY: same as `as_slice`, with unique mutable access through `&mut self`.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
+}
+
+impl Drop for AlignedU64Buffer {
+    fn drop(&mut self) {
+        if self.len == 0 {
+            return;
+        }
+        let size = self
+            .len
+            .checked_mul(std::mem::size_of::<u64>())
+            .expect("aligned buffer size overflow on drop");
+        let layout = std::alloc::Layout::from_size_align(size, Z2MATRIX_ALIGNMENT_BYTES)
+            .expect("valid aligned u64 layout on drop");
+        // SAFETY: pointer/layout match the allocation performed in `new_zeroed`.
+        unsafe { std::alloc::dealloc(self.ptr.as_ptr().cast::<u8>(), layout) };
+    }
+}
+
+impl Deref for AlignedU64Buffer {
+    type Target = [u64];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl DerefMut for AlignedU64Buffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut_slice()
+    }
+}
+
 /// Packed Z₂ matrix: rows × cols, each row stored as ceil(cols/64) u64 words.
 struct Z2Matrix {
     rows: usize,
@@ -29,25 +128,30 @@ struct Z2Matrix {
     ///
     /// Structural invariants:
     /// - `data.len() == rows * words_per_row`
-    /// - `words_per_row == cols.div_ceil(64)`
+    /// - `words_per_row >= cols.div_ceil(64)`
+    /// - `words_per_row % 8 == 0` (64-byte row stride alignment contract)
     /// - `cols` only changes through `set_cols` so packed layout remains consistent.
     words_per_row: usize,
-    data: Vec<u64>,
+    data: AlignedU64Buffer,
 }
 
 type XorKernel = fn(&mut [u64], &[u64]);
 
 impl Z2Matrix {
+    #[inline]
+    const fn padded_words_per_row(cols: usize) -> usize {
+        cols.div_ceil(64).div_ceil(Z2MATRIX_WORDS_ALIGNMENT) * Z2MATRIX_WORDS_ALIGNMENT
+    }
+
     fn new(rows: usize, cols: usize) -> Self {
-        let words_per_row = cols.div_ceil(64);
+        let words_per_row = Self::padded_words_per_row(cols);
         let matrix = Self {
             rows,
             cols,
             words_per_row,
-            data: vec![0u64; rows * words_per_row],
+            data: AlignedU64Buffer::new_zeroed(rows * words_per_row),
         };
 
-        debug_assert_eq!(matrix.words_per_row, cols.div_ceil(64));
         debug_assert_matrix_invariants(&matrix);
 
         matrix
@@ -56,8 +160,8 @@ impl Z2Matrix {
     #[cfg(test)]
     fn set_cols(&mut self, cols: usize) {
         self.cols = cols;
-        self.words_per_row = cols.div_ceil(64);
-        self.data.resize(self.rows * self.words_per_row, 0);
+        self.words_per_row = Self::padded_words_per_row(cols);
+        self.data.resize_zeroed(self.rows * self.words_per_row);
         debug_assert_matrix_invariants(self);
     }
 
@@ -84,7 +188,7 @@ impl Z2Matrix {
         let wpr = self.words_per_row;
         let mut rank = 0usize;
         let mut r = 0usize;
-        let mut pivot_row_buf = vec![0_u64; wpr];
+        let mut pivot_row_buf = AlignedU64Buffer::new_zeroed(wpr);
         // HOT PATH: O(N) — no heap allocation, no trait-object dispatch, no recursion, no HashMap/BTreeMap.
         let xor_kernel = select_xor_kernel();
 
@@ -190,13 +294,32 @@ fn xor_row_scalar(row_tail: &mut [u64], pivot_tail: &[u64]) {
 unsafe fn xor_row_avx512(row_tail: &mut [u64], pivot_tail: &[u64]) {
     let len = row_tail.len();
     let mut i = 0usize;
+    let misaligned_bytes = (Z2MATRIX_ALIGNMENT_BYTES
+        - (row_tail.as_ptr() as usize & (Z2MATRIX_ALIGNMENT_BYTES - 1)))
+        & (Z2MATRIX_ALIGNMENT_BYTES - 1);
+    let prefix_words = (misaligned_bytes / std::mem::size_of::<u64>()).min(len);
+    while i < prefix_words {
+        row_tail[i] ^= pivot_tail[i];
+        i += 1;
+    }
     while i + 8 <= len {
         // SAFETY: `i + 8 <= len` keeps all pointer arithmetic in-bounds for both slices.
+        // Row stride and buffer allocation guarantee both pointers share identical
+        // 64-byte alignment at this offset.
+        let row_ptr = row_tail.as_ptr().wrapping_add(i) as usize;
+        let pivot_ptr = pivot_tail.as_ptr().wrapping_add(i) as usize;
+        debug_assert!(row_ptr.trailing_zeros() >= 6);
+        debug_assert!(pivot_ptr.trailing_zeros() >= 6);
+        // SAFETY: pointer arithmetic is in-bounds (`i + 8 <= len`) and both
+        // vectors are 64-byte aligned at this offset by contract.
         unsafe {
-            let lhs = _mm512_loadu_si512(row_tail.as_ptr().add(i).cast::<__m512i>());
-            let rhs = _mm512_loadu_si512(pivot_tail.as_ptr().add(i).cast::<__m512i>());
+            #[allow(clippy::cast_ptr_alignment)]
+            let lhs = _mm512_load_si512(row_tail.as_ptr().add(i).cast::<__m512i>());
+            #[allow(clippy::cast_ptr_alignment)]
+            let rhs = _mm512_load_si512(pivot_tail.as_ptr().add(i).cast::<__m512i>());
             let out = _mm512_xor_si512(lhs, rhs);
-            _mm512_storeu_si512(row_tail.as_mut_ptr().add(i).cast::<__m512i>(), out);
+            #[allow(clippy::cast_ptr_alignment)]
+            _mm512_store_si512(row_tail.as_mut_ptr().add(i).cast::<__m512i>(), out);
         }
         i += 8;
     }
@@ -215,13 +338,30 @@ fn xor_row_avx512_entry(row_tail: &mut [u64], pivot_tail: &[u64]) {
 unsafe fn xor_row_avx2(row_tail: &mut [u64], pivot_tail: &[u64]) {
     let len = row_tail.len();
     let mut i = 0usize;
+    let misaligned_bytes = (32 - (row_tail.as_ptr() as usize & 31)) & 31;
+    let prefix_words = (misaligned_bytes / std::mem::size_of::<u64>()).min(len);
+    while i < prefix_words {
+        row_tail[i] ^= pivot_tail[i];
+        i += 1;
+    }
     while i + 4 <= len {
         // SAFETY: `i + 4 <= len` keeps all pointer arithmetic in-bounds for both slices.
+        // Row stride and buffer allocation guarantee both pointers share identical
+        // 32-byte alignment at this offset.
+        let row_ptr = row_tail.as_ptr().wrapping_add(i) as usize;
+        let pivot_ptr = pivot_tail.as_ptr().wrapping_add(i) as usize;
+        debug_assert!(row_ptr.trailing_zeros() >= 5);
+        debug_assert!(pivot_ptr.trailing_zeros() >= 5);
+        // SAFETY: pointer arithmetic is in-bounds (`i + 4 <= len`) and both
+        // vectors are 32-byte aligned at this offset by contract.
         unsafe {
-            let lhs = _mm256_loadu_si256(row_tail.as_ptr().add(i).cast::<__m256i>());
-            let rhs = _mm256_loadu_si256(pivot_tail.as_ptr().add(i).cast::<__m256i>());
+            #[allow(clippy::cast_ptr_alignment)]
+            let lhs = _mm256_load_si256(row_tail.as_ptr().add(i).cast::<__m256i>());
+            #[allow(clippy::cast_ptr_alignment)]
+            let rhs = _mm256_load_si256(pivot_tail.as_ptr().add(i).cast::<__m256i>());
             let out = _mm256_xor_si256(lhs, rhs);
-            _mm256_storeu_si256(row_tail.as_mut_ptr().add(i).cast::<__m256i>(), out);
+            #[allow(clippy::cast_ptr_alignment)]
+            _mm256_store_si256(row_tail.as_mut_ptr().add(i).cast::<__m256i>(), out);
         }
         i += 4;
     }
@@ -236,7 +376,8 @@ fn xor_row_avx2_entry(row_tail: &mut [u64], pivot_tail: &[u64]) {
 }
 
 fn debug_assert_matrix_invariants(matrix: &Z2Matrix) {
-    debug_assert_eq!(matrix.words_per_row, matrix.cols.div_ceil(64));
+    debug_assert!(matrix.words_per_row >= matrix.cols.div_ceil(64));
+    debug_assert_eq!(matrix.words_per_row % Z2MATRIX_WORDS_ALIGNMENT, 0);
     debug_assert_eq!(matrix.data.len(), matrix.rows * matrix.words_per_row);
 }
 
@@ -587,8 +728,8 @@ pub fn benchmark_xor_row_elimination(words_per_row: usize, iterations: usize, se
     }
 
     let mut state = seed ^ 0x94D0_49BB_1331_11EB;
-    let mut dst = vec![0_u64; words_per_row];
-    let mut pivot = vec![0_u64; words_per_row];
+    let mut dst = AlignedU64Buffer::new_zeroed(words_per_row);
+    let mut pivot = AlignedU64Buffer::new_zeroed(words_per_row);
 
     for word in 0..words_per_row {
         state ^= state << 13;
@@ -678,6 +819,10 @@ impl CohomologyValidator {
                 if !detect_graph_cycle_incremental(complex, &ws, &mut cache) {
                     cache.cached_result = Some(true);
                     return true;
+                }
+                if complex.simplices_of_dim(2).next().is_none() {
+                    cache.cached_result = Some(false);
+                    return false;
                 }
 
                 let full_result = check_h1_full(complex, &mut ws, n_v);
@@ -790,7 +935,8 @@ mod tests {
 
         let _ = m.rank_by_gaussian_elimination();
 
-        assert_eq!(m.words_per_row, m.cols.div_ceil(64));
+        assert!(m.words_per_row >= m.cols.div_ceil(64));
+        assert_eq!(m.words_per_row % Z2MATRIX_WORDS_ALIGNMENT, 0);
         assert_eq!(m.data.len(), m.rows * m.words_per_row);
     }
 
@@ -802,9 +948,32 @@ mod tests {
 
         m.set_cols(129);
 
-        assert_eq!(m.words_per_row, 3);
-        assert_eq!(m.words_per_row, m.cols.div_ceil(64));
+        assert_eq!(m.words_per_row, Z2Matrix::padded_words_per_row(129));
+        assert!(m.words_per_row >= m.cols.div_ceil(64));
+        assert_eq!(m.words_per_row % Z2MATRIX_WORDS_ALIGNMENT, 0);
         assert_eq!(m.data.len(), m.rows * m.words_per_row);
+    }
+
+    #[test]
+    fn z2_rank_matches_known_matrices() {
+        let mut identity = Z2Matrix::new(4, 4);
+        for i in 0..4 {
+            identity.set(i, i, true);
+        }
+        assert_eq!(identity.rank_by_gaussian_elimination(), 4);
+
+        let mut dependent = Z2Matrix::new(4, 4);
+        dependent.set(0, 0, true);
+        dependent.set(0, 1, true);
+        dependent.set(1, 1, true);
+        dependent.set(1, 2, true);
+        dependent.set(2, 0, true);
+        dependent.set(2, 1, true); // row 2 = row 0 in GF(2)
+        dependent.set(3, 3, true);
+        assert_eq!(dependent.rank_by_gaussian_elimination(), 3);
+
+        let mut zero = Z2Matrix::new(3, 5);
+        assert_eq!(zero.rank_by_gaussian_elimination(), 0);
     }
 
     #[test]

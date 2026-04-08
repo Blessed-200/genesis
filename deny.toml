@@ -54,7 +54,7 @@ reason = "GÉNESIS uses BLAKE3 via blake3 crate — sha2 is prohibited by AGENTS
 ignore = []
 # Reject crates with known CVEs
 vulnerability = "deny"
-unmaintained = "warn"
+unmaintained = "all"
 yanked = "deny"
 
 [sources]

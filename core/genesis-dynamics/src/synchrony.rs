@@ -181,6 +181,21 @@ fn merge_grade_totals(
 }
 
 #[inline]
+// HOT PATH: O(B * L * G) time, O(G) space per invocation.
+//
+// Inputs:
+// - `blocks`: `&[crate::oscillator::OscillatorBlock]` with lane-major storage per block.
+// - `valid_lanes`: `usize` number of active lanes to process across all blocks.
+//
+// Runtime role:
+// - Invoked for every synchrony reduction (`synchrony_order_fast`) in both serial
+//   and parallel chunk reducers, so this routine executes in the per-tick hot path.
+//
+// Performance rationale:
+// - `#[inline]` keeps call overhead out of the reduction loop and helps LLVM
+//   propagate bounds/alias information into callers.
+// - Accumulators remain thread-local per invocation; parallel safety is preserved
+//   by reducer-level merge semantics with no shared mutable state in this function.
 fn reduce_blocks(
     blocks: &[crate::oscillator::OscillatorBlock],
     valid_lanes: usize,
@@ -194,13 +209,19 @@ fn reduce_blocks(
         let block_start = block_index * 8;
         let remaining = valid_lanes.saturating_sub(block_start);
         let lane_limit = remaining.min(8);
+        let mut contributes_mask = 0u8;
         for lane in 0..lane_limit {
-            if !block.states[lane].contributes_to_sync() {
-                continue;
-            }
-            for (grade, grade_acc) in acc.iter_mut().enumerate() {
-                let amplitude = block.amplitudes[grade][lane];
-                let phase = block.phases[grade][lane];
+            contributes_mask |= (u8::from(block.states[lane].contributes_to_sync())) << lane;
+        }
+        for (grade, grade_acc) in acc.iter_mut().enumerate() {
+            let amplitudes = &block.amplitudes[grade];
+            let phases = &block.phases[grade];
+            let mut mask = contributes_mask;
+            while mask != 0 {
+                let lane = mask.trailing_zeros() as usize;
+                mask &= mask - 1;
+                let amplitude = amplitudes[lane];
+                let phase = phases[lane];
                 #[cfg(feature = "poly_trig")]
                 {
                     grade_acc.0.add(amplitude * poly_cos(phase));

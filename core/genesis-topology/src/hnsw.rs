@@ -324,6 +324,9 @@ unsafe fn slab_distance_avx2(
 
 /// Inline helper for layer-0 slab distance computation in hot search paths.
 /// Dispatches to AVX2 or scalar kernel based on compile-time target features.
+#[allow(clippy::inline_always)]
+// HOT PATH: Criterion shows unacceptable search latency regression without
+// forced inlining on AVX2 distance kernels (register-pressure-sensitive callsite).
 #[inline(always)]
 fn slab_distance(
     slab_ptr: *const f32,
@@ -367,12 +370,24 @@ mod layer0_codec {
 
     #[cfg(feature = "hnsw-f16")]
     mod f16_kernel {
+        const F16_MAX_FINITE_BITS: u16 = 0x7BFF;
+
         #[inline]
         pub(in super::super) const fn f32_to_f16_bits_core(value: f32) -> u16 {
             let bits = value.to_bits();
             let sign = ((bits >> 16) & 0x8000) as u16;
             let exp = ((bits >> 23) & 0xFF) as i32;
             let frac = bits & 0x7F_FFFF;
+            if exp == 0xFF {
+                // Keep the codec total over all f32 bit patterns:
+                // - ±Inf saturates to ±max_finite_f16
+                // - NaN canonicalizes to +0.0
+                return if frac == 0 {
+                    sign | F16_MAX_FINITE_BITS
+                } else {
+                    0
+                };
+            }
             if exp <= 112 {
                 if exp < 103 {
                     return sign;
@@ -381,9 +396,15 @@ mod layer0_codec {
                 return sign | (((mant >> (126 - exp)) + 0x1000) >> 13) as u16;
             }
             if exp >= 143 {
-                return sign | 0x7C00;
+                return sign | F16_MAX_FINITE_BITS;
             }
-            sign | ((((exp - 112) as u32) << 10) as u16) | (((frac + 0x1000) >> 13) as u16)
+            let rounded =
+                sign | ((((exp - 112) as u32) << 10) as u16) | (((frac + 0x1000) >> 13) as u16);
+            if (rounded & 0x7C00) == 0x7C00 {
+                sign | F16_MAX_FINITE_BITS
+            } else {
+                rounded
+            }
         }
 
         #[inline]
@@ -2810,6 +2831,55 @@ mod tests {
     }
 
     #[test]
+    fn search_nearest_matches_bruteforce_ordered_topk() {
+        let mut g = HnswGraph::new(32);
+        let mut vecs = Vec::new();
+        for i in 0..64u64 {
+            let v = SparseCliffordVector::from_iter((0..8).map(|b| {
+                let coeff = ((i as usize * (b + 3) + b * 17) % 101) as f64 * 0.01;
+                (b, coeff)
+            }))
+            .expect("fixture vector must be finite");
+            g.insert(make_id(i), &v)
+                .expect("fixture insert must succeed");
+            vecs.push(v);
+        }
+
+        let query = SparseCliffordVector::from_iter((0..8).map(|b| {
+            let coeff = ((b * 13 + 7) % 29) as f64 * 0.015;
+            (b, coeff)
+        }))
+        .expect("query vector must be finite");
+
+        let k = 12usize;
+        let got = g.search_nearest(&query, k);
+        let mut brute: Vec<(usize, f64)> = vecs
+            .iter()
+            .enumerate()
+            .map(|(idx, v)| (idx, fast_metric_distance(&query, v)))
+            .collect();
+        brute.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        let expected_vec: Vec<NodeId> = brute
+            .iter()
+            .take(k)
+            .map(|(idx, _)| make_id(*idx as u64))
+            .collect();
+        let mut got_vec = got;
+        got_vec.sort_unstable_by(|a, b| {
+            let ia = a.get() as usize;
+            let ib = b.get() as usize;
+            let da = fast_metric_distance(&query, &vecs[ia]);
+            let db = fast_metric_distance(&query, &vecs[ib]);
+            da.total_cmp(&db).then_with(|| ia.cmp(&ib))
+        });
+
+        assert_eq!(
+            got_vec, expected_vec,
+            "optimized search_nearest must match brute-force ordering for top-k neighbors"
+        );
+    }
+
+    #[test]
     #[ignore = "performance test: run with cargo test -- --ignored in release mode"]
     fn hnsw_log_routing_under_10ms_for_1_m() {
         // Sandbox constraint: test with N=10000 actual nodes and verify
@@ -3390,6 +3460,26 @@ mod tests {
             let tol = 5.0e-3;
             assert!((x - y).abs() <= tol, "x={x} y={y} tol={tol}");
         }
+    }
+
+    #[cfg(feature = "hnsw-f16")]
+    #[test]
+    fn f16_encoder_saturates_extreme_finite_values_to_finite_range() {
+        let large_pos = f16_bits_to_f32(f32_to_f16_bits(1.0e20));
+        let large_neg = f16_bits_to_f32(f32_to_f16_bits(-1.0e20));
+        assert!(large_pos.is_finite() && large_neg.is_finite());
+        assert!(large_pos <= 65_504.0 && large_neg >= -65_504.0);
+    }
+
+    #[cfg(feature = "hnsw-f16")]
+    #[test]
+    fn f16_encoder_never_emits_non_finite_for_non_finite_inputs() {
+        let nan_decoded = f16_bits_to_f32(f32_to_f16_bits(f32::NAN));
+        let inf_decoded = f16_bits_to_f32(f32_to_f16_bits(f32::INFINITY));
+        let neg_inf_decoded = f16_bits_to_f32(f32_to_f16_bits(f32::NEG_INFINITY));
+        assert!(nan_decoded.is_finite());
+        assert!(inf_decoded.is_finite());
+        assert!(neg_inf_decoded.is_finite());
     }
 
     #[cfg(all(feature = "hnsw-f16", genesis_const_layer0_codec))]

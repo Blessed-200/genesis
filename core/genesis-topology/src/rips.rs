@@ -2,8 +2,9 @@
 /// Vietoris-Rips complex up to dimension 2.
 /// Used by `CohomologyValidator` to compute H¹.
 /// No external libraries. No persistent homology.
+use std::sync::OnceLock;
+
 use genesis_types::{GenesisError, NodeId};
-use smallvec::SmallVec;
 
 use crate::geodesic::geometric_distance;
 use crate::hnsw::HnswGraph;
@@ -41,9 +42,10 @@ pub struct CsrAdjacency<'a> {
 /// AX-ID: AXIOMA-007, AXIOMA-009
 pub struct RipsComplex {
     /// Compact simplex storage by fixed-size arrays instead of heap-allocated Vec per simplex.
+    node_ids: Vec<NodeId>,
     dim0: Vec<[NodeId; 1]>,
     dim1: Vec<[NodeId; 2]>,
-    dim2: Vec<[NodeId; 3]>,
+    dim2: OnceLock<Vec<[NodeId; 3]>>,
     adjacency_data: Vec<usize>,
     adjacency_offsets: Vec<usize>,
 }
@@ -79,9 +81,10 @@ impl RipsComplex {
 
         if node_count == 0 {
             return Ok(Self {
+                node_ids,
                 dim0,
                 dim1: Vec::new(),
-                dim2: Vec::new(),
+                dim2: OnceLock::new(),
                 adjacency_data: Vec::new(),
                 adjacency_offsets: vec![0],
             });
@@ -191,65 +194,70 @@ impl RipsComplex {
         edges.dedup();
         let dim1 = edges.iter().map(|e| [e.u, e.v]).collect();
 
-        // Triangle generation using two-pointer intersection over sorted
-        // neighbour lists. This avoids per-edge bitset clear/fill churn and
-        // keeps memory accesses linear and branch-stable.
-        let mut triangles: Vec<Triangle> = Vec::new();
-        let mut triangle_scratch: SmallVec<[usize; 64]> = SmallVec::new();
-
-        for u_idx in 0..node_count {
-            let u_row_start = adjacency_offsets[u_idx];
-            let u_row_end = adjacency_offsets[u_idx + 1];
-            let u_nb = &adjacency_data[u_row_start..u_row_end];
-            for &v_idx in u_nb.iter().filter(|&&v_idx| v_idx > u_idx) {
-                let v_row_start = adjacency_offsets[v_idx];
-                let v_row_end = adjacency_offsets[v_idx + 1];
-                let v_nb = &adjacency_data[v_row_start..v_row_end];
-                triangle_scratch.clear();
-                let mut left_cursor = 0usize;
-                let mut right_cursor = 0usize;
-                while left_cursor < u_nb.len() && right_cursor < v_nb.len() {
-                    let left_neighbor = u_nb[left_cursor];
-                    let right_neighbor = v_nb[right_cursor];
-                    if left_neighbor <= v_idx {
-                        left_cursor += 1;
-                        continue;
-                    }
-                    if right_neighbor <= v_idx {
-                        right_cursor += 1;
-                        continue;
-                    }
-                    match left_neighbor.cmp(&right_neighbor) {
-                        std::cmp::Ordering::Equal => {
-                            triangle_scratch.push(left_neighbor);
-                            left_cursor += 1;
-                            right_cursor += 1;
-                        }
-                        std::cmp::Ordering::Less => left_cursor += 1,
-                        std::cmp::Ordering::Greater => right_cursor += 1,
-                    }
-                }
-                for &w_idx in &triangle_scratch {
-                    triangles.push(Triangle {
-                        u: node_ids[u_idx],
-                        v: node_ids[v_idx],
-                        w: node_ids[w_idx],
-                    });
-                }
-            }
-        }
-
-        triangles.sort_unstable_by_key(|t| (t.u.get(), t.v.get(), t.w.get()));
-        triangles.dedup();
-        let dim2 = triangles.iter().map(|t| [t.u, t.v, t.w]).collect();
-
         Ok(Self {
+            node_ids,
             dim0,
             dim1,
-            dim2,
+            dim2: OnceLock::new(),
             adjacency_data,
             adjacency_offsets,
         })
+    }
+
+    fn triangles(&self) -> &[[NodeId; 3]] {
+        self.dim2
+            .get_or_init(|| {
+                let node_count = self.node_ids.len();
+                let mut triangles: Vec<Triangle> = Vec::new();
+                let mut triangle_scratch: Vec<usize> = Vec::new();
+
+                for u_idx in 0..node_count {
+                    let u_row_start = self.adjacency_offsets[u_idx];
+                    let u_row_end = self.adjacency_offsets[u_idx + 1];
+                    let u_nb = &self.adjacency_data[u_row_start..u_row_end];
+                    for &v_idx in u_nb.iter().filter(|&&v_idx| v_idx > u_idx) {
+                        let v_row_start = self.adjacency_offsets[v_idx];
+                        let v_row_end = self.adjacency_offsets[v_idx + 1];
+                        let v_nb = &self.adjacency_data[v_row_start..v_row_end];
+                        triangle_scratch.clear();
+                        let mut left_cursor = 0usize;
+                        let mut right_cursor = 0usize;
+                        while left_cursor < u_nb.len() && right_cursor < v_nb.len() {
+                            let left_neighbor = u_nb[left_cursor];
+                            let right_neighbor = v_nb[right_cursor];
+                            if left_neighbor <= v_idx {
+                                left_cursor += 1;
+                                continue;
+                            }
+                            if right_neighbor <= v_idx {
+                                right_cursor += 1;
+                                continue;
+                            }
+                            match left_neighbor.cmp(&right_neighbor) {
+                                std::cmp::Ordering::Equal => {
+                                    triangle_scratch.push(left_neighbor);
+                                    left_cursor += 1;
+                                    right_cursor += 1;
+                                }
+                                std::cmp::Ordering::Less => left_cursor += 1,
+                                std::cmp::Ordering::Greater => right_cursor += 1,
+                            }
+                        }
+                        for &w_idx in &triangle_scratch {
+                            triangles.push(Triangle {
+                                u: self.node_ids[u_idx],
+                                v: self.node_ids[v_idx],
+                                w: self.node_ids[w_idx],
+                            });
+                        }
+                    }
+                }
+
+                triangles.sort_unstable_by_key(|t| (t.u.get(), t.v.get(), t.w.get()));
+                triangles.dedup();
+                triangles.iter().map(|t| [t.u, t.v, t.w]).collect()
+            })
+            .as_slice()
     }
 
     /// Iterate simplices of a given dimension (0, 1, or 2).
@@ -258,7 +266,7 @@ impl RipsComplex {
     pub fn simplices_of_dim(&self, d: usize) -> impl Iterator<Item = &[NodeId]> {
         let dim0 = self.dim0.iter().map(<[NodeId; 1]>::as_slice);
         let dim1 = self.dim1.iter().map(<[NodeId; 2]>::as_slice);
-        let dim2 = self.dim2.iter().map(<[NodeId; 3]>::as_slice);
+        let dim2 = self.triangles().iter().map(<[NodeId; 3]>::as_slice);
         match d {
             0 => EitherIter::Dim0(dim0),
             1 => EitherIter::Dim1(dim1),
@@ -286,8 +294,8 @@ impl RipsComplex {
     /// ```
     ///
     /// AX-ID: AXIOMA-007
-    pub const fn counts(&self) -> (usize, usize, usize) {
-        (self.dim0.len(), self.dim1.len(), self.dim2.len())
+    pub fn counts(&self) -> (usize, usize, usize) {
+        (self.dim0.len(), self.dim1.len(), self.triangles().len())
     }
 
     /// Returns the CSR adjacency backing used for edge/triangle traversal.

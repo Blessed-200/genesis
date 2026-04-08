@@ -136,6 +136,8 @@ impl HyperbolicCoord {
 #[repr(C, align(32))]
 #[derive(Default)]
 struct LambdaWorkspace {
+    node_ids_raw: Vec<u64>,
+    id_to_dense: Vec<usize>,
     degrees: Vec<f64>,
     adj_flat: Vec<usize>,
     adj_offsets: Vec<(usize, usize)>,
@@ -409,6 +411,8 @@ impl ManifoldCollector {
             }
 
             let LambdaWorkspace {
+                node_ids_raw,
+                id_to_dense,
                 degrees,
                 adj_flat,
                 adj_offsets,
@@ -426,6 +430,8 @@ impl ManifoldCollector {
             } = &mut *ws;
 
             let mut laplacian_workspace = LaplacianWorkspace {
+                node_ids_raw,
+                id_to_dense,
                 degrees: &mut degrees[..n],
                 adj_flat,
                 adj_offsets: &mut adj_offsets[..n],
@@ -615,6 +621,8 @@ fn shifted_mv_inplace(
 }
 
 struct LaplacianWorkspace<'a> {
+    node_ids_raw: &'a mut Vec<u64>,
+    id_to_dense: &'a mut Vec<usize>,
     degrees: &'a mut [f64],
     adj_flat: &'a mut Vec<usize>,
     adj_offsets: &'a mut [(usize, usize)],
@@ -628,19 +636,28 @@ fn prepare_laplacian_data(
     workspace: &mut LaplacianWorkspace<'_>,
 ) -> (f64, u32) {
     let LaplacianWorkspace {
+        node_ids_raw,
+        id_to_dense,
         degrees,
         adj_flat,
         adj_offsets,
         seen_marks,
         seen_generation,
     } = workspace;
-    let node_ids_raw: Vec<u64> = graph
-        .nodes()
-        .map(NodeId::get)
-        .filter(|&raw| raw != u64::MAX && usize::try_from(raw).is_ok())
-        .collect();
+    node_ids_raw.clear();
+    node_ids_raw.extend(
+        graph
+            .nodes()
+            .map(NodeId::get)
+            .filter(|&raw| raw != u64::MAX && usize::try_from(raw).is_ok()),
+    );
     let max_id = node_ids_raw.iter().copied().max().unwrap_or(0) as usize;
-    let mut id_to_dense = vec![usize::MAX; max_id.saturating_add(1)];
+    let dense_len = max_id.saturating_add(1);
+    if id_to_dense.len() < dense_len {
+        id_to_dense.resize(dense_len, usize::MAX);
+    } else {
+        id_to_dense.fill(usize::MAX);
+    }
     for (dense_idx, &raw) in node_ids_raw.iter().enumerate() {
         id_to_dense[raw as usize] = dense_idx;
     }
@@ -838,10 +855,10 @@ fn refinement_residual_norm(v: &[f64], av: &[f64], lambda: f64) -> f64 {
     let mut acc = 0.0;
     let mut i = 0usize;
     while i + 4 <= n {
-        let r0 = av[i] - lambda * v[i];
-        let r1 = av[i + 1] - lambda * v[i + 1];
-        let r2 = av[i + 2] - lambda * v[i + 2];
-        let r3 = av[i + 3] - lambda * v[i + 3];
+        let r0 = (-lambda).mul_add(v[i], av[i]);
+        let r1 = (-lambda).mul_add(v[i + 1], av[i + 1]);
+        let r2 = (-lambda).mul_add(v[i + 2], av[i + 2]);
+        let r3 = (-lambda).mul_add(v[i + 3], av[i + 3]);
         acc = r0.mul_add(r0, acc);
         acc = r1.mul_add(r1, acc);
         acc = r2.mul_add(r2, acc);
@@ -849,7 +866,7 @@ fn refinement_residual_norm(v: &[f64], av: &[f64], lambda: f64) -> f64 {
         i += 4;
     }
     while i < n {
-        let r = av[i] - lambda * v[i];
+        let r = (-lambda).mul_add(v[i], av[i]);
         acc = r.mul_add(r, acc);
         i += 1;
     }
@@ -1348,7 +1365,7 @@ mod tests {
         for i in 0..20u64 {
             let base = i as f64 * 0.2;
             let vector = SparseCliffordVector::from_iter(
-                (0..4).map(|blade| (blade, base + blade as f64 * 1e-3)),
+                (0..4).map(|blade| (blade, (blade as f64).mul_add(1e-3, base))),
             )
             .expect("vector must be finite");
             manifold
@@ -1371,6 +1388,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn power_refine_matches_reference_on_test_graphs() {
         fn build_graph_csr(
             n: usize,
@@ -1579,6 +1597,60 @@ mod tests {
         assert!(
             (refined - reference).abs() <= 3e-2,
             "near-threshold eigenvalue drift: refined={refined}, reference={reference}"
+        );
+    }
+
+    #[test]
+    fn lambda2_shifted_solver_matches_reference_within_1e_minus_6() {
+        let n = 12usize;
+        let mut neighbors = vec![Vec::<usize>::new(); n];
+        for i in 0..n {
+            let j = (i + 1) % n;
+            neighbors[i].push(j);
+            neighbors[j].push(i);
+        }
+        for i in 0..n {
+            let j = (i + 3) % n;
+            neighbors[i].push(j);
+            neighbors[j].push(i);
+        }
+
+        let mut degrees = vec![0.0; n];
+        let mut adj_offsets = vec![(0usize, 0usize); n];
+        let mut adj_flat = Vec::new();
+        for i in 0..n {
+            neighbors[i].sort_unstable();
+            neighbors[i].dedup();
+            let start = adj_flat.len();
+            adj_flat.extend_from_slice(&neighbors[i]);
+            let end = adj_flat.len();
+            degrees[i] = (end - start) as f64;
+            adj_offsets[i] = (start, end);
+        }
+
+        let sigma = degrees.iter().copied().fold(0.0f64, f64::max) + 1e-6;
+
+        let mut v = vec![0.0; n];
+        let mut y = vec![0.0; n];
+        for (i, vi) in v.iter_mut().enumerate() {
+            *vi = if i % 2 == 0 { 1.0 } else { -1.0 };
+        }
+
+        let refined = power_refine_shifted_eigenvalue(
+            n,
+            sigma,
+            &degrees,
+            &adj_offsets,
+            &adj_flat,
+            &mut v,
+            &mut y,
+            POWER_REFINE_MAX_ITERS,
+        );
+        let reference =
+            power_reference_shifted_no_stop(n, sigma, &degrees, &adj_offsets, &adj_flat, 200_000);
+        assert!(
+            (refined - reference).abs() <= 1e-6,
+            "lambda2 shifted solver mismatch: refined={refined}, reference={reference}"
         );
     }
 
