@@ -808,6 +808,28 @@ mod tests {
     }
 
     #[test]
+    fn z2_rank_matches_known_matrices() {
+        let mut identity = Z2Matrix::new(4, 4);
+        for i in 0..4 {
+            identity.set(i, i, true);
+        }
+        assert_eq!(identity.rank_by_gaussian_elimination(), 4);
+
+        let mut dependent = Z2Matrix::new(4, 4);
+        dependent.set(0, 0, true);
+        dependent.set(0, 1, true);
+        dependent.set(1, 1, true);
+        dependent.set(1, 2, true);
+        dependent.set(2, 0, true);
+        dependent.set(2, 1, true); // row 2 = row 0 in GF(2)
+        dependent.set(3, 3, true);
+        assert_eq!(dependent.rank_by_gaussian_elimination(), 3);
+
+        let mut zero = Z2Matrix::new(3, 5);
+        assert_eq!(zero.rank_by_gaussian_elimination(), 0);
+    }
+
+    #[test]
     fn h1_incremental_matches_full_on_1000_random_graphs() {
         let mut seed = 0xA5A5_5A5A_D3C1_9E37u64;
         for _ in 0..1000 {

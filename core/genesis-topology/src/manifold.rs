@@ -1582,6 +1582,61 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lambda2_shifted_solver_matches_reference_within_1e_minus_6() {
+        let n = 12usize;
+        let mut neighbors = vec![Vec::<usize>::new(); n];
+        for i in 0..n {
+            let j = (i + 1) % n;
+            neighbors[i].push(j);
+            neighbors[j].push(i);
+        }
+        for i in 0..n {
+            let j = (i + 3) % n;
+            neighbors[i].push(j);
+            neighbors[j].push(i);
+        }
+
+        let mut degrees = vec![0.0; n];
+        let mut adj_offsets = vec![(0usize, 0usize); n];
+        let mut adj_flat = Vec::new();
+        for i in 0..n {
+            neighbors[i].sort_unstable();
+            neighbors[i].dedup();
+            let start = adj_flat.len();
+            adj_flat.extend_from_slice(&neighbors[i]);
+            let end = adj_flat.len();
+            degrees[i] = (end - start) as f64;
+            adj_offsets[i] = (start, end);
+        }
+
+        let sigma = degrees.iter().copied().fold(0.0f64, f64::max) + 1e-6;
+
+        let mut v = vec![0.0; n];
+        let mut y = vec![0.0; n];
+        for (i, vi) in v.iter_mut().enumerate() {
+            *vi = if i % 2 == 0 { 1.0 } else { -1.0 };
+        }
+
+        let refined = power_refine_shifted_eigenvalue(
+            n,
+            sigma,
+            &degrees,
+            &adj_offsets,
+            &adj_flat,
+            &mut v,
+            &mut y,
+            POWER_REFINE_MAX_ITERS,
+        );
+        let reference = power_reference_shifted_no_stop(
+            n, sigma, &degrees, &adj_offsets, &adj_flat, 200_000,
+        );
+        assert!(
+            (refined - reference).abs() <= 1e-6,
+            "lambda2 shifted solver mismatch: refined={refined}, reference={reference}"
+        );
+    }
+
     // ── HyperbolicCoord contract tests ────────────────────────────────────────
 
     /// Verifies that HyperbolicCoord::new rejects puntos fuera of the disk unitario.

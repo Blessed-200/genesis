@@ -2810,6 +2810,48 @@ mod tests {
     }
 
     #[test]
+    fn search_nearest_matches_bruteforce_neighbor_set_topk() {
+        let mut g = HnswGraph::new(32);
+        let mut vecs = Vec::new();
+        for i in 0..64u64 {
+            let v = SparseCliffordVector::from_iter((0..8).map(|b| {
+                let coeff = ((i as usize * (b + 3) + b * 17) % 101) as f64 * 0.01;
+                (b, coeff)
+            }))
+            .expect("fixture vector must be finite");
+            g.insert(make_id(i), &v).expect("fixture insert must succeed");
+            vecs.push(v);
+        }
+
+        let query = SparseCliffordVector::from_iter((0..8).map(|b| {
+            let coeff = ((b * 13 + 7) % 29) as f64 * 0.015;
+            (b, coeff)
+        }))
+        .expect("query vector must be finite");
+
+        let k = 12usize;
+        let got = g.search_nearest(&query, k);
+        let got_set: std::collections::BTreeSet<NodeId> = got.iter().copied().collect();
+
+        let mut brute: Vec<(usize, f64)> = vecs
+            .iter()
+            .enumerate()
+            .map(|(idx, v)| (idx, fast_metric_distance(&query, v)))
+            .collect();
+        brute.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        let expected_set: std::collections::BTreeSet<NodeId> = brute
+            .iter()
+            .take(k)
+            .map(|(idx, _)| make_id(*idx as u64))
+            .collect();
+
+        assert_eq!(
+            got_set, expected_set,
+            "optimized search_nearest must return the same top-k neighbor set as the brute-force reference"
+        );
+    }
+
+    #[test]
     #[ignore = "performance test: run with cargo test -- --ignored in release mode"]
     fn hnsw_log_routing_under_10ms_for_1_m() {
         // Sandbox constraint: test with N=10000 actual nodes and verify

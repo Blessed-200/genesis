@@ -194,13 +194,19 @@ fn reduce_blocks(
         let block_start = block_index * 8;
         let remaining = valid_lanes.saturating_sub(block_start);
         let lane_limit = remaining.min(8);
+        let mut contributes_mask = 0u8;
         for lane in 0..lane_limit {
-            if !block.states[lane].contributes_to_sync() {
-                continue;
-            }
-            for (grade, grade_acc) in acc.iter_mut().enumerate() {
-                let amplitude = block.amplitudes[grade][lane];
-                let phase = block.phases[grade][lane];
+            contributes_mask |= (u8::from(block.states[lane].contributes_to_sync())) << lane;
+        }
+        for (grade, grade_acc) in acc.iter_mut().enumerate() {
+            let amplitudes = &block.amplitudes[grade];
+            let phases = &block.phases[grade];
+            for lane in 0..lane_limit {
+                if (contributes_mask & (1 << lane)) == 0 {
+                    continue;
+                }
+                let amplitude = amplitudes[lane];
+                let phase = phases[lane];
                 #[cfg(feature = "poly_trig")]
                 {
                     grade_acc.0.add(amplitude * poly_cos(phase));
