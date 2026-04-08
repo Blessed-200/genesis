@@ -324,7 +324,7 @@ unsafe fn slab_distance_avx2(
 
 /// Inline helper for layer-0 slab distance computation in hot search paths.
 /// Dispatches to AVX2 or scalar kernel based on compile-time target features.
-#[inline(always)]
+#[inline]
 fn slab_distance(
     slab_ptr: *const f32,
     block: usize,

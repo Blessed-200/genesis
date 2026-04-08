@@ -838,10 +838,10 @@ fn refinement_residual_norm(v: &[f64], av: &[f64], lambda: f64) -> f64 {
     let mut acc = 0.0;
     let mut i = 0usize;
     while i + 4 <= n {
-        let r0 = av[i] - lambda * v[i];
-        let r1 = av[i + 1] - lambda * v[i + 1];
-        let r2 = av[i + 2] - lambda * v[i + 2];
-        let r3 = av[i + 3] - lambda * v[i + 3];
+        let r0 = (-lambda).mul_add(v[i], av[i]);
+        let r1 = (-lambda).mul_add(v[i + 1], av[i + 1]);
+        let r2 = (-lambda).mul_add(v[i + 2], av[i + 2]);
+        let r3 = (-lambda).mul_add(v[i + 3], av[i + 3]);
         acc = r0.mul_add(r0, acc);
         acc = r1.mul_add(r1, acc);
         acc = r2.mul_add(r2, acc);
@@ -849,7 +849,7 @@ fn refinement_residual_norm(v: &[f64], av: &[f64], lambda: f64) -> f64 {
         i += 4;
     }
     while i < n {
-        let r = av[i] - lambda * v[i];
+        let r = (-lambda).mul_add(v[i], av[i]);
         acc = r.mul_add(r, acc);
         i += 1;
     }
@@ -1348,7 +1348,7 @@ mod tests {
         for i in 0..20u64 {
             let base = i as f64 * 0.2;
             let vector = SparseCliffordVector::from_iter(
-                (0..4).map(|blade| (blade, base + blade as f64 * 1e-3)),
+                (0..4).map(|blade| (blade, (blade as f64).mul_add(1e-3, base))),
             )
             .expect("vector must be finite");
             manifold
@@ -1371,6 +1371,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn power_refine_matches_reference_on_test_graphs() {
         fn build_graph_csr(
             n: usize,
