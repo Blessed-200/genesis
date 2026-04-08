@@ -1628,9 +1628,8 @@ mod tests {
             &mut y,
             POWER_REFINE_MAX_ITERS,
         );
-        let reference = power_reference_shifted_no_stop(
-            n, sigma, &degrees, &adj_offsets, &adj_flat, 200_000,
-        );
+        let reference =
+            power_reference_shifted_no_stop(n, sigma, &degrees, &adj_offsets, &adj_flat, 200_000);
         assert!(
             (refined - reference).abs() <= 1e-6,
             "lambda2 shifted solver mismatch: refined={refined}, reference={reference}"

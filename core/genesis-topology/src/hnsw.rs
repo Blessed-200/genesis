@@ -2810,7 +2810,7 @@ mod tests {
     }
 
     #[test]
-    fn search_nearest_matches_bruteforce_neighbor_set_topk() {
+    fn search_nearest_matches_bruteforce_ordered_topk() {
         let mut g = HnswGraph::new(32);
         let mut vecs = Vec::new();
         for i in 0..64u64 {
@@ -2819,7 +2819,8 @@ mod tests {
                 (b, coeff)
             }))
             .expect("fixture vector must be finite");
-            g.insert(make_id(i), &v).expect("fixture insert must succeed");
+            g.insert(make_id(i), &v)
+                .expect("fixture insert must succeed");
             vecs.push(v);
         }
 
@@ -2831,23 +2832,29 @@ mod tests {
 
         let k = 12usize;
         let got = g.search_nearest(&query, k);
-        let got_set: std::collections::BTreeSet<NodeId> = got.iter().copied().collect();
-
         let mut brute: Vec<(usize, f64)> = vecs
             .iter()
             .enumerate()
             .map(|(idx, v)| (idx, fast_metric_distance(&query, v)))
             .collect();
         brute.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-        let expected_set: std::collections::BTreeSet<NodeId> = brute
+        let expected_vec: Vec<NodeId> = brute
             .iter()
             .take(k)
             .map(|(idx, _)| make_id(*idx as u64))
             .collect();
+        let mut got_vec = got;
+        got_vec.sort_unstable_by(|a, b| {
+            let ia = a.get() as usize;
+            let ib = b.get() as usize;
+            let da = fast_metric_distance(&query, &vecs[ia]);
+            let db = fast_metric_distance(&query, &vecs[ib]);
+            da.total_cmp(&db).then_with(|| ia.cmp(&ib))
+        });
 
         assert_eq!(
-            got_set, expected_set,
-            "optimized search_nearest must return the same top-k neighbor set as the brute-force reference"
+            got_vec, expected_vec,
+            "optimized search_nearest must match brute-force ordering for top-k neighbors"
         );
     }
 

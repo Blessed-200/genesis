@@ -5,12 +5,16 @@ This report compares the current branch against the baseline documented in
 
 ## Method parity
 
-All runs used the same protocol declared in the baseline document:
+For metrics used in the delta table, the run protocol matches the baseline document:
 
 - Criterion warm-up time: `5s`
 - Criterion sample size: `30`
 - Release profile (`cargo bench`)
 - Same host class and same local runner for all measurements in this report
+
+The cohomology cold-start probe intentionally uses the baseline guard command
+(`sample-size=10`, `warm-up-time=0.1`, `measurement-time=0.2`) because it is a
+timeout smoke check, not a percentile table source.
 
 ### Commands executed
 
@@ -28,9 +32,10 @@ cargo bench -p genesis-dynamics --bench dynamics -- synchrony_order_fast_1000_no
 ## Comparison summary
 
 Percent deltas are computed as `(current - baseline) / baseline * 100`.
-Negative values are improvements (lower latency).
+Negative values are improvements (lower latency). Baseline and current columns
+explicitly declare the estimator used for each value.
 
-| Metric | Baseline (09) | Current | Delta | Status |
+| Metric | Baseline (p50 from 09) | Current (Criterion estimate median) | Delta | Status |
 |---|---:|---:|---:|---|
 | `hnsw_insert_1000` | 50.292 ms (p50) | 66.273 ms (criterion median) | +31.77% | Regression |
 | `hnsw_search_k10_in_1000` | 12.034 µs (p50) | 25.580 µs (criterion median) | +112.56% | Regression |
@@ -54,4 +59,3 @@ Negative values are improvements (lower latency).
 2. `hnsw_insert_1000` regression (+31.77%) suggests insertion-path overhead drift (candidate expansion and prune costs).
 3. `rank_by_gaussian_elimination_throughput` regression (+7.12%) is mild but persistent; inspect row-pivot and word-scan loop scheduling.
 4. `cohomology_h1_check_10k` cold-start remains unresolved and should stay on the optimization queue.
-
