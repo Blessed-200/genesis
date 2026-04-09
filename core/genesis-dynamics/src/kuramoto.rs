@@ -202,7 +202,7 @@ pub struct QuantumKuramotoNetwork {
     phase_scratch: Vec<[f64; 5]>,
 
     /// Offsets per node origin in `coupling_idx`: `(start, end)` for access O(1).
-    coupling_offsets: Vec<(usize, usize)>,
+    coupling_offsets: Vec<(u32, u32)>,
 
     /// Scratch amplitudes per node for adaptive coupling (reused each step).
     amp_scratch: Vec<f64>,
@@ -217,27 +217,30 @@ pub struct QuantumKuramotoNetwork {
     /// O(N·E) coupling inner loop.
     contrib_buf: Vec<u8>,
     live_count: usize,
-    live_pos_scratch: Vec<usize>,
+    live_pos_scratch: Vec<u32>,
 
-    /// Flag: the topology changed and must be recomputed indices and triangles.
-    dirty: bool,
+    /// Bitfield for dirty-state bookkeeping.
+    flags: u8,
 
     /// Directed triangles `(e_ij, e_jk, e_ki)` expressed as `self.coupling` indices.
-    triangles: Vec<(usize, usize, usize)>,
+    triangles: Vec<(u32, u32, u32)>,
 
-    /// Inverse index: public edge → triangles that contain it.
-    edge_to_triangles: Vec<Vec<usize>>,
-    /// Reusable backing storage for triangle adjacency rebuilds.
-    triangle_scratch: Vec<Vec<usize>>,
+    /// CSR triangle adjacency by public edge index.
+    triangle_ids: Vec<u32>,
+    triangle_offsets: Vec<u32>,
+    triangle_counts_scratch: Vec<u32>,
+    triangle_cursor_scratch: Vec<u32>,
 
     /// Reverse-edge index used to preserve antisymmetry `A_ji = -A_ij`.
     reverse_edges: Vec<Option<usize>>,
 
     /// Cache of the parameter of order r_sync.
-    /// Invalidated by `step()` via `sync_dirty = true`.
+    /// Invalidated by `step()` via `SYNC_DIRTY_FLAG`.
     sync_cache: f64,
-    sync_dirty: bool,
 }
+
+const DIRTY_FLAG: u8 = 0x01;
+const SYNC_DIRTY_FLAG: u8 = 0x02;
 
 impl QuantumKuramotoNetwork {
     /// Creates a new Kuramoto network with the given noise temperature `kT`.
@@ -264,14 +267,37 @@ impl QuantumKuramotoNetwork {
             contrib_buf: Vec::new(),
             live_count: 0,
             live_pos_scratch: Vec::new(),
-            dirty: false,
+            flags: SYNC_DIRTY_FLAG,
             triangles: Vec::new(),
-            edge_to_triangles: Vec::new(),
-            triangle_scratch: Vec::new(),
+            triangle_ids: Vec::new(),
+            triangle_offsets: Vec::new(),
+            triangle_counts_scratch: Vec::new(),
+            triangle_cursor_scratch: Vec::new(),
             reverse_edges: Vec::new(),
             sync_cache: 0.0,
-            sync_dirty: true,
         }
+    }
+
+    #[inline]
+    fn is_dirty(&self) -> bool {
+        (self.flags & DIRTY_FLAG) != 0
+    }
+
+    #[inline(always)]
+    fn set_dirty(&mut self, value: bool) {
+        let value_mask = (value as u8).wrapping_neg() & DIRTY_FLAG;
+        self.flags = (self.flags & !DIRTY_FLAG) | value_mask;
+    }
+
+    #[inline]
+    fn is_sync_dirty(&self) -> bool {
+        (self.flags & SYNC_DIRTY_FLAG) != 0
+    }
+
+    #[inline(always)]
+    fn set_sync_dirty(&mut self, value: bool) {
+        let value_mask = (value as u8).wrapping_neg() & SYNC_DIRTY_FLAG;
+        self.flags = (self.flags & !SYNC_DIRTY_FLAG) | value_mask;
     }
 
     /// # Errors
@@ -307,8 +333,8 @@ impl QuantumKuramotoNetwork {
         self.coupling_offsets.push((0, 0));
         self.amp_scratch.push(1.0);
         self.sat_scratch.push(0.0);
-        self.dirty = true;
-        self.sync_dirty = true;
+        self.set_dirty(true);
+        self.set_sync_dirty(true);
 
         Ok(node_id)
     }
@@ -330,7 +356,7 @@ impl QuantumKuramotoNetwork {
             (Err(p), true) => self.coupling.insert(p, (i, j, gamma, 0.0)),
             (Err(_), false) => {}
         }
-        self.dirty = true;
+        self.set_dirty(true);
     }
 
     /// Inserts N couplings in O(E log E) total instead of O(N × E).
@@ -349,7 +375,7 @@ impl QuantumKuramotoNetwork {
     pub fn set_gauge(&mut self, src: NodeId, dst: NodeId, a_ij: f64) {
         self.set_or_insert_edge(src, dst, None, Some(a_ij));
         self.set_or_insert_edge(dst, src, None, Some(-a_ij));
-        self.dirty = true;
+        self.set_dirty(true);
     }
 
     /// Kuramoto order parameter `r ∈ [0,1]` over the phase primaria.
@@ -393,7 +419,9 @@ impl QuantumKuramotoNetwork {
             .iter()
             .map(|&(e_ij, e_jk, e_ki)| {
                 let holonomy = wrap_phase_diff(
-                    self.coupling[e_ij].3 + self.coupling[e_jk].3 + self.coupling[e_ki].3,
+                    self.coupling[e_ij as usize].3
+                        + self.coupling[e_jk as usize].3
+                        + self.coupling[e_ki as usize].3,
                 );
                 holonomy * holonomy
             })
@@ -430,7 +458,7 @@ impl QuantumKuramotoNetwork {
                 self.assign_gauge(edge_idx, gauge - phi);
             }
         }
-        self.sync_dirty = true;
+        self.set_sync_dirty(true);
     }
 
     /// Adaptive Kuramoto step with bivector frustration and semantic habituation.
@@ -478,9 +506,9 @@ impl QuantumKuramotoNetwork {
         if live_n == 0 || vecs.len() != live_n {
             return;
         }
-        self.live_pos_scratch.resize(n_slots, usize::MAX);
-        self.live_pos_scratch.fill(usize::MAX);
-        let mut live_cursor = 0usize;
+        self.live_pos_scratch.resize(n_slots, u32::MAX);
+        self.live_pos_scratch.fill(u32::MAX);
+        let mut live_cursor = 0u32;
         for (idx, &c) in self.contrib_buf.iter().enumerate() {
             if c != 0 {
                 self.live_pos_scratch[idx] = live_cursor;
@@ -522,6 +550,8 @@ impl QuantumKuramotoNetwork {
                 continue;
             }
             let (start, end) = self.coupling_offsets[i];
+            let start = start as usize;
+            let end = end as usize;
             let edges = &self.coupling_idx[start..end];
             let phi_i = &self.phase_scratch[i];
             let amp_i = self.amp_scratch[i];
@@ -541,8 +571,8 @@ impl QuantumKuramotoNetwork {
                 if self.contrib_buf[j] == 0 {
                     continue;
                 }
-                let vi = self.live_pos_scratch[i];
-                let vj = self.live_pos_scratch[j];
+                let vi = self.live_pos_scratch[i] as usize;
+                let vj = self.live_pos_scratch[j] as usize;
                 let dot_biv = vecs[vi].dot_bivectors(&vecs[vj]);
 
                 // Amplitude modulation: high-certainty pairs contribute more.
@@ -578,7 +608,7 @@ impl QuantumKuramotoNetwork {
 
         self.update_gauge_fields();
         self.apply_homeostatic_feedback();
-        self.sync_dirty = true;
+        self.set_sync_dirty(true);
     }
 
     /// Number of registered nodes.
@@ -672,7 +702,7 @@ impl QuantumKuramotoNetwork {
         self.update_gauge_fields();
         self.apply_homeostatic_feedback();
 
-        self.sync_dirty = true;
+        self.set_sync_dirty(true);
     }
 
     #[inline]
@@ -717,12 +747,14 @@ impl QuantumKuramotoNetwork {
     fn compute_coupling_sums(
         phase_scratch: &[[f64; 5]],
         coupling_idx: &[(u32, u32, f64, f64, u32)],
-        coupling_offsets: &[(usize, usize)],
+        coupling_offsets: &[(u32, u32)],
         contrib_buf: &[u8],
         i: usize,
     ) -> [f64; 5] {
         let mut sums = [0.0f64; 5];
         let (start, end) = coupling_offsets[i];
+        let start = start as usize;
+        let end = end as usize;
         let phi_i = &phase_scratch[i];
         for &(_, j_u32, gamma, gauge, _) in &coupling_idx[start..end] {
             #[allow(clippy::cast_possible_truncation)]
@@ -812,13 +844,13 @@ impl QuantumKuramotoNetwork {
 
     /// Kuramoto order parameter `r = |Σ e^{iφ}| / N ∈ [0,1]`.
     ///
-    /// Cached result: recomputed only when `sync_dirty == true`.
+    /// Cached result: recomputed only when `SYNC_DIRTY_FLAG` is set.
     ///
     /// Invalidation contract:
-    /// - `step()` sets `sync_dirty = true`.
+    /// - `step()` sets `SYNC_DIRTY_FLAG`.
     /// - Any mutator that changes oscillator membership or state used by synchrony
     ///   (for example `add_oscillator()` and mutators that alter oscillators/amplitudes/phases)
-    ///   must set `sync_dirty = true`.
+    ///   must set `SYNC_DIRTY_FLAG`.
     /// - Repeated calls to `synchrony_order_cached()` without intermediate invalidation are O(1).
     ///
     /// # Cost
@@ -827,9 +859,9 @@ impl QuantumKuramotoNetwork {
     ///
     /// AX-ID: AXIOMA-006
     pub fn synchrony_order_cached(&mut self) -> f64 {
-        if self.sync_dirty {
+        if self.is_sync_dirty() {
             self.sync_cache = self.compute_synchrony_order_internal();
-            self.sync_dirty = false;
+            self.set_sync_dirty(false);
         }
         self.sync_cache
     }
@@ -927,20 +959,23 @@ impl QuantumKuramotoNetwork {
     }
 
     fn triangle_curvature(&self, edge_idx: usize) -> f64 {
-        self.edge_to_triangles
-            .get(edge_idx)
-            .map_or(0.0, |triangles| {
-                triangles
-                    .iter()
-                    .map(|&triangle_idx| {
-                        let (e_ij, e_jk, e_ki) = self.triangles[triangle_idx];
-                        let holonomy = wrap_phase_diff(
-                            self.coupling[e_ij].3 + self.coupling[e_jk].3 + self.coupling[e_ki].3,
-                        );
-                        holonomy * holonomy
-                    })
-                    .sum()
-            })
+        if edge_idx + 1 >= self.triangle_offsets.len() {
+            return 0.0;
+        }
+        let start = self.triangle_offsets[edge_idx] as usize;
+        let end = self.triangle_offsets[edge_idx + 1] as usize;
+        let mut curvature_sum = 0.0;
+        for &triangle_idx_u32 in &self.triangle_ids[start..end] {
+            let triangle_idx = triangle_idx_u32 as usize;
+            let (e_ij, e_jk, e_ki) = self.triangles[triangle_idx];
+            let holonomy = wrap_phase_diff(
+                self.coupling[e_ij as usize].3
+                    + self.coupling[e_jk as usize].3
+                    + self.coupling[e_ki as usize].3,
+            );
+            curvature_sum += holonomy * holonomy;
+        }
+        curvature_sum
     }
 
     fn update_gauge_fields(&mut self) {
@@ -961,10 +996,13 @@ impl QuantumKuramotoNetwork {
             let phase_dst = self.oscillators[dst_idx].primary_phase();
             let phase_drive = wrap_phase_diff(phase_src - phase_dst);
             let curvature = self.triangle_curvature(edge_idx);
-            let tri_count = self
-                .edge_to_triangles
-                .get(edge_idx)
-                .map_or(1.0, |triangles| triangles.len().max(1) as f64);
+            let tri_count = if edge_idx + 1 < self.triangle_offsets.len() {
+                let start = self.triangle_offsets[edge_idx] as usize;
+                let end = self.triangle_offsets[edge_idx + 1] as usize;
+                (end.saturating_sub(start).max(1)) as f64
+            } else {
+                1.0
+            };
             let curvature_term = (curvature / tri_count).tanh();
             let new_gauge = wrap_phase_diff(self.gauge_learning_rate.mul_add(
                 phase_drive,
@@ -1015,7 +1053,7 @@ impl QuantumKuramotoNetwork {
 
     /// Rebuilds `coupling_idx` sorted by source-oscillator index and materializes offsets.
     fn rebuild_if_dirty(&mut self) {
-        if !self.dirty {
+        if !self.is_dirty() {
             return;
         }
         self.coupling_idx.clear();
@@ -1039,15 +1077,15 @@ impl QuantumKuramotoNetwork {
         for (node_idx, offsets) in self.coupling_offsets.iter_mut().enumerate() {
             let start = cursor;
             while cursor < self.coupling_idx.len() && {
-                // SAFETY: coupling_idx almacena indices internals `u32` creados a partir
-                // of the index of oscilador. En targets LP64/LLP64, u32 → usize is exact.
-                #[allow(clippy::cast_possible_truncation)]
                 let idx = self.coupling_idx[cursor].0 as usize;
                 idx == node_idx
             } {
                 cursor += 1;
             }
-            *offsets = (start, cursor);
+            *offsets = (
+                u32::try_from(start).expect("coupling offset must stay below u32::MAX"),
+                u32::try_from(cursor).expect("coupling offset must stay below u32::MAX"),
+            );
         }
 
         for edge_idx in 0..self.coupling.len() {
@@ -1059,7 +1097,7 @@ impl QuantumKuramotoNetwork {
 
         self.rebuild_triangles();
 
-        self.dirty = false;
+        self.set_dirty(false);
     }
 
     #[inline]
@@ -1073,32 +1111,17 @@ impl QuantumKuramotoNetwork {
 
     fn rebuild_triangles(&mut self) {
         self.triangles.clear();
-        // Reuse allocation pattern for `self.edge_to_triangles`:
-        // 1) swap current buffers into `self.triangle_scratch` to preserve inner Vec capacities;
-        // 2) compute `edge_len` from `self.coupling.len()` and ensure `self.triangle_scratch`
-        //    has at least `edge_len` buckets;
-        // 3) clear each scratch bucket to keep allocation but drop elements;
-        // 4) move the first `edge_len` buckets back into `self.edge_to_triangles` via
-        //    `extend(self.triangle_scratch.drain(..edge_len))` with no bucket reallocation.
-        std::mem::swap(&mut self.edge_to_triangles, &mut self.triangle_scratch);
         let edge_len = self.coupling.len();
-        self.edge_to_triangles.clear();
-        if self.triangle_scratch.len() < edge_len {
-            self.triangle_scratch.resize_with(edge_len, Vec::new);
-        }
-        for bucket in self.triangle_scratch.iter_mut().take(edge_len) {
-            bucket.clear();
-        }
-        self.edge_to_triangles
-            .extend(self.triangle_scratch.drain(..edge_len));
+        self.triangle_counts_scratch.resize(edge_len, 0);
+        self.triangle_counts_scratch.fill(0);
 
         for &(src_idx_u32, mid_idx_u32, _, _, edge_ij_u32) in &self.coupling_idx {
             let src_idx = src_idx_u32 as usize;
             let mid_idx = mid_idx_u32 as usize;
             let edge_ij = edge_ij_u32 as usize;
-            // loop-invariant, hoisted
-            // CRYSTAL: O117 — inevitable
             let (start, end) = self.coupling_offsets[mid_idx];
+            let start = start as usize;
+            let end = end as usize;
             let src = self.oscillators[src_idx].node_id;
 
             for &(_, dst_idx_u32, _, _, edge_jk_u32) in &self.coupling_idx[start..end] {
@@ -1108,15 +1131,41 @@ impl QuantumKuramotoNetwork {
                 }
                 let dst = self.oscillators[dst_idx].node_id;
                 if let Ok(edge_ki) = self.edge_position(dst, src) {
-                    let triangle_idx = self.triangles.len();
                     let edge_jk = edge_jk_u32 as usize;
-                    // loop-invariant, hoisted
-                    // CRYSTAL: O123 — inevitable
-                    self.triangles.push((edge_ij, edge_jk, edge_ki));
-                    self.edge_to_triangles[edge_ij].push(triangle_idx);
-                    self.edge_to_triangles[edge_jk].push(triangle_idx);
-                    self.edge_to_triangles[edge_ki].push(triangle_idx);
+                    self.triangles.push((
+                        edge_ij_u32,
+                        edge_jk_u32,
+                        u32::try_from(edge_ki).expect("edge index must stay below u32::MAX"),
+                    ));
+                    self.triangle_counts_scratch[edge_ij] += 1;
+                    self.triangle_counts_scratch[edge_jk] += 1;
+                    self.triangle_counts_scratch[edge_ki] += 1;
                 }
+            }
+        }
+
+        self.triangle_offsets.resize(edge_len + 1, 0);
+        self.triangle_offsets[0] = 0;
+        for edge_idx in 0..edge_len {
+            self.triangle_offsets[edge_idx + 1] = self.triangle_offsets[edge_idx]
+                .saturating_add(self.triangle_counts_scratch[edge_idx]);
+        }
+
+        let total_refs = self.triangle_offsets[edge_len] as usize;
+        self.triangle_ids.resize(total_refs, 0);
+        self.triangle_cursor_scratch.resize(edge_len, 0);
+        self.triangle_cursor_scratch
+            .copy_from_slice(&self.triangle_offsets[..edge_len]);
+
+        for (triangle_idx, &(e_ij, e_jk, e_ki)) in self.triangles.iter().enumerate() {
+            let triangle_idx_u32 =
+                u32::try_from(triangle_idx).expect("triangle count must stay below u32::MAX");
+            for edge_u32 in [e_ij, e_jk, e_ki] {
+                let edge = edge_u32 as usize;
+                let cursor = self.triangle_cursor_scratch[edge] as usize;
+                self.triangle_ids[cursor] = triangle_idx_u32;
+                self.triangle_cursor_scratch[edge] =
+                    self.triangle_cursor_scratch[edge].saturating_add(1);
             }
         }
     }
@@ -1173,7 +1222,7 @@ impl QuantumKuramotoNetwork {
             if let Some(osc) = self.oscillators.get_mut(i) {
                 osc.amplitudes = [amplitude.clamp(0.0, 1.0); 5];
                 self.oscillators.rebuild_blocks();
-                self.sync_dirty = true;
+                self.set_sync_dirty(true);
             }
         }
     }
@@ -1183,7 +1232,7 @@ impl QuantumKuramotoNetwork {
     /// Steps:
     /// 1. Invalidates `id_to_idx[raw]` → `u32::MAX`.
     /// 2. Removes all coupling edges that reference `id` from `coupling`.
-    /// 3. Sets `dirty = true` so `rebuild_offsets()` is triggered on next step.
+    /// 3. Sets `DIRTY_FLAG` so `rebuild_offsets()` is triggered on next step.
     /// 4. Marks tombstone in oscillators Vec (preserves index stability).
     ///
     /// Returns `Err(NodeNotFound)` if the node is not registered.
@@ -1212,9 +1261,9 @@ impl QuantumKuramotoNetwork {
         // coupling stores (NodeId, NodeId, f64).
         self.coupling.retain(|&(ni, nj, _, _)| ni != id && nj != id);
 
-        // Step 3: Mark offsets as dirty — rebuild_offsets() triggered on next step.
-        self.dirty = true;
-        self.sync_dirty = true;
+        // Step 3: Mark offsets dirty — rebuild_offsets() triggered on next step.
+        self.set_dirty(true);
+        self.set_sync_dirty(true);
 
         // Step 4: Tombstone the oscillator slot (zero amplitudes, phases).
         // Do NOT swap-remove — that would invalidate all coupling indices.
@@ -1299,7 +1348,7 @@ mod tests {
         let counted: usize = net
             .coupling_offsets
             .iter()
-            .map(|(s, e)| e.saturating_sub(*s))
+            .map(|(s, e)| (e.saturating_sub(*s)) as usize)
             .sum();
         assert_eq!(counted, net.coupling_idx.len());
     }

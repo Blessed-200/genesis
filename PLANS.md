@@ -1,5 +1,28 @@
 # PLANS
 
+## 1.23 CRATE-004 Kuramoto hot-state compact layout refactor (2026-04-09)
+
+### Root cause
+
+- Kuramoto hot-path state still stores indices and adjacency metadata as `usize`/nested vectors, inflating memory footprint and cache pressure in per-step loops.
+- Dirty-state bookkeeping uses two booleans (`dirty`, `sync_dirty`) instead of a compact bitfield, increasing state width and branch-touch footprint.
+- Triangle reverse adjacency uses `Vec<Vec<usize>>`, forcing wide indirection and allocator-heavy topology rebuild patterns.
+
+### File-level actions
+
+1. `core/genesis-dynamics/src/kuramoto.rs`
+   - Compact storage types: `triangles`, `coupling_offsets`, and `live_pos_scratch` to `u32`-backed layouts.
+   - Replace `dirty`/`sync_dirty` with `flags: u8` plus inline bit helpers (`is_dirty`, `set_dirty`, `is_sync_dirty`, `set_sync_dirty`).
+   - Convert triangle edge adjacency to CSR (`triangle_ids`, `triangle_offsets`) and rebuild logic with reusable fixed scratch buffers.
+   - Update hot paths (`rebuild_if_dirty`, `compute_coupling_sums`, deterministic/noisy step kernels, `rebuild_triangles`, `triangle_curvature`, `update_gauge_fields`) to do boundary `u32 -> usize` casts only at indexing points while preserving integrator semantics.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-dynamics -- kuramoto --output-format bencher`
+
 ## 1.22 CRATE-003 manifold/rips allocation and topology materialization hardening (2026-04-08)
 
 ### Root cause
