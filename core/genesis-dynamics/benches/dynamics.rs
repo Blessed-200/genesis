@@ -89,6 +89,9 @@ fn guardrail_strict_mode() -> bool {
     matches!(
         std::env::var("GENESIS_BENCH_GUARDRAIL_STRICT").as_deref(),
         Ok("1" | "true" | "TRUE" | "yes" | "YES")
+    ) || matches!(
+        std::env::var("CI").as_deref(),
+        Ok("1" | "true" | "TRUE" | "yes" | "YES") | Ok("")
     )
 }
 

@@ -20,7 +20,7 @@
 
 - `cargo check --workspace`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `if cargo check --workspace 2>&1 | grep -q "^warning:"; then echo "Warnings found"; exit 1; fi`
 - `cargo bench -p genesis-dynamics -- kuramoto --output-format bencher`
 
 ## 1.22 CRATE-003 manifold/rips allocation and topology materialization hardening (2026-04-08)
