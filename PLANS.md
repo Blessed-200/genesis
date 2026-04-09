@@ -1,6 +1,6 @@
 # PLANS
 
-## 1.28 CRATE-003 HNSW delta correctness/concurrency hardening follow-up (2026-04-09)
+## 1.28 CRATE-002 HNSW delta correctness/concurrency hardening follow-up (2026-04-09)
 
 ### Root cause
 
@@ -21,6 +21,7 @@
 
 - `cargo test --workspace`
 - `cargo clippy --workspace -- -D warnings`
+- `cargo check --workspace -- -D warnings`
 - Allocation sanity on remove path via existing topology tests (no per-call temporary Vec allocation in `remove_node` fast path when scratch capacity is warm).
 
 ## 1.27 CRATE-003 HNSW incremental delta snapshot + compact id refactor (2026-04-09)
