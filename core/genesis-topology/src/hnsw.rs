@@ -90,7 +90,34 @@ impl<T> CachePadded<T> {
 #[derive(Clone, Default)]
 struct HnswLayer0Slab {
     blocks: Vec<SlabBlock>,
-    node_to_slab: Vec<u32>,
+    node_to_slab: Arc<Vec<u32>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct CompactNodeId(u32);
+
+impl CompactNodeId {
+    #[inline(always)]
+    const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+impl TryFrom<NodeId> for CompactNodeId {
+    type Error = GenesisError;
+
+    fn try_from(id: NodeId) -> Result<Self, Self::Error> {
+        let raw = id.get();
+        let compact = u32::try_from(raw)
+            .map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })?;
+        Ok(Self(compact))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HnswDelta {
+    Insert,
+    Remove,
 }
 
 #[derive(Clone, Default)]
@@ -102,6 +129,7 @@ thread_local! {
     static SEARCH_SCRATCH: RefCell<SearchScratch> = RefCell::new(SearchScratch::default());
     static VISITED_EPOCH: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
     static INSERT_DISTANCE_CACHE: RefCell<Vec<(u32, f32)>> = const { RefCell::new(Vec::new()) };
+    static REMOVE_SCRATCH: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone)]
@@ -986,10 +1014,10 @@ use layer0_codec::{
 /// AX-ID: AXIOMA-013
 pub struct HnswGraph {
     /// All nodes stored in a flat Vec. Index = internal idx.
-    nodes: Vec<HnswNode>,
-    /// Maps `NodeId` (u64) → internal index via sorted (`NodeId`, usize) pairs.
-    /// Sorted by `NodeId`, searched via binary search. No `HashMap`.
-    id_index: Vec<(NodeId, usize)>,
+    nodes: Arc<Vec<HnswNode>>,
+    /// Maps compact `NodeId` (u32) → internal index via sorted (`CompactNodeId`, usize) pairs.
+    /// Sorted by compact raw ID, searched via binary search. No `HashMap`.
+    id_index: Arc<Vec<(CompactNodeId, usize)>>,
     /// Entry point for top-layer search (internal index).
     entry: Option<usize>,
     /// Layer of the current entry point.
@@ -998,11 +1026,11 @@ pub struct HnswGraph {
     ef_construction: usize,
     /// Direct map `NodeId.get()` → `internal_idx` when `NodeIds` are consecutive.
     /// Dynamic capacity: expands when inserting larger `NodeIds`.
-    direct_index: Vec<u32>, // u32::MAX = no presente
+    direct_index: Arc<Vec<u32>>, // u32::MAX = no presente
     /// Secondary index state `id_index`.
     state: GraphState,
     /// Per-node local adjacency lists indexed by dense internal node index.
-    layer_neighbors: Vec<NodeAdj>,
+    layer_neighbors: Arc<Vec<NodeAdj>>,
     /// Current search generation for epoch-marked visited state.
     epoch_gen: AtomicU32,
     /// Directed edge count at layer 0 (stored as directed for O(1) updates).
@@ -1016,17 +1044,20 @@ pub struct HnswGraph {
 impl Clone for HnswGraph {
     fn clone(&self) -> Self {
         Self {
-            nodes: self.nodes.clone(),
-            id_index: self.id_index.clone(),
+            nodes: Arc::clone(&self.nodes),
+            id_index: Arc::clone(&self.id_index),
             entry: self.entry,
             entry_layer: self.entry_layer,
             ef_construction: self.ef_construction,
-            direct_index: self.direct_index.clone(),
+            direct_index: Arc::clone(&self.direct_index),
             state: self.state,
-            layer_neighbors: self.layer_neighbors.clone(),
+            layer_neighbors: Arc::clone(&self.layer_neighbors),
             epoch_gen: AtomicU32::new(self.epoch_gen.load(AtomicOrdering::Relaxed)),
             edge_count_layer0_undirected: self.edge_count_layer0_undirected,
-            layer0_soa: self.layer0_soa.clone(),
+            layer0_soa: HnswLayer0Slab {
+                blocks: self.layer0_soa.blocks.clone(),
+                node_to_slab: Arc::clone(&self.layer0_soa.node_to_slab),
+            },
             #[cfg(test)]
             fail_preinsert_index_conversion: self.fail_preinsert_index_conversion,
         }
@@ -1087,19 +1118,19 @@ impl HnswGraph {
     /// AX-ID: AXIOMA-013
     pub fn new(ef_construction: usize) -> Self {
         Self {
-            nodes: Vec::with_capacity(INITIAL_NODE_CAPACITY),
-            id_index: Vec::with_capacity(INITIAL_NODE_CAPACITY),
+            nodes: Arc::new(Vec::with_capacity(INITIAL_NODE_CAPACITY)),
+            id_index: Arc::new(Vec::with_capacity(INITIAL_NODE_CAPACITY)),
             entry: None,
             entry_layer: 0,
             ef_construction,
-            direct_index: Vec::with_capacity(INITIAL_NODE_CAPACITY),
+            direct_index: Arc::new(Vec::with_capacity(INITIAL_NODE_CAPACITY)),
             state: GraphState::Online,
-            layer_neighbors: Vec::with_capacity(INITIAL_NODE_CAPACITY),
+            layer_neighbors: Arc::new(Vec::with_capacity(INITIAL_NODE_CAPACITY)),
             epoch_gen: AtomicU32::new(0),
             edge_count_layer0_undirected: 0,
             layer0_soa: HnswLayer0Slab {
                 blocks: Vec::with_capacity(INITIAL_SLAB_BLOCK_CAPACITY),
-                node_to_slab: Vec::with_capacity(INITIAL_NODE_CAPACITY),
+                node_to_slab: Arc::new(Vec::with_capacity(INITIAL_NODE_CAPACITY)),
             },
             #[cfg(test)]
             fail_preinsert_index_conversion: false,
@@ -1107,21 +1138,62 @@ impl HnswGraph {
     }
 
     #[inline]
-    /// Stub for future delta-snapshot cloning in the lock-free CAS publication path.
-    ///
-    /// This currently delegates to full `clone()` intentionally to preserve
-    /// snapshot semantics and compatibility with the existing CAS loop while the
-    /// delta-sharing design is still being validated.
-    ///
-    /// Planned optimization: replace this with a structural delta clone that
-    /// reuses unchanged storage across snapshots to reduce allocation/copy cost.
-    /// Update this documentation when delta cloning is implemented.
-    fn clone_with_delta(&self) -> Self {
-        self.clone()
+    fn clone_with_delta(&self, delta: &HnswDelta) -> Self {
+        self.apply_delta(delta)
+    }
+
+    fn apply_delta(&self, delta: &HnswDelta) -> Self {
+        let (nodes, id_index, direct_index, layer_neighbors, node_to_slab) = match delta {
+            // INSERT mutates all structural vectors.
+            HnswDelta::Insert => (
+                Arc::new(self.nodes.as_ref().clone()),
+                Arc::new(self.id_index.as_ref().clone()),
+                Arc::new(self.direct_index.as_ref().clone()),
+                Arc::new(self.layer_neighbors.as_ref().clone()),
+                Arc::new(self.layer0_soa.node_to_slab.as_ref().clone()),
+            ),
+            // REMOVE mutates nodes, id_index, direct_index, and adjacency;
+            // node_to_slab remains immutable and can stay shared.
+            HnswDelta::Remove => (
+                Arc::new(self.nodes.as_ref().clone()),
+                Arc::new(self.id_index.as_ref().clone()),
+                Arc::new(self.direct_index.as_ref().clone()),
+                Arc::new(self.layer_neighbors.as_ref().clone()),
+                Arc::clone(&self.layer0_soa.node_to_slab),
+            ),
+        };
+
+        Self {
+            nodes,
+            id_index,
+            entry: self.entry,
+            entry_layer: self.entry_layer,
+            ef_construction: self.ef_construction,
+            direct_index,
+            state: self.state,
+            layer_neighbors,
+            epoch_gen: AtomicU32::new(self.epoch_gen.load(AtomicOrdering::Relaxed)),
+            edge_count_layer0_undirected: self.edge_count_layer0_undirected,
+            layer0_soa: HnswLayer0Slab {
+                blocks: self.layer0_soa.blocks.clone(),
+                node_to_slab,
+            },
+            #[cfg(test)]
+            fail_preinsert_index_conversion: self.fail_preinsert_index_conversion,
+        }
     }
 
     fn prevalidate_internal_idx_u32(new_idx: usize) -> Result<u32, GenesisError> {
         u32::try_from(new_idx).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })
+    }
+
+    #[inline(always)]
+    fn cow_vec_mut<T: Clone>(arc: &mut Arc<Vec<T>>) -> &mut Vec<T> {
+        if Arc::strong_count(arc) == 1 {
+            Arc::get_mut(arc).expect("strong_count == 1 implies unique Arc")
+        } else {
+            Arc::make_mut(arc)
+        }
     }
 
     #[inline]
@@ -1133,13 +1205,13 @@ impl HnswGraph {
         }
     }
 
-    #[inline]
+    #[inline(always)]
     fn node_neighbors_len(&self, node_idx: usize, layer: usize) -> usize {
         debug_assert!(node_idx < self.layer_neighbors.len());
         self.layer_neighbors[node_idx].neighbors_len(layer)
     }
 
-    #[inline]
+    #[inline(always)]
     fn node_neighbors_iter(&self, node_idx: usize, layer: usize) -> NodeAdjIter<'_> {
         debug_assert!(node_idx < self.layer_neighbors.len());
         self.layer_neighbors[node_idx].neighbors_iter(layer)
@@ -1189,7 +1261,7 @@ impl HnswGraph {
         }
         let slab_idx_u32 = u32::try_from(slab_idx).unwrap_or(u32::MAX - 1);
         debug_assert_ne!(slab_idx_u32, u32::MAX);
-        self.layer0_soa.node_to_slab.push(slab_idx_u32);
+        Self::cow_vec_mut(&mut self.layer0_soa.node_to_slab).push(slab_idx_u32);
     }
 
     #[inline]
@@ -1201,9 +1273,11 @@ impl HnswGraph {
     }
 
     /// Lookup internal index by `NodeId`. O(1) average with direct index, fallback O(log N).
+    #[inline(always)]
     fn idx(&self, id: NodeId) -> Option<usize> {
-        // Contract CRATE-002: NodeIds are consecutive from 0. N < 2^32 in any
-        // GENESIS deployment (physical memory limit). u64 → usize is safe.
+        // Contract CRATE-002: direct_index addressing assumes NodeId values remain
+        // within the platform-indexable range and deployment cardinality stays < 2^32.
+        // The compact secondary index (`CompactNodeId`) enforces the same bound.
         #[allow(clippy::cast_possible_truncation)]
         let raw = id.get() as usize;
         if raw < self.direct_index.len() {
@@ -1217,22 +1291,27 @@ impl HnswGraph {
         }
 
         match self.state {
-            GraphState::Compacted => self
-                .id_index
-                .binary_search_by_key(&id.get(), |&(nid, _)| nid.get())
-                .ok()
-                .map(|pos| self.id_index[pos].1),
+            GraphState::Compacted => {
+                let compact = CompactNodeId::try_from(id).ok()?;
+                self.id_index
+                    .binary_search_by_key(&compact.raw(), |&(nid, _)| nid.raw())
+                    .ok()
+                    .map(|pos| self.id_index[pos].1)
+            }
             GraphState::Online => self
                 .id_index
                 .iter()
-                .find_map(|&(nid, idx)| (nid == id).then_some(idx)),
+                .find_map(|&(nid, idx)| {
+                    (u64::from(nid.raw()) == id.get()).then_some(idx)
+                }),
         }
     }
 
     /// Insert internal index mapping with O(1) append during online phase.
     fn insert_id_index(&mut self, id: NodeId, idx: usize) {
         debug_assert_eq!(self.state, GraphState::Online);
-        self.id_index.push((id, idx));
+        let compact = CompactNodeId::try_from(id).expect("insert requires compact NodeId range");
+        Self::cow_vec_mut(&mut self.id_index).push((compact, idx));
     }
 
     /// Compact and sort `id_index` for O(log N) fallback queries.
@@ -1241,7 +1320,7 @@ impl HnswGraph {
             return;
         }
 
-        radix_sort_node_ids(&mut self.id_index);
+        radix_sort_node_ids(Self::cow_vec_mut(&mut self.id_index));
         self.state = GraphState::Compacted;
     }
 
@@ -1284,6 +1363,7 @@ impl HnswGraph {
         if id == NodeId::INVALID {
             return Err(GenesisError::InvariantViolation { axiom_id: 4 });
         }
+        let _compact_id = CompactNodeId::try_from(id)?;
         if self.idx(id).is_some() {
             return Ok(()); // already present
         }
@@ -1314,19 +1394,19 @@ impl HnswGraph {
             None
         };
 
-        self.nodes.push(HnswNode::new(id, *vec, target_layer));
-        self.layer_neighbors.push(NodeAdj::default());
+        Self::cow_vec_mut(&mut self.nodes).push(HnswNode::new(id, *vec, target_layer));
+        Self::cow_vec_mut(&mut self.layer_neighbors).push(NodeAdj::default());
         self.write_node_to_slab(new_idx, vec);
         self.insert_id_index(id, new_idx);
 
         if let Some((id_raw, next_direct_len, new_idx_u32)) = direct_index_update {
             if let Some(next_len) = next_direct_len {
-                self.direct_index.resize(next_len, u32::MAX);
+                Self::cow_vec_mut(&mut self.direct_index).resize(next_len, u32::MAX);
             }
             // Release barrier: not required over Vec<u32> with &mut self (single-writer).
             // To publish this index to concurrent readers, direct_index must be
             // Vec<AtomicU32> with store(Release). For now: single-threaded, no contention.
-            self.direct_index[id_raw] = new_idx_u32;
+            Self::cow_vec_mut(&mut self.direct_index)[id_raw] = new_idx_u32;
             debug_assert!(
                 self.idx(id) == Some(new_idx),
                 "direct_index inconsistente con id_index para NodeId={}",
@@ -1417,7 +1497,7 @@ impl HnswGraph {
         }
         let _ = dist;
         let max_neighbors = Self::layer_max_neighbors(layer);
-        if self.layer_neighbors[from_idx].add_neighbor(
+        if Self::cow_vec_mut(&mut self.layer_neighbors)[from_idx].add_neighbor(
             layer,
             to_idx as u32,
             self.layer0_soa.node_to_slab[to_idx],
@@ -1434,7 +1514,7 @@ impl HnswGraph {
         if layer > self.nodes[from_idx].max_layer {
             return false;
         }
-        if self.layer_neighbors[from_idx].remove_neighbor(layer, to_idx as u32) {
+        if Self::cow_vec_mut(&mut self.layer_neighbors)[from_idx].remove_neighbor(layer, to_idx as u32) {
             if layer == 0 {
                 self.edge_count_layer0_undirected =
                     self.edge_count_layer0_undirected.saturating_sub(1);
@@ -1949,9 +2029,12 @@ impl HnswGraph {
     }
 
     /// Number of nodes in the graph.
+    ///
+    /// This cannot be `const fn` because `Arc` dereference is not const-evaluable
+    /// on stable Rust (`nodes` is Arc-backed for snapshot sharing).
     #[allow(clippy::inline_always)]
     #[inline(always)]
-    pub const fn node_count(&self) -> usize {
+    pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
@@ -1992,7 +2075,7 @@ impl HnswGraph {
                 .iter()
                 .flat_map(|block| block.lanes)
                 .collect(),
-            node_to_slab: self.layer0_soa.node_to_slab.clone(),
+            node_to_slab: self.layer0_soa.node_to_slab.as_ref().clone(),
             neighbor_offsets,
             neighbor_ids,
             neighbor_distances,
@@ -2022,29 +2105,29 @@ impl HnswGraph {
 
         // Step 1: Remove all edges originating from this node.
         // Collect neighbour IDs first to avoid borrow conflicts.
-        let all_neighbours: Vec<(usize, usize)> = self.nodes[idx]
-            .max_layer
-            .checked_add(1)
-            .map(|layers| {
-                let mut all = Vec::new();
+        REMOVE_SCRATCH.with(|scratch_cell| {
+            let mut scratch = scratch_cell.borrow_mut();
+            scratch.clear();
+            if let Some(layers) = self.nodes[idx].max_layer.checked_add(1) {
                 for layer in 0..layers {
-                    all.extend(
-                        self.node_neighbors_iter(idx, layer)
-                            .map(|nb_idx| (nb_idx as usize, layer)),
-                    );
+                    let layer_len = self.node_neighbors_len(idx, layer);
+                    for pos in 0..layer_len {
+                        if let Some(nb_idx) = self.node_neighbor_at(idx, layer, pos) {
+                            scratch.push((nb_idx as usize, layer));
+                        }
+                    }
                 }
-                all
-            })
-            .unwrap_or_default();
+            }
 
-        for (nb_idx, layer) in all_neighbours {
-            // Remove the reverse edge: nb → id
-            self.remove_edge(nb_idx, layer, idx);
-        }
+            for &(nb_idx, layer) in scratch.iter() {
+                // Remove the reverse edge: nb → id
+                self.remove_edge(nb_idx, layer, idx);
+            }
+        });
 
         // Step 2: Clear the node's own adjacency lists.
         for layer in 0..=self.nodes[idx].max_layer {
-            self.layer_neighbors[idx].clear_layer(layer);
+            Self::cow_vec_mut(&mut self.layer_neighbors)[idx].clear_layer(layer);
         }
         self.edge_count_layer0_undirected = self
             .edge_count_layer0_undirected
@@ -2056,9 +2139,11 @@ impl HnswGraph {
             #[allow(clippy::cast_possible_truncation)]
             let raw_us = raw as usize;
             if raw_us < self.direct_index.len() {
-                self.direct_index[raw_us] = u32::MAX;
+                Self::cow_vec_mut(&mut self.direct_index)[raw_us] = u32::MAX;
             }
         }
+        let compact = CompactNodeId::try_from(id).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })?;
+        Self::cow_vec_mut(&mut self.id_index).retain(|&(nid, _)| nid != compact);
 
         // Step 4: Update entry point if it was pointing to this node.
         if self.entry == Some(idx) {
@@ -2078,8 +2163,9 @@ impl HnswGraph {
         // Step 5: Mark the node slot as invalid (keep Vec size stable for index integrity).
         // A compact_index() call rebuilds id_index cleanly. Do not swap_remove
         // because that would invalidate all internal indices stored in adjacency lists.
-        self.nodes[idx].id = NodeId::INVALID;
-        self.nodes[idx].max_layer = 0;
+        let nodes = Self::cow_vec_mut(&mut self.nodes);
+        nodes[idx].id = NodeId::INVALID;
+        nodes[idx].max_layer = 0;
         let slab_idx = self.layer0_soa.node_to_slab[idx] as usize;
         let block = slab_idx / SLAB_LANES;
         let lane = slab_idx % SLAB_LANES;
@@ -2138,7 +2224,8 @@ impl LockFreeHnswIndex {
         loop {
             let base = self.load_snapshot();
             let current = Arc::as_ptr(&base).cast_mut();
-            let mut updated = (*base).clone_with_delta();
+            let delta = HnswDelta::Insert;
+            let mut updated = (*base).clone_with_delta(&delta);
             updated.insert(id, vec)?;
             let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
 
@@ -2161,6 +2248,42 @@ impl LockFreeHnswIndex {
             }
             self.cas_retries.value.fetch_add(1, AtomicOrdering::Relaxed);
             // SAFETY: CAS failed, so `candidate` was never published.
+            unsafe {
+                drop(Arc::from_raw(candidate));
+            }
+        }
+    }
+
+    /// Remove a node from the latest snapshot via CAS publication.
+    ///
+    /// AX-ID: AXIOMA-013
+    pub fn remove(&self, id: NodeId) -> Result<(), GenesisError> {
+        loop {
+            let base = self.load_snapshot();
+            let current = Arc::as_ptr(&base).cast_mut();
+            let delta = HnswDelta::Remove;
+            let mut updated = (*base).clone_with_delta(&delta);
+            updated.remove_node(id)?;
+            let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
+
+            if self
+                .head
+                .compare_exchange(
+                    current,
+                    candidate,
+                    AtomicOrdering::AcqRel,
+                    AtomicOrdering::Acquire,
+                )
+                .is_ok()
+            {
+                // SAFETY: Successful CAS replaced the head-owned strong ref.
+                unsafe {
+                    drop(Arc::from_raw(current));
+                }
+                return Ok(());
+            }
+            self.cas_retries.value.fetch_add(1, AtomicOrdering::Relaxed);
+            // SAFETY: CAS failed, candidate snapshot was not published.
             unsafe {
                 drop(Arc::from_raw(candidate));
             }
@@ -2209,21 +2332,21 @@ impl Drop for LockFreeHnswIndex {
     }
 }
 
-/// LSD radix sort for `(NodeId, internal_idx)` pairs by `NodeId.get()` in O(8N).
-fn radix_sort_node_ids(index: &mut Vec<(NodeId, usize)>) {
+/// LSD radix sort for `(CompactNodeId, internal_idx)` pairs by compact raw ID in O(4N).
+fn radix_sort_node_ids(index: &mut Vec<(CompactNodeId, usize)>) {
     if index.len() <= 1 {
         return;
     }
 
     let len = index.len();
     let mut src = std::mem::take(index);
-    let mut dst = vec![(NodeId::INVALID, 0usize); len];
+    let mut dst = vec![(CompactNodeId(0), 0usize); len];
 
-    for pass in 0..8 {
+    for pass in 0..4 {
         let shift = pass * 8;
         let mut counts = [0usize; 256];
         for &(id, _) in &src {
-            let bucket = ((id.get() >> shift) & 0xFF) as usize;
+            let bucket = ((id.raw() >> shift) & 0xFF) as usize;
             counts[bucket] += 1;
         }
 
@@ -2235,7 +2358,7 @@ fn radix_sort_node_ids(index: &mut Vec<(NodeId, usize)>) {
         }
 
         for item in src.iter().copied() {
-            let bucket = ((item.0.get() >> shift) & 0xFF) as usize;
+            let bucket = ((item.0.raw() >> shift) & 0xFF) as usize;
             let pos = offsets[bucket];
             dst[pos] = item;
             offsets[bucket] += 1;
@@ -2928,7 +3051,7 @@ mod tests {
         let mut level_0 = 0usize;
         let mut level_1 = 0usize;
         let mut max_level = 0usize;
-        for node in &g.nodes {
+        for node in g.nodes.iter() {
             let level = node.max_layer;
             if level == 0 {
                 level_0 += 1;
@@ -3130,7 +3253,7 @@ mod tests {
 
             // Verify local degree bounds per node per layer.
             // This is the tighter invariant that replaces global density enforcement.
-            for node in &g.nodes {
+            for node in g.nodes.iter() {
                 for layer_idx in 0..=node.max_layer {
                     let m_max = if layer_idx == 0 { M0 } else { M };
                     let degree = g.node_neighbors_len(
@@ -3311,7 +3434,7 @@ mod tests {
             .unwrap();
         }
 
-        for slot in &mut g.direct_index {
+        for slot in std::sync::Arc::make_mut(&mut g.direct_index).iter_mut() {
             *slot = u32::MAX;
         }
 
@@ -3924,11 +4047,12 @@ mod scaling_tests {
 
         // Force the central node to have max_layer = MAX_LAYERS - 1
         let central_idx = 0;
-        graph.nodes[central_idx].max_layer = MAX_LAYERS - 1;
+        std::sync::Arc::make_mut(&mut graph.nodes)[central_idx].max_layer = MAX_LAYERS - 1;
 
         // Allocate upper layers storage
         let upper_layers = vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1];
-        graph.layer_neighbors[central_idx].upper = Some(upper_layers.into_boxed_slice());
+        std::sync::Arc::make_mut(&mut graph.layer_neighbors)[central_idx].upper =
+            Some(upper_layers.into_boxed_slice());
 
         // Insert neighbor nodes
         for i in 1..=num_neighbors {
@@ -3938,14 +4062,14 @@ mod scaling_tests {
         }
 
         // Reset central adjacency so this fixture remains fully controlled.
-        graph.layer_neighbors[central_idx].clear_layer(0);
-        graph.layer_neighbors[central_idx].upper =
+        std::sync::Arc::make_mut(&mut graph.layer_neighbors)[central_idx].clear_layer(0);
+        std::sync::Arc::make_mut(&mut graph.layer_neighbors)[central_idx].upper =
             Some(vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1].into_boxed_slice());
         for neighbor_idx in 1..=num_neighbors {
-            graph.layer_neighbors[neighbor_idx].clear_layer(0);
-            graph.layer_neighbors[neighbor_idx].upper =
+            std::sync::Arc::make_mut(&mut graph.layer_neighbors)[neighbor_idx].clear_layer(0);
+            std::sync::Arc::make_mut(&mut graph.layer_neighbors)[neighbor_idx].upper =
                 Some(vec![SmallVec::<[u32; M]>::new(); MAX_LAYERS - 1].into_boxed_slice());
-            graph.nodes[neighbor_idx].max_layer = 0;
+            std::sync::Arc::make_mut(&mut graph.nodes)[neighbor_idx].max_layer = 0;
         }
 
         // Manually populate adjacency lists to create worst-case scenario
@@ -3955,18 +4079,15 @@ mod scaling_tests {
         for i in 1..=M0 {
             let neighbor_idx = i as u32;
             let slab_idx = graph.layer0_soa.node_to_slab[neighbor_idx as usize];
-            let inserted =
-                graph.layer_neighbors[central_idx].add_neighbor(0, neighbor_idx, slab_idx, M0);
+            let inserted = std::sync::Arc::make_mut(&mut graph.layer_neighbors)[central_idx]
+                .add_neighbor(0, neighbor_idx, slab_idx, M0);
             assert!(
                 inserted,
                 "fixture insertion failed for layer0 neighbor={neighbor_idx}"
             );
-            let reverse_inserted = graph.layer_neighbors[neighbor_idx as usize].add_neighbor(
-                0,
-                central_internal_idx,
-                central_slab_idx,
-                M0,
-            );
+            let reverse_inserted = std::sync::Arc::make_mut(&mut graph.layer_neighbors)
+                [neighbor_idx as usize]
+                .add_neighbor(0, central_internal_idx, central_slab_idx, M0);
             assert!(
                 reverse_inserted,
                 "fixture reverse insertion failed for layer0 neighbor={neighbor_idx}"
@@ -3981,23 +4102,20 @@ mod scaling_tests {
                 if neighbor_offset < num_neighbors {
                     let neighbor_idx = (neighbor_offset + 1) as u32;
                     let slab_idx = graph.layer0_soa.node_to_slab[neighbor_idx as usize];
-                    let inserted = graph.layer_neighbors[central_idx].add_neighbor(
-                        layer_idx + 1,
-                        neighbor_idx,
-                        slab_idx,
-                        M,
-                    );
+                    let inserted = std::sync::Arc::make_mut(&mut graph.layer_neighbors)
+                        [central_idx]
+                        .add_neighbor(layer_idx + 1, neighbor_idx, slab_idx, M);
                     assert!(
                         inserted,
                         "fixture insertion failed for upper layer={} neighbor={neighbor_idx}",
                         layer_idx + 1
                     );
                     let neighbor_internal_idx = neighbor_idx as usize;
-                    graph.nodes[neighbor_internal_idx].max_layer = graph.nodes
+                    let current_max = graph.nodes[neighbor_internal_idx].max_layer;
+                    std::sync::Arc::make_mut(&mut graph.nodes)[neighbor_internal_idx].max_layer =
+                        current_max.max(layer_idx + 1);
+                    let reverse_inserted = std::sync::Arc::make_mut(&mut graph.layer_neighbors)
                         [neighbor_internal_idx]
-                        .max_layer
-                        .max(layer_idx + 1);
-                    let reverse_inserted = graph.layer_neighbors[neighbor_internal_idx]
                         .add_neighbor(layer_idx + 1, central_internal_idx, central_slab_idx, M);
                     assert!(
                         reverse_inserted,
