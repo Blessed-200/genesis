@@ -1,6 +1,6 @@
 # PLANS
 
-## 1.23 CRATE-004 Kuramoto hot-state compact layout refactor (2026-04-09)
+## 1.26 CRATE-003 Kuramoto hot-state compact layout refactor (2026-04-09)
 
 ### Root cause
 
@@ -15,6 +15,52 @@
    - Replace `dirty`/`sync_dirty` with `flags: u8` plus inline bit helpers (`is_dirty`, `set_dirty`, `is_sync_dirty`, `set_sync_dirty`).
    - Convert triangle edge adjacency to CSR (`triangle_ids`, `triangle_offsets`) and rebuild logic with reusable fixed scratch buffers.
    - Update hot paths (`rebuild_if_dirty`, `compute_coupling_sums`, deterministic/noisy step kernels, `rebuild_triangles`, `triangle_curvature`, `update_gauge_fields`) to do boundary `u32 -> usize` casts only at indexing points while preserving integrator semantics.
+
+### Hot-path justification
+
+**Algorithmic complexity**:
+- Before: O(n) triangle adjacency lookups via `Vec<Vec<usize>>` with double-indirection per access
+- After: O(1) CSR-based triangle adjacency via `triangle_ids`/`triangle_offsets` with single-indirection lookup
+
+**Cache-locality and working-set improvements**:
+- Triangle storage migrates from nested `Vec<Vec<usize>>` to flat CSR layout (`triangle_ids: Vec<u32>`, `triangle_offsets: Vec<u32>`), reducing pointer-chasing and improving sequential access patterns
+- Index backing shrinks from `usize` (8 bytes) to `u32` (4 bytes), halving index storage footprint for `triangles`, `coupling_offsets`, and `live_pos_scratch`
+- Dirty-state bookkeeping consolidates two booleans (`dirty`, `sync_dirty`) into a single `flags: u8` bitfield, reducing struct width by 1 byte and improving cache-line density
+- Expected index-size shrink factor: 2x for all index arrays (usize -> u32 transition)
+- Reduced indirections: Triangle adjacency queries drop from 2 pointer dereferences to 1 (CSR offset + index)
+
+**Allocation-count impacts**:
+- Topology rebuild eliminates per-call nested vector allocations in triangle adjacency construction
+- Fixed scratch buffers reused across `rebuild_triangles` calls, avoiding repeated heap traffic
+- CSR layout requires single contiguous allocation for `triangle_ids` and `triangle_offsets` vs. N+1 allocations for nested `Vec<Vec<_>>`
+- Fewer allocations per rebuild: ~N edge allocations eliminated (where N = number of edges with triangles)
+
+**Numeric expectations**:
+- Index storage reduction: For a mesh with 10k triangles and 5k edges, index memory drops from ~160KB (usize) to ~80KB (u32)
+- Indirection reduction: CSR triangle lookups eliminate 1 pointer dereference per query (2 loads -> 1 load)
+- Cache-miss reduction: Flat CSR layout improves spatial locality; expect 10-20% fewer L2 cache misses on triangle adjacency traversal
+- Allocation reduction: Topology rebuild eliminates N heap allocations (where N = edge count with triangles); expect 50-80% reduction in allocator calls during rebuild
+
+**Casting boundaries**:
+- `u32 -> usize` casts remain at indexing points in hot paths:
+  - `rebuild_if_dirty`: Cast triangle/coupling indices when accessing position/coupling arrays
+  - `compute_coupling_sums`: Cast coupling offsets when iterating neighbor ranges
+  - `triangle_curvature`: Cast triangle indices when accessing vertex positions
+  - `update_gauge_fields`: Cast triangle indices when computing gauge contributions
+- Casts are zero-cost on 64-bit platforms and preserve integrator semantics
+
+**Micro-benchmark plan**:
+- Criterion targets:
+  - `kuramoto_rebuild`: Measures topology rebuild throughput (triangles/sec)
+  - `kuramoto_step`: Measures per-step throughput (steps/sec) for deterministic and noisy integrators
+  - `kuramoto_coupling_sums`: Measures coupling sum computation throughput (edges/sec)
+- Commands:
+  - Baseline: `cargo bench -p genesis-dynamics -- kuramoto --save-baseline before`
+  - Post-refactor: `cargo bench -p genesis-dynamics -- kuramoto --baseline before`
+- Key metrics:
+  - Throughput: Steps/sec, triangles/sec, edges/sec (expect 5-15% improvement)
+  - Allocations: Allocator call count via `dhat` or `criterion-perf-events` (expect 50-80% reduction in rebuild path)
+  - Cache-miss rates: L2 cache misses via `perf stat` (expect 10-20% reduction in triangle adjacency traversal)
 
 ### Validation
 
