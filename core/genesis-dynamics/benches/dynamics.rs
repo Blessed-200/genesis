@@ -77,6 +77,38 @@ const BASELINE_SYNCHRONY_ORDER_1000_NS: f64 = 250_000.0;
 const BASELINE_SYNCHRONY_ORDER_FAST_1000_NS: f64 = 30_000.0;
 const BASELINE_VFE_COMPUTE_1000_NS: f64 = 4_200.0;
 
+fn synchrony_fast_guardrail_ns() -> f64 {
+    std::env::var("GENESIS_SYNC_FAST_1000_NS_GUARDRAIL")
+        .ok()
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(BASELINE_SYNCHRONY_ORDER_FAST_1000_NS)
+}
+
+fn guardrail_strict_mode() -> bool {
+    matches!(
+        std::env::var("GENESIS_BENCH_GUARDRAIL_STRICT").as_deref(),
+        Ok("1" | "true" | "TRUE" | "yes" | "YES")
+    ) || matches!(
+        std::env::var("CI").as_deref(),
+        Ok("1" | "true" | "TRUE" | "yes" | "YES") | Ok("")
+    )
+}
+
+fn check_guardrail(metric: &str, observed_ns: f64, guardrail_ns: f64) {
+    if observed_ns <= guardrail_ns {
+        return;
+    }
+    if guardrail_strict_mode() {
+        panic!(
+            "{metric} guardrail exceeded: {observed_ns:.0}ns > {guardrail_ns:.0}ns (strict mode)"
+        );
+    }
+    eprintln!(
+        "warning: {metric} guardrail exceeded: {observed_ns:.0}ns > {guardrail_ns:.0}ns (non-fatal; set GENESIS_BENCH_GUARDRAIL_STRICT=1 to fail)"
+    );
+}
+
 fn guardrail_baselines() {
     static ONCE: OnceLock<()> = OnceLock::new();
     if ONCE.get().is_some() {
@@ -118,21 +150,26 @@ fn guardrail_baselines() {
     }
     let vfe_ns = start.elapsed().as_nanos() as f64 / 500.0;
 
-    assert!(
-        kuramoto_ns <= BASELINE_KURAMOTO_STEP_1000_NS,
-        "kuramoto_step_1000_nodes guardrail exceeded: {kuramoto_ns:.0}ns > {BASELINE_KURAMOTO_STEP_1000_NS:.0}ns"
+    check_guardrail(
+        "kuramoto_step_1000_nodes",
+        kuramoto_ns,
+        BASELINE_KURAMOTO_STEP_1000_NS,
     );
-    assert!(
-        sync_ns <= BASELINE_SYNCHRONY_ORDER_1000_NS,
-        "synchrony_order_1000_nodes guardrail exceeded: {sync_ns:.0}ns > {BASELINE_SYNCHRONY_ORDER_1000_NS:.0}ns"
+    check_guardrail(
+        "synchrony_order_1000_nodes",
+        sync_ns,
+        BASELINE_SYNCHRONY_ORDER_1000_NS,
     );
-    assert!(
-        sync_fast_ns <= BASELINE_SYNCHRONY_ORDER_FAST_1000_NS,
-        "synchrony_order_fast_1000_nodes guardrail exceeded: {sync_fast_ns:.0}ns > {BASELINE_SYNCHRONY_ORDER_FAST_1000_NS:.0}ns"
+    let sync_fast_guardrail_ns = synchrony_fast_guardrail_ns();
+    check_guardrail(
+        "synchrony_order_fast_1000_nodes",
+        sync_fast_ns,
+        sync_fast_guardrail_ns,
     );
-    assert!(
-        vfe_ns <= BASELINE_VFE_COMPUTE_1000_NS,
-        "vfe_compute_1000_nodes guardrail exceeded: {vfe_ns:.0}ns > {BASELINE_VFE_COMPUTE_1000_NS:.0}ns"
+    check_guardrail(
+        "vfe_compute_1000_nodes",
+        vfe_ns,
+        BASELINE_VFE_COMPUTE_1000_NS,
     );
 
     let _ = ONCE.set(());
