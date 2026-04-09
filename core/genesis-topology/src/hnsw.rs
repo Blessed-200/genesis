@@ -1035,7 +1035,7 @@ pub struct HnswGraph {
     ef_construction: usize,
     /// Direct map `NodeId.get()` → `internal_idx` when `NodeIds` are consecutive.
     /// Dynamic capacity: expands when inserting larger `NodeIds`.
-    direct_index: Arc<Vec<u32>>, // u32::MAX = no presente
+    direct_index: Arc<Vec<u32>>, // u32::MAX = not present
     /// Secondary index state `id_index`.
     state: GraphState,
     /// Per-node local adjacency lists indexed by dense internal node index.
@@ -1115,6 +1115,8 @@ pub struct HnswLayer0Soa {
 pub struct LockFreeHnswIndex {
     head: AtomicPtr<HnswGraph>,
     cas_retries: CachePadded<AtomicU64>,
+    #[cfg(test)]
+    force_first_cas_fail: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2058,18 +2060,28 @@ impl HnswGraph {
         self.idx(id).map(|idx| &self.nodes[idx].vec)
     }
 
-    /// Iterate over all `NodeIds` in the graph.
+    /// Iterate over all live `NodeIds` in the graph (excludes tombstones).
     pub fn nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.nodes.iter().map(|n| n.id)
+        self.nodes
+            .iter()
+            .filter(|n| n.id != NodeId::INVALID)
+            .map(|n| n.id)
     }
 
-    /// Number of nodes in the graph.
+    /// Number of nodes in the graph (internal slot count, including tombstones).
     ///
     /// This cannot be `const fn` because `Arc` dereference is not const-evaluable
     /// on stable Rust (`nodes` is Arc-backed for snapshot sharing).
     #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Number of live nodes in the graph (excluding tombstoned slots).
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    pub fn live_node_count(&self) -> usize {
         self.live_nodes
     }
 
@@ -2237,6 +2249,8 @@ impl LockFreeHnswIndex {
         Self {
             head: AtomicPtr::new(Arc::into_raw(snapshot).cast_mut()),
             cas_retries: CachePadded::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            force_first_cas_fail: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -2280,7 +2294,25 @@ impl LockFreeHnswIndex {
             updated.insert(id, vec)?;
             let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
 
-            if self
+            #[cfg(test)]
+            let force_fail = self
+                .force_first_cas_fail
+                .swap(false, AtomicOrdering::Relaxed);
+
+            #[cfg(test)]
+            let cas_success = !force_fail
+                && self
+                    .head
+                    .compare_exchange(
+                        current,
+                        candidate,
+                        AtomicOrdering::AcqRel,
+                        AtomicOrdering::Acquire,
+                    )
+                    .is_ok();
+
+            #[cfg(not(test))]
+            let cas_success = self
                 .head
                 .compare_exchange(
                     current,
@@ -2288,8 +2320,9 @@ impl LockFreeHnswIndex {
                     AtomicOrdering::AcqRel,
                     AtomicOrdering::Acquire,
                 )
-                .is_ok()
-            {
+                .is_ok();
+
+            if cas_success {
                 // SAFETY: Successful CAS replaced the head's strong reference from
                 // `current` to `candidate`; release the superseded head ref.
                 unsafe {
@@ -2317,7 +2350,25 @@ impl LockFreeHnswIndex {
             updated.remove_node(id)?;
             let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
 
-            if self
+            #[cfg(test)]
+            let force_fail = self
+                .force_first_cas_fail
+                .swap(false, AtomicOrdering::Relaxed);
+
+            #[cfg(test)]
+            let cas_success = !force_fail
+                && self
+                    .head
+                    .compare_exchange(
+                        current,
+                        candidate,
+                        AtomicOrdering::AcqRel,
+                        AtomicOrdering::Acquire,
+                    )
+                    .is_ok();
+
+            #[cfg(not(test))]
+            let cas_success = self
                 .head
                 .compare_exchange(
                     current,
@@ -2325,8 +2376,9 @@ impl LockFreeHnswIndex {
                     AtomicOrdering::AcqRel,
                     AtomicOrdering::Acquire,
                 )
-                .is_ok()
-            {
+                .is_ok();
+
+            if cas_success {
                 // SAFETY: Successful CAS replaced the head-owned strong ref.
                 unsafe {
                     drop(Arc::from_raw(current));
@@ -2348,11 +2400,18 @@ impl LockFreeHnswIndex {
         self.load_snapshot().search_nearest(query, k)
     }
 
-    /// Number of nodes in the latest published snapshot.
+    /// Number of nodes in the latest published snapshot (internal slot count, including tombstones).
     ///
     /// AX-ID: AXIOMA-013
     pub fn node_count(&self) -> usize {
         self.load_snapshot().node_count()
+    }
+
+    /// Number of live nodes in the latest published snapshot (excluding tombstoned slots).
+    ///
+    /// AX-ID: AXIOMA-013
+    pub fn live_node_count(&self) -> usize {
+        self.load_snapshot().live_node_count()
     }
 
     /// Build a contiguous SoA layer-0 snapshot from the latest published graph.
@@ -2367,6 +2426,13 @@ impl LockFreeHnswIndex {
     /// AX-ID: AXIOMA-013
     pub fn cas_retry_count(&self) -> u64 {
         self.cas_retries.value.load(AtomicOrdering::Relaxed)
+    }
+
+    /// Test-only: Enable forced first CAS failure for deterministic retry testing.
+    #[cfg(test)]
+    pub fn set_force_first_cas_fail(&self, enable: bool) {
+        self.force_first_cas_fail
+            .store(enable, AtomicOrdering::Relaxed);
     }
 }
 
@@ -2604,10 +2670,10 @@ mod tests {
             .map(|(i, _node)| graph.node_neighbors_len(i, 0))
             .sum();
 
-        assert_eq!(soa.node_ids.len(), graph.node_count());
-        assert_eq!(soa.node_to_slab.len(), graph.node_count());
+        assert_eq!(soa.node_ids.len(), graph.live_node_count());
+        assert_eq!(soa.node_to_slab.len(), graph.live_node_count());
         assert_eq!(soa.slab.len(), graph.layer0_soa.blocks.len() * BLOCK_STRIDE);
-        assert_eq!(soa.neighbor_offsets.len(), graph.node_count());
+        assert_eq!(soa.neighbor_offsets.len(), graph.live_node_count());
         assert_eq!(soa.neighbor_ids.len(), total_layer0);
         assert_eq!(soa.neighbor_distances.len(), total_layer0);
     }
@@ -2827,7 +2893,7 @@ mod tests {
 
         // Note: CAS retry count is nondeterministic and depends on thread scheduling.
         // We only verify functional correctness, not contention behavior.
-        assert_eq!(index.node_count(), 32);
+        assert_eq!(index.live_node_count(), 32);
         let query = make_vec(0.25);
         let result = index.search_nearest(&query, 4);
         assert!(!result.is_empty());
@@ -2846,48 +2912,43 @@ mod tests {
 
         let removed = make_id(7);
         let removed_vec = make_vec(0.77);
+        index
+            .insert(removed, &removed_vec)
+            .expect("insert node to remove");
+
+        // Force the first CAS to fail to ensure deterministic retry behavior
+        index.set_force_first_cas_fail(true);
         let retry_start = index.cas_retry_count();
-        let mut retry_observed = false;
 
-        for round in 0..64_u64 {
-            index
-                .insert(removed, &removed_vec)
-                .expect("reseed removed node");
-            let gate = Arc::new(Barrier::new(2));
+        let gate = Arc::new(Barrier::new(2));
 
-            let remover_index = Arc::clone(&index);
-            let remover_gate = Arc::clone(&gate);
-            let remover = std::thread::spawn(move || {
-                remover_gate.wait();
-                remover_index.remove(removed)
-            });
+        let remover_index = Arc::clone(&index);
+        let remover_gate = Arc::clone(&gate);
+        let remover = std::thread::spawn(move || {
+            remover_gate.wait();
+            remover_index.remove(removed)
+        });
 
-            let writer_index = Arc::clone(&index);
-            let writer_gate = Arc::clone(&gate);
-            let writer = std::thread::spawn(move || {
-                writer_gate.wait();
-                for j in 0..64_u64 {
-                    let id = make_id(10_000 + round * 64 + j);
-                    let vec = make_vec((id.get() as f64).mul_add(0.0001, 0.15));
-                    writer_index.insert(id, &vec).expect("contending insert");
-                }
-            });
-
-            remover
-                .join()
-                .expect("remove thread join")
-                .expect("remove ok");
-            writer.join().expect("writer thread join");
-
-            if index.cas_retry_count() > retry_start {
-                retry_observed = true;
-                break;
+        let writer_index = Arc::clone(&index);
+        let writer_gate = Arc::clone(&gate);
+        let writer = std::thread::spawn(move || {
+            writer_gate.wait();
+            for j in 0..8_u64 {
+                let id = make_id(10_000 + j);
+                let vec = make_vec((id.get() as f64).mul_add(0.0001, 0.15));
+                writer_index.insert(id, &vec).expect("contending insert");
             }
-        }
+        });
+
+        remover
+            .join()
+            .expect("remove thread join")
+            .expect("remove ok");
+        writer.join().expect("writer thread join");
 
         assert!(
-            retry_observed,
-            "expected at least one CAS retry under contention"
+            index.cas_retry_count() > retry_start,
+            "expected at least one CAS retry under forced failure"
         );
         let soa = index.layer0_soa();
         assert!(
@@ -2903,7 +2964,7 @@ mod tests {
             let v = make_vec((i as f64).mul_add(0.3, 0.1));
             g.insert(make_id(i), &v).unwrap();
         }
-        assert_eq!(g.node_count(), 10);
+        assert_eq!(g.live_node_count(), 10);
         let q = make_vec(2.1);
         let res = g.search_nearest(&q, 3);
         assert!(!res.is_empty());
@@ -2921,7 +2982,7 @@ mod tests {
         assert!(g.insert(id, &second).is_ok());
 
         assert_eq!(
-            g.node_count(),
+            g.live_node_count(),
             1,
             "duplicate insert must not add a new node"
         );
@@ -2935,7 +2996,7 @@ mod tests {
         let failing_id = make_id(1);
         assert!(g.insert(existing_id, &make_vec(0.3)).is_ok());
 
-        let nodes_before = g.node_count();
+        let nodes_before = g.live_node_count();
         let id_index_before = g.id_index.len();
         let direct_index_before = g.direct_index.clone();
 
@@ -2951,7 +3012,7 @@ mod tests {
             second_err,
             Err(GenesisError::InvariantViolation { axiom_id: 13 })
         ));
-        assert_eq!(g.node_count(), nodes_before);
+        assert_eq!(g.live_node_count(), nodes_before);
         assert_eq!(g.id_index.len(), id_index_before);
         assert_eq!(g.direct_index, direct_index_before);
         assert!(g.idx(failing_id).is_none());
@@ -3336,7 +3397,7 @@ mod tests {
             )
             .unwrap();
         }
-        let n = g.node_count() as f64;
+        let n = g.live_node_count() as f64;
         let max_edges = (n * n.log2() * 2.0) as usize;
         assert!(
             g.edge_count() <= max_edges,
