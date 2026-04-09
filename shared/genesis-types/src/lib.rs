@@ -48,6 +48,7 @@ pub mod fisher_edge;
 mod multivector_types;
 pub mod phase_semantics;
 pub mod proof;
+pub mod quantities;
 pub mod signal;
 
 // ============================================================================
@@ -107,6 +108,9 @@ pub use fisher_edge::FisherEdgeMetric;
 pub use multivector_types::DerivedMetadata;
 // — Proof System —
 pub use proof::{AxiomGuard, AxiomID, Mutation, Proof, WitnessBuilder};
+pub use quantities::{
+    Amplitude, ComplexPhasor, Frequency, LearningRate, Phase, SyncOrder, Temperature, TimeStep,
+};
 // — Phase semantics primitives —
 pub use phase_semantics::{
     CognitiveFieldState, MetaState, NetworkSemanticState, NodeSemanticState, PhaseRegion,
@@ -116,9 +120,9 @@ pub use phase_semantics::{
 // — Signals —
 pub use signal::{
     BladeIndex, Certified, CognitiveDomain, ConsciousnessDomain, DomainConsolidationSignal,
-    DomainResetSignal, DomainSignal, DynamicsDomain, GaussianPair, NodeId, PhysicsDomain,
-    Saturated, SpikeComponents, SpikeComponentsError, SpikeEvent, Timestamp, TopologyDomain,
-    SPIKE_MAX_COMPONENTS,
+    CouplingEdge, DomainResetSignal, DomainSignal, DynamicsDomain, GaussianPair, NodeId,
+    PhysicsDomain, Saturated, SpikeComponents, SpikeComponentsError, SpikeEvent, Timestamp,
+    TopologyDomain, SPIKE_MAX_COMPONENTS,
 };
 
 /// Curated constants grouped by semantic domain.

@@ -378,6 +378,7 @@ dependencies = [
  "ahash",
  "arrayvec",
  "blake3",
+ "bytemuck",
  "criterion",
  "serde",
  "serde_json",
