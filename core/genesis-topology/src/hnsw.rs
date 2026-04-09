@@ -103,17 +103,6 @@ impl CompactNodeId {
     }
 }
 
-impl TryFrom<NodeId> for CompactNodeId {
-    type Error = GenesisError;
-
-    fn try_from(id: NodeId) -> Result<Self, Self::Error> {
-        let raw = id.get();
-        let compact =
-            u32::try_from(raw).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })?;
-        Ok(Self(compact))
-    }
-}
-
 #[inline(always)]
 fn try_compact_node_id(id: NodeId) -> Option<CompactNodeId> {
     let raw = id.get();
@@ -2068,17 +2057,19 @@ impl HnswGraph {
             .map(|n| n.id)
     }
 
-    /// Number of nodes in the graph (internal slot count, including tombstones).
+    /// Number of live nodes in the graph (excluding tombstoned slots).
     ///
     /// This cannot be `const fn` because `Arc` dereference is not const-evaluable
     /// on stable Rust (`nodes` is Arc-backed for snapshot sharing).
     #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn node_count(&self) -> usize {
-        self.nodes.len()
+        self.live_nodes
     }
 
     /// Number of live nodes in the graph (excluding tombstoned slots).
+    ///
+    /// Alias for `node_count()` for clarity at call sites.
     #[allow(clippy::inline_always)]
     #[inline(always)]
     pub fn live_node_count(&self) -> usize {
@@ -2262,23 +2253,27 @@ impl LockFreeHnswIndex {
                 continue;
             }
 
-            // SAFETY: `ptr` comes from `Arc::into_raw` and points to a live allocation
-            // while held by `head`. We take a temporary strong ref then validate that
-            // the atomic head did not change before converting it into an `Arc`.
-            unsafe {
-                Arc::increment_strong_count(ptr);
-            }
+            // SAFETY: We borrow a temporary Arc from the raw pointer to clone it.
+            // The head pointer is guaranteed to remain valid during this operation
+            // because:
+            // 1. The head always holds a strong reference (never drops to zero while published)
+            // 2. We don't call drop() on the borrowed Arc, so the ref count stays stable
+            // 3. We validate the pointer hasn't changed before returning the clone
+            let snapshot = unsafe {
+                // Create a temporary Arc without incrementing (ManuallyDrop semantics)
+                let borrowed = std::mem::ManuallyDrop::new(Arc::from_raw(ptr));
+                // Clone it safely (this increments the count)
+                Arc::clone(&borrowed)
+                // borrowed is dropped here but ManuallyDrop prevents decrementing
+            };
 
+            // Validate the head pointer hasn't changed during our clone
             if self.head.load(AtomicOrdering::Acquire) == ptr {
-                // SAFETY: We just incremented the strong count for `ptr`.
-                return unsafe { Arc::from_raw(ptr) };
+                return snapshot;
             }
 
-            // SAFETY: Balance the temporary strong-count increment from this loop
-            // iteration before retrying with the new head pointer.
-            unsafe {
-                drop(Arc::from_raw(ptr));
-            }
+            // Head changed, drop our clone and retry
+            drop(snapshot);
         }
     }
 
