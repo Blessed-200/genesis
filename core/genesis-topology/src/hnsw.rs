@@ -108,8 +108,8 @@ impl TryFrom<NodeId> for CompactNodeId {
 
     fn try_from(id: NodeId) -> Result<Self, Self::Error> {
         let raw = id.get();
-        let compact = u32::try_from(raw)
-            .map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })?;
+        let compact =
+            u32::try_from(raw).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })?;
         Ok(Self(compact))
     }
 }
@@ -1158,27 +1158,28 @@ impl HnswGraph {
     }
 
     fn apply_delta(&self, delta: &HnswDelta) -> Self {
-        let (nodes, id_index, wide_id_index, direct_index, layer_neighbors, node_to_slab) = match delta {
-            // INSERT mutates all structural vectors.
-            HnswDelta::Insert => (
-                Arc::new(self.nodes.as_ref().clone()),
-                Arc::new(self.id_index.as_ref().clone()),
-                Arc::new(self.wide_id_index.as_ref().clone()),
-                Arc::new(self.direct_index.as_ref().clone()),
-                Arc::new(self.layer_neighbors.as_ref().clone()),
-                Arc::new(self.layer0_soa.node_to_slab.as_ref().clone()),
-            ),
-            // REMOVE mutates nodes, id_index, direct_index, and adjacency;
-            // node_to_slab remains immutable and can stay shared.
-            HnswDelta::Remove => (
-                Arc::new(self.nodes.as_ref().clone()),
-                Arc::new(self.id_index.as_ref().clone()),
-                Arc::new(self.wide_id_index.as_ref().clone()),
-                Arc::new(self.direct_index.as_ref().clone()),
-                Arc::new(self.layer_neighbors.as_ref().clone()),
-                Arc::clone(&self.layer0_soa.node_to_slab),
-            ),
-        };
+        let (nodes, id_index, wide_id_index, direct_index, layer_neighbors, node_to_slab) =
+            match delta {
+                // INSERT mutates all structural vectors.
+                HnswDelta::Insert => (
+                    Arc::new(self.nodes.as_ref().clone()),
+                    Arc::new(self.id_index.as_ref().clone()),
+                    Arc::new(self.wide_id_index.as_ref().clone()),
+                    Arc::new(self.direct_index.as_ref().clone()),
+                    Arc::new(self.layer_neighbors.as_ref().clone()),
+                    Arc::new(self.layer0_soa.node_to_slab.as_ref().clone()),
+                ),
+                // REMOVE mutates nodes, id_index, direct_index, and adjacency;
+                // node_to_slab remains immutable and can stay shared.
+                HnswDelta::Remove => (
+                    Arc::new(self.nodes.as_ref().clone()),
+                    Arc::new(self.id_index.as_ref().clone()),
+                    Arc::new(self.wide_id_index.as_ref().clone()),
+                    Arc::new(self.direct_index.as_ref().clone()),
+                    Arc::new(self.layer_neighbors.as_ref().clone()),
+                    Arc::clone(&self.layer0_soa.node_to_slab),
+                ),
+            };
 
         Self {
             nodes,
@@ -1548,7 +1549,9 @@ impl HnswGraph {
         if layer > self.nodes[from_idx].max_layer {
             return false;
         }
-        if Self::cow_vec_mut(&mut self.layer_neighbors)[from_idx].remove_neighbor(layer, to_idx as u32) {
+        if Self::cow_vec_mut(&mut self.layer_neighbors)[from_idx]
+            .remove_neighbor(layer, to_idx as u32)
+        {
             if layer == 0 {
                 self.edge_count_layer0_undirected =
                     self.edge_count_layer0_undirected.saturating_sub(1);
@@ -2847,7 +2850,9 @@ mod tests {
         let mut retry_observed = false;
 
         for round in 0..64_u64 {
-            index.insert(removed, &removed_vec).expect("reseed removed node");
+            index
+                .insert(removed, &removed_vec)
+                .expect("reseed removed node");
             let gate = Arc::new(Barrier::new(2));
 
             let remover_index = Arc::clone(&index);
@@ -2868,7 +2873,10 @@ mod tests {
                 }
             });
 
-            remover.join().expect("remove thread join").expect("remove ok");
+            remover
+                .join()
+                .expect("remove thread join")
+                .expect("remove ok");
             writer.join().expect("writer thread join");
 
             if index.cas_retry_count() > retry_start {
@@ -2877,7 +2885,10 @@ mod tests {
             }
         }
 
-        assert!(retry_observed, "expected at least one CAS retry under contention");
+        assert!(
+            retry_observed,
+            "expected at least one CAS retry under contention"
+        );
         let soa = index.layer0_soa();
         assert!(
             !soa.node_ids.contains(&removed),

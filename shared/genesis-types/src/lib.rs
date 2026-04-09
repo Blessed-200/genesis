@@ -119,9 +119,9 @@ pub use phase_semantics::{
 };
 // — Signals —
 pub use signal::{
-    BladeIndex, Certified, CognitiveDomain, ConsciousnessDomain, DomainConsolidationSignal,
-    CouplingEdge, DomainResetSignal, DomainSignal, DynamicsDomain, GaussianPair, NodeId,
-    PhysicsDomain, Saturated, SpikeComponents, SpikeComponentsError, SpikeEvent, Timestamp,
+    BladeIndex, Certified, CognitiveDomain, ConsciousnessDomain, CouplingEdge,
+    DomainConsolidationSignal, DomainResetSignal, DomainSignal, DynamicsDomain, GaussianPair,
+    NodeId, PhysicsDomain, Saturated, SpikeComponents, SpikeComponentsError, SpikeEvent, Timestamp,
     TopologyDomain, SPIKE_MAX_COMPONENTS,
 };
 
