@@ -151,6 +151,26 @@ pub struct GaussianPair {
     pub second: f64,
 }
 
+/// Directed coupling edge used by Kuramoto transport layers.
+///
+/// `gamma` is the coupling strength and `gauge` is the discrete `A_ij`
+/// gauge potential attached to `src → dst`.
+///
+/// AX-ID: AXIOMA-006, AXIOMA-007, H_dinámica (LEY_FUNDACIONAL §3.2)
+#[repr(C, align(32))]
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct CouplingEdge {
+    /// Source oscillator node identifier.
+    pub src: NodeId,
+    /// Destination oscillator node identifier.
+    pub dst: NodeId,
+    /// Coupling strength Γᵢⱼ.
+    pub gamma: f64,
+    /// Gauge potential Aᵢⱼ on the directed edge.
+    pub gauge: f64,
+}
+
 static_assertions::const_assert_eq!(core::mem::size_of::<GaussianPair>(), 64);
 static_assertions::const_assert_eq!(core::mem::align_of::<GaussianPair>(), 64);
 

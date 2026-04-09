@@ -1953,3 +1953,44 @@ Performance evidence checklist:
 - Allocation impact:
   - XOR hot loop allocation count unchanged at zero.
   - Triangle scratch avoids heap allocation until intersections exceed inline capacity.
+
+## 1.25 CRATE-000/001/002/003 typed quantity hardening + lifecycle sealing (2026-04-09)
+
+### Root cause
+
+- Public APIs in `genesis-types`/`genesis-dynamics` still expose raw `f64` tuples and scalar fields for phase, amplitude, frequency, thermal controls, and synchrony outputs, allowing primitive ambiguity and accidental semantic mix-ups.
+- Proof/invariant signaling relies on sentinel `u8` axiom ids and raw timestamps, weakening type-level guarantees and forcing panic-based conversion points in Kuramoto indexing paths.
+- Runtime grade/hyperbolic coordinate entry points still use raw primitive inputs (`usize`, `u64`, `Option`) where validated wrappers would preserve invariants and eliminate sentinel conventions.
+- Oscillator lifecycle state is externally mutable through a public field, bypassing guarded transition methods.
+
+### File-level actions
+
+1. `shared/genesis-types/src/quantities.rs` + `shared/genesis-types/src/lib.rs` + `shared/genesis-types/Cargo.toml`
+   - Add transparent scalar newtypes (`Phase`, `Amplitude`, `Frequency`, `TimeStep`, `SyncOrder`, `Temperature`, `LearningRate`) with `as_f64`, checked/unchecked constructors, `TransparentWrapper` support, and selective arithmetic impls.
+   - Add `ComplexPhasor` ABI-stable struct and re-export all quantities from crate root.
+2. `shared/genesis-types/src/signal.rs` + `core/genesis-dynamics/src/oscillator.rs` + `core/genesis-dynamics/src/kuramoto.rs` + `core/genesis-dynamics/src/synchrony.rs`
+   - Introduce `CouplingEdge` and migrate Kuramoto coupling storage.
+   - Migrate oscillator numeric arrays to typed quantity wrappers, seal lifecycle field, expose read accessor, and update all call sites including synchrony and Kuramoto integration.
+   - Ensure hot paths use `bytemuck::cast_slice` for phase/frequency/amplitude bulk access when converting to scalar slices.
+3. `shared/genesis-types/src/proof.rs` + `shared/genesis-types/src/error.rs` + `core/genesis-topology/src/hnsw.rs` + `core/genesis-topology/src/manifold.rs`
+   - Migrate proof timestamps to `Timestamp` and replace axiom-id sentinel errors with `Option<AxiomID>`.
+   - Add new error variants (`PlatformLimitExceeded`, `HyperbolicCoordOutOfDisk`) and convert string-heavy payloads to `Cow<'static, str>`.
+   - Update proof/hnsw/manifold construction sites to use typed `Some(...)`/`None` axiom tagging and typed coordinate/node storage.
+4. `core/genesis-math/src/grade.rs` + `core/genesis-math/src/multivector.rs` (+ callsites)
+   - Add runtime-validated `GradeIndex` and migrate grade projection API from raw `usize` to typed index.
+   - Add typed blade getters/setters and iterator constructor over `BladeIndex` while preserving SIMD-friendly raw coeff access.
+5. `core/genesis-topology/src/manifold.rs` + `core/genesis-dynamics/src/kuramoto.rs` + selected dynamics/topology modules
+   - Convert HyperbolicCoord constructor to `Result`, add `new_unchecked`, migrate hyperbolic storage to `NodeId` keys.
+   - Replace panic-based `expect`/conversion paths in critical Kuramoto index rebuild logic with `Result` propagation and English-only diagnostics.
+
+### Validation
+
+- `cargo test --release -p genesis-dynamics -- invariant --nocapture`
+- `cargo test --release -p genesis-topology -- invariant --nocapture`
+- `cargo test --release -p genesis-types -- invariant --nocapture`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `if cargo check --workspace 2>&1 | grep -q "^warning:"; then echo "Warnings found"; exit 1; fi`
+- `cargo bench -p genesis-dynamics -- step --output-format bencher`
+- `cargo bench -p genesis-types -- proof --output-format bencher`
