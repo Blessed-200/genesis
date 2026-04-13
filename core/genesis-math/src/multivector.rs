@@ -105,18 +105,15 @@ pub(crate) fn has_non_finite_coeff(buf: &[f64; TOTAL_BLADES]) -> bool {
 
 #[inline]
 pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetadata {
+    // HOT PATH: O(16), called by from_dense_buf in product/grade construction loops.
+    // No heap allocations, branch-minimized metadata derivation.
     let mut active_mask = 0u32;
     let mut max_abs_coeff = 0.0f64;
     let mut clifford_norm_sq = 0.0f64;
     let mut comp_norm = 0.0f64;
 
     for k in 0..TOTAL_BLADES {
-        let mut coeff = buf[k];
-        if coeff == 0.0 {
-            // Canonicalize signed zero in the same pass that derives metadata.
-            coeff = 0.0;
-            buf[k] = 0.0;
-        }
+        let coeff = buf[k];
         let abs = coeff.abs();
         if abs > COGNITIVE_PLANCK_CONSTANT {
             active_mask |= 1u32 << k;
@@ -1199,6 +1196,16 @@ mod tests {
                 expected.clifford_norm_sq.to_bits()
             );
         }
+    }
+
+    #[test]
+    fn derive_all_metadata_canonicalizes_negative_zero() {
+        let mut buf = [0.0f64; TOTAL_BLADES];
+        buf[3] = -0.0;
+        let metadata = derive_all_metadata(&mut buf);
+
+        assert_eq!(metadata.active_mask, 0);
+        assert_eq!(buf[3].to_bits(), 0.0f64.to_bits());
     }
 
     // ── grade proxy methods ───────────────────────────────────────────────────
