@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "skills": {
+    "code-quality": {
+      "source": "tursodatabase/turso",
+      "sourceType": "github",
+      "computedHash": "4bd34c624734d588f607750ab1c5aa2de6f8255bb1dd572529d5a1906f6ea155"
+    },
+    "code-reviewer": {
+      "source": "google-gemini/gemini-cli",
+      "sourceType": "github",
+      "computedHash": "270f0dd1d4c15a798bad5253a309cdc2056fe5322f99ba06ca22ce50581adc02"
+    },
+    "executing-plans": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "2f709d1a2c7564f8ce6a9bb707e7f5451117ba80f8e8e2302662c29bc61246a6"
+    },
+    "github-actions-docs": {
+      "source": "xixu-me/skills",
+      "sourceType": "github",
+      "computedHash": "e9ac24e79715ef3060bd4ae376052f8d863b830604e69cb513b39764bf47ee53"
+    },
+    "requesting-code-review": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "246e65cd72a7e360987d94e6c61564ce6d71c6361d1784d529d70e4cbbe8522d"
+    },
+    "rust-async-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "1e68b5edfa95069e54af75acf2a34634a5d0266021fa4af3b9706eaec5b6207e"
+    },
+    "rust-best-practices": {
+      "source": "apollographql/skills",
+      "sourceType": "github",
+      "computedHash": "fd336f2f772eb46ddf8658de5f9dd8faa1f35615b316665307fc82eeb4b2e658"
+    },
+    "rust-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "5a8b4c69ded4bec7009af144c8aea3de5f463765f211c780afea8d7a47fb35e6"
+    },
+    "rust-mcp-server-generator": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "computedHash": "420ae9213c67ac826ea54fbc3d7571189d74f22f3dfda3645fd3c6f7277c4944"
+    },
+    "systematic-debugging": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "computedHash": "72e9ab72627e4fd8ed26a582e82309a98ecdc4f6e1c99418430ac05682c9e91d"
+    }
+  }
+}

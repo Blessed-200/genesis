@@ -2111,3 +2111,54 @@ Performance evidence checklist:
 - `if cargo check --workspace 2>&1 | grep -q "^warning:"; then echo "Warnings found"; exit 1; fi`
 - `cargo bench -p genesis-dynamics -- step --output-format bencher`
 - `cargo bench -p genesis-types -- proof --output-format bencher`
+## 1.29 CRATE-001 from_dense metadata hot-path branch elimination (2026-04-13)
+
+### Root cause
+
+- `derive_all_metadata` includes a dedicated `coeff == 0.0` canonicalization branch before the sub-Planck gate, which duplicates work already performed by the existing `else { buf[k] = 0.0; }` path.
+- In `from_dense_buf` call-heavy loops, this extra branch increases control-flow pressure without adding semantic value, especially for sparse inputs where zero/sub-Planck coefficients dominate.
+
+### File-level actions
+
+1. `core/genesis-math/src/multivector.rs`
+   - Rewrite the `derive_all_metadata` loop to remove the redundant zero-special-case branch.
+   - Keep signed-zero canonicalization semantics by canonicalizing all inactive/sub-Planck coefficients through the existing inactive path.
+   - Preserve compensated accumulation (`mul_add` + compensation term) and all metadata invariants.
+   - Add a hot-path comment documenting O(16) behavior and no-allocation contract.
+2. `core/genesis-math/src/multivector.rs` tests
+   - Add a regression test that explicitly verifies `-0.0` input canonicalizes to `+0.0` and keeps inactive mask semantics unchanged.
+
+### Validation
+
+- `cargo test --release -p genesis-math -- invariant --nocapture`
+- `cargo bench -p genesis-math --bench geometry -- from_dense_metadata`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.30 Project skill-pack installation + GÉNESIS adaptation map (2026-04-13)
+
+### Root cause
+
+- The repository had only domain-local skills and lacked the requested external skill pack needed for CI docs, debugging workflows, code review preparation, and Rust engineering augmentation.
+- Newly installed skills need a project-specific adaptation layer so agents can apply them without violating GÉNESIS invariants, AX-ID requirements, and mandatory verification order.
+
+### File-level actions
+
+1. Skill installation
+   - Install the 10 requested third-party skills with `npx skills add ... --skill ... -y` into project scope (`.agents/skills/*`).
+   - Keep generated `skills-lock.json` under version control to make installs reproducible.
+2. Adaptation layer
+   - Add `.agents/skills/GENESIS_SKILL_ADAPTATIONS.md` with per-skill adaptation guidance:
+     - mandatory command order (`cargo check`, `cargo test`, warning scan),
+     - AX-ID/doc-language constraints,
+     - hot-path + invariant constraints,
+     - benchmark thresholds and evidence requirements.
+   - Include a compatibility section referencing `openai/codex` AGENTS guidance and explicit precedence rules (repo AGENTS.md remains authoritative here).
+
+### Validation
+
+- `npx --yes skills list --json`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
