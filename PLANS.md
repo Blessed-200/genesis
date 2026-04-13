@@ -1,5 +1,53 @@
 # PLANS
 
+## 1.28 CRATE-002 HNSW delta correctness/concurrency hardening follow-up (2026-04-09)
+
+### Root cause
+
+- Delta presets allowed partial cloning combinations that could diverge from mutation-reachable fields during writer-side updates.
+- Remove path left stale entries in `id_index`, creating structural drift between fallback index and `direct_index` invalidation.
+- Snapshot object carried mutable `remove_scratch`, violating immutable snapshot purity expectations in CAS-published graphs.
+
+### File-level actions
+
+1. `core/genesis-topology/src/hnsw.rs`
+   - Replace ad-hoc boolean delta flags with fixed mutation presets (`Insert`/`Remove`) and enforce cloning coverage for every mutation-reachable field per operation.
+   - Make remove delta clone `id_index`, and remove stale IDs in `remove_node()` via `retain`.
+   - Move removal scratch storage to thread-local reusable buffer and drop per-graph mutable scratch state.
+   - Add hot-path inlining (`CompactNodeId::raw`, `idx`, neighbor accessors) and tighten Arc COW mutation helpers with `Arc::get_mut` fast path before `Arc::make_mut`.
+   - Document `node_count` non-const rationale under Arc-backed snapshot storage constraints.
+
+### Validation
+
+- `cargo test --workspace`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo check --workspace -- -D warnings`
+- Allocation sanity on remove path via existing topology tests (no per-call temporary Vec allocation in `remove_node` fast path when scratch capacity is warm).
+
+## 1.27 CRATE-002 HNSW incremental delta snapshot + compact id refactor (2026-04-09)
+
+### Root cause
+
+- Lock-free writer path still uses `clone_with_delta()` as full deep clone, copying large vectors even when only a subset mutates per operation.
+- `id_index` stores full `NodeId` values although HNSW internal indexing already assumes `u32`-bounded dense IDs in hot lookup paths.
+- `remove_node()` allocates a fresh neighbor collection vector on every call instead of reusing capacity.
+
+### File-level actions
+
+1. `core/genesis-topology/src/hnsw.rs`
+   - Introduce `CompactNodeId(u32)` with checked `TryFrom<NodeId>` and lossless recovery to `NodeId` for index operations.
+   - Migrate `id_index` storage and radix/binary-search paths to compact IDs while preserving lookup semantics and sorted ordering contracts.
+   - Add `HnswDelta` + `apply_delta` to clone only mutation-target vectors (`nodes`, `id_index`, `direct_index`, `layer_neighbors`, `layer0_soa.node_to_slab`) and keep other snapshot storage shared through `Arc`.
+   - Replace lock-free writer stub call site to use `apply_delta` and operation-specific minimal deltas for insert/remove/update publication paths.
+   - Add reusable `remove_scratch: Vec<(usize, usize)>` and route `remove_node()` through reusable scratch without per-call heap allocation when capacity already exists.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-topology -- hnsw --output-format bencher`
+
 ## 1.26 CRATE-003 Kuramoto hot-state compact layout refactor (2026-04-09)
 
 ### Root cause

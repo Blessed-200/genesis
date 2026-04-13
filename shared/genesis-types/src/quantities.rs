@@ -16,7 +16,7 @@ macro_rules! impl_scalar_arithmetic {
         impl Add for $ty {
             type Output = Self;
 
-            #[inline(always)]
+            #[inline]
             fn add(self, rhs: Self) -> Self::Output {
                 Self::new(self.0 + rhs.0)
             }
@@ -25,7 +25,7 @@ macro_rules! impl_scalar_arithmetic {
         impl Sub for $ty {
             type Output = Self;
 
-            #[inline(always)]
+            #[inline]
             fn sub(self, rhs: Self) -> Self::Output {
                 Self::new(self.0 - rhs.0)
             }
@@ -34,7 +34,7 @@ macro_rules! impl_scalar_arithmetic {
         impl Mul<f64> for $ty {
             type Output = Self;
 
-            #[inline(always)]
+            #[inline]
             fn mul(self, rhs: f64) -> Self::Output {
                 Self::new(self.0 * rhs)
             }
@@ -43,7 +43,7 @@ macro_rules! impl_scalar_arithmetic {
         impl Mul<$ty> for f64 {
             type Output = $ty;
 
-            #[inline(always)]
+            #[inline]
             fn mul(self, rhs: $ty) -> Self::Output {
                 $ty::new(self * rhs.0)
             }
@@ -52,21 +52,21 @@ macro_rules! impl_scalar_arithmetic {
         impl Div<f64> for $ty {
             type Output = Self;
 
-            #[inline(always)]
+            #[inline]
             fn div(self, rhs: f64) -> Self::Output {
                 Self::new(self.0 / rhs)
             }
         }
 
         impl AddAssign for $ty {
-            #[inline(always)]
+            #[inline]
             fn add_assign(&mut self, rhs: Self) {
                 self.0 += rhs.0;
             }
         }
 
         impl SubAssign for $ty {
-            #[inline(always)]
+            #[inline]
             fn sub_assign(&mut self, rhs: Self) {
                 self.0 -= rhs.0;
             }
@@ -84,21 +84,24 @@ pub struct Phase(f64);
 
 impl Phase {
     /// Constructs a phase wrapper from a raw scalar.
-    #[inline(always)]
+    #[inline]
     pub const fn new(value: f64) -> Self {
         Self(value)
     }
 
     /// Constructs without any semantic validation.
     ///
-    /// // SAFETY: Caller guarantees the scalar follows the surrounding domain invariants.
-    #[inline(always)]
+    /// # Safety
+    ///
+    /// The caller must guarantee that `value` respects the domain invariants
+    /// of [`Phase`] (i.e. a valid finite radian angle meaningful in context).
+    #[inline]
     pub const unsafe fn new_unchecked(value: f64) -> Self {
         Self(value)
     }
 
     /// Returns the scalar representation.
-    #[inline(always)]
+    #[inline]
     pub const fn as_f64(self) -> f64 {
         self.0
     }
@@ -114,21 +117,24 @@ pub struct Amplitude(f64);
 
 impl Amplitude {
     /// Constructs an amplitude wrapper from a raw scalar.
-    #[inline(always)]
+    #[inline]
     pub const fn new(value: f64) -> Self {
         Self(value)
     }
 
     /// Constructs without any semantic validation.
     ///
-    /// // SAFETY: Caller guarantees the scalar follows the surrounding domain invariants.
-    #[inline(always)]
+    /// # Safety
+    ///
+    /// The caller must guarantee that `value` respects the domain invariants
+    /// of [`Amplitude`] (i.e. a non-negative finite scalar where applicable).
+    #[inline]
     pub const unsafe fn new_unchecked(value: f64) -> Self {
         Self(value)
     }
 
     /// Returns the scalar representation.
-    #[inline(always)]
+    #[inline]
     pub const fn as_f64(self) -> f64 {
         self.0
     }
@@ -144,21 +150,24 @@ pub struct Frequency(f64);
 
 impl Frequency {
     /// Constructs a frequency wrapper from a raw scalar.
-    #[inline(always)]
+    #[inline]
     pub const fn new(value: f64) -> Self {
         Self(value)
     }
 
     /// Constructs without any semantic validation.
     ///
-    /// // SAFETY: Caller guarantees the scalar follows the surrounding domain invariants.
-    #[inline(always)]
+    /// # Safety
+    ///
+    /// The caller must guarantee that `value` respects the domain invariants
+    /// of [`Frequency`] (i.e. a finite scalar valid as a natural frequency).
+    #[inline]
     pub const unsafe fn new_unchecked(value: f64) -> Self {
         Self(value)
     }
 
     /// Returns the scalar representation.
-    #[inline(always)]
+    #[inline]
     pub const fn as_f64(self) -> f64 {
         self.0
     }
@@ -174,21 +183,24 @@ pub struct TimeStep(f64);
 
 impl TimeStep {
     /// Constructs a time-step wrapper from a raw scalar.
-    #[inline(always)]
+    #[inline]
     pub const fn new(value: f64) -> Self {
         Self(value)
     }
 
     /// Constructs without any semantic validation.
     ///
-    /// // SAFETY: Caller guarantees the scalar follows the surrounding domain invariants.
-    #[inline(always)]
+    /// # Safety
+    ///
+    /// The caller must guarantee that `value` respects the domain invariants
+    /// of [`TimeStep`] (i.e. a finite positive scalar meaningful as an integration step).
+    #[inline]
     pub const unsafe fn new_unchecked(value: f64) -> Self {
         Self(value)
     }
 
     /// Returns the scalar representation.
-    #[inline(always)]
+    #[inline]
     pub const fn as_f64(self) -> f64 {
         self.0
     }
@@ -208,7 +220,7 @@ impl SyncOrder {
     /// # Errors
     /// Returns [`GenesisError::InvalidInput`] when `value` is outside `[0, 1]`
     /// or non-finite.
-    #[inline(always)]
+    #[inline]
     pub fn try_new(value: f64) -> Result<Self, GenesisError> {
         if value.is_finite() && (0.0..=1.0).contains(&value) {
             Ok(Self(value))
@@ -221,14 +233,16 @@ impl SyncOrder {
 
     /// Constructs without interval validation.
     ///
-    /// // SAFETY: Caller guarantees `value` is finite and within `[0, 1]`.
-    #[inline(always)]
+    /// # Safety
+    ///
+    /// The caller must guarantee that `value` is finite and in `[0.0, 1.0]`.
+    #[inline]
     pub const unsafe fn new_unchecked(value: f64) -> Self {
         Self(value)
     }
 
     /// Returns the scalar representation.
-    #[inline(always)]
+    #[inline]
     pub const fn as_f64(self) -> f64 {
         self.0
     }
@@ -244,21 +258,24 @@ pub struct Temperature(f64);
 
 impl Temperature {
     /// Constructs a temperature wrapper from a raw scalar.
-    #[inline(always)]
+    #[inline]
     pub const fn new(value: f64) -> Self {
         Self(value)
     }
 
     /// Constructs without any semantic validation.
     ///
-    /// // SAFETY: Caller guarantees the scalar follows the surrounding domain invariants.
-    #[inline(always)]
+    /// # Safety
+    ///
+    /// The caller must guarantee that `value` respects the domain invariants
+    /// of [`Temperature`] (i.e. a finite scalar valid as a thermal energy scale).
+    #[inline]
     pub const unsafe fn new_unchecked(value: f64) -> Self {
         Self(value)
     }
 
     /// Returns the scalar representation.
-    #[inline(always)]
+    #[inline]
     pub const fn as_f64(self) -> f64 {
         self.0
     }
@@ -274,21 +291,24 @@ pub struct LearningRate(f64);
 
 impl LearningRate {
     /// Constructs a learning-rate wrapper from a raw scalar.
-    #[inline(always)]
+    #[inline]
     pub const fn new(value: f64) -> Self {
         Self(value)
     }
 
     /// Constructs without any semantic validation.
     ///
-    /// // SAFETY: Caller guarantees the scalar follows the surrounding domain invariants.
-    #[inline(always)]
+    /// # Safety
+    ///
+    /// The caller must guarantee that `value` respects the domain invariants
+    /// of [`LearningRate`] (i.e. a finite scalar valid as a learning rate).
+    #[inline]
     pub const unsafe fn new_unchecked(value: f64) -> Self {
         Self(value)
     }
 
     /// Returns the scalar representation.
-    #[inline(always)]
+    #[inline]
     pub const fn as_f64(self) -> f64 {
         self.0
     }
