@@ -25,6 +25,19 @@ use smallvec::SmallVec;
 pub(crate) const SLAB_LANES: usize = 8;
 pub(crate) const SLAB_DIM: usize = CLIFFORD_BASIS_SIZE;
 pub(crate) const BLOCK_STRIDE: usize = SLAB_DIM * SLAB_LANES;
+const GRADE3_GRADE4_MASK: u16 =
+    (1u16 << 7) | (1u16 << 11) | (1u16 << 13) | (1u16 << 14) | (1u16 << 15);
+const HIGH_GRADE_DIMENSIONS: [usize; 5] = [7, 11, 13, 14, 15];
+const BASE_APPROX_PRECISION_THRESHOLD: f64 = 2.5e-2;
+const MIN_APPROX_PRECISION_THRESHOLD: f64 = 1.0e-8;
+const MAX_APPROX_PRECISION_THRESHOLD: f64 = 2.5e-1;
+const ESCAPE_RATE_TARGET: f64 = 0.99;
+const THRESHOLD_INCREASE_ALPHA: f64 = 2.5e-4;
+const THRESHOLD_DECREASE_BETA: f64 = 1.0e-3;
+const EMA_SMOOTHING_FACTOR: f64 = 0.01;
+const RECALL_DROP_SAFETY_FLOOR: f64 = 1.0e-6;
+const ESCAPE_AUDIT_STRIDE: u64 = 1024;
+const RECALL_AUDIT_REL_TOLERANCE: f64 = 0.02;
 const MAX_FIXED_HEAP_CAPACITY: usize = 512;
 const INITIAL_NODE_CAPACITY: usize = 1024;
 const INITIAL_SLAB_BLOCK_CAPACITY: usize = INITIAL_NODE_CAPACITY.div_ceil(SLAB_LANES);
@@ -239,19 +252,59 @@ const fn ordered_f64_bits(value: f64) -> u64 {
     bits ^ (mask | (1_u64 << 63))
 }
 
+#[inline]
+fn adaptive_precision_threshold_from_vfe(base_threshold: f64, vfe: f64) -> f64 {
+    let sanitized_vfe = if vfe.is_finite() && vfe > 0.0 { vfe } else { 1.0 };
+    (base_threshold / (1.0 + sanitized_vfe)).max(MIN_APPROX_PRECISION_THRESHOLD)
+}
+
+#[derive(Clone, Copy)]
+struct SlabDistanceBatch {
+    distances: [f32; SLAB_LANES],
+    escape_mask: u8,
+}
+
 fn slab_distance_scalar(
     slab_ptr: *const f32,
     block: usize,
     query_f32: &[f32; SLAB_DIM],
-) -> [f32; SLAB_LANES] {
+    approx_threshold_sq: f32,
+) -> SlabDistanceBatch {
     let mut out = [0.0_f32; SLAB_LANES];
+    let mut escape_mask = 0u8;
     let block_base = block * BLOCK_STRIDE;
+    let scalar_weight = METRIC_WEIGHTS[0] as f32;
     let mut lane = 0;
     while lane < SLAB_LANES {
         // SAFETY: `block_base + lane` is in bounds for the same reason as the loop below.
         let dim0 = unsafe { *slab_ptr.add(block_base + lane) };
-        let diff0 = f64::from(query_f32[0] - dim0);
-        let mut acc = METRIC_WEIGHTS[0] * diff0 * diff0;
+        let diff0 = query_f32[0] - dim0;
+        let mut acc = scalar_weight * diff0 * diff0;
+        if approx_threshold_sq > 0.0 {
+            // HOT PATH: O(1), called per layer-0 candidate lane.
+            let mut high_grade_energy = 0.0f32;
+            let mut hg = 0usize;
+            while hg < HIGH_GRADE_DIMENSIONS.len() {
+                let d = HIGH_GRADE_DIMENSIONS[hg];
+                let offset = block_base + d * SLAB_LANES + lane;
+                // SAFETY: same bounds/alignment guarantees as dense loop below.
+                let v = unsafe { *slab_ptr.add(offset) };
+                let delta = query_f32[d] - v;
+                high_grade_energy =
+                    (delta * delta).mul_add(METRIC_WEIGHTS[d] as f32, high_grade_energy);
+                hg += 1;
+            }
+            if high_grade_energy <= approx_threshold_sq {
+                out[lane] = if dim0.is_nan() || !acc.is_finite() {
+                    f32::INFINITY
+                } else {
+                    acc
+                };
+                escape_mask |= 1u8 << lane;
+                lane += 1;
+                continue;
+            }
+        }
         let mut d = 1;
         while d < SLAB_DIM {
             let offset = block_base + d * SLAB_LANES + lane;
@@ -260,18 +313,21 @@ fn slab_distance_scalar(
             // and `offset < blocks * BLOCK_STRIDE` for all `d < SLAB_DIM` and
             // `lane < SLAB_LANES`. Search reads through `&self`, so no mutable alias exists.
             let v = unsafe { *slab_ptr.add(offset) };
-            let diff = f64::from(query_f32[d] - v);
-            acc = METRIC_WEIGHTS[d].mul_add(diff * diff, acc);
+            let diff = query_f32[d] - v;
+            acc = (METRIC_WEIGHTS[d] as f32).mul_add(diff * diff, acc);
             d += 1;
         }
         out[lane] = if dim0.is_nan() || !acc.is_finite() {
             f32::INFINITY
         } else {
-            acc as f32
+            acc
         };
         lane += 1;
     }
-    out
+    SlabDistanceBatch {
+        distances: out,
+        escape_mask,
+    }
 }
 
 #[cfg(all(
@@ -284,10 +340,12 @@ unsafe fn slab_distance_avx2(
     slab_ptr: *const f32,
     block: usize,
     query_f32: &[f32; SLAB_DIM],
-) -> [f32; SLAB_LANES] {
+    approx_threshold_sq: f32,
+) -> SlabDistanceBatch {
     use std::arch::x86_64::{
-        _mm256_add_ps, _mm256_fmadd_ps, _mm256_load_ps, _mm256_mul_ps, _mm256_set1_ps,
-        _mm256_setzero_ps, _mm256_storeu_ps, _mm256_sub_ps,
+        _CMP_LE_OQ, _mm256_add_ps, _mm256_cmp_ps, _mm256_fmadd_ps, _mm256_load_ps,
+        _mm256_movemask_ps, _mm256_mul_ps, _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps,
+        _mm256_sub_ps,
     };
 
     macro_rules! fused_dim4 {
@@ -316,6 +374,34 @@ unsafe fn slab_distance_avx2(
     }
 
     let block_base = unsafe { slab_ptr.add(block * BLOCK_STRIDE) };
+    let q0 = _mm256_set1_ps(query_f32[0]);
+    let w0 = _mm256_set1_ps(METRIC_WEIGHTS_F32[0]);
+    let dim0 = _mm256_load_ps(block_base);
+    let delta0 = _mm256_sub_ps(q0, dim0);
+    let scalar_projection = _mm256_mul_ps(w0, _mm256_mul_ps(delta0, delta0));
+    if approx_threshold_sq > 0.0 {
+        let mut high_grade_acc = _mm256_setzero_ps();
+        let mut hg = 0usize;
+        while hg < HIGH_GRADE_DIMENSIONS.len() {
+            let d = HIGH_GRADE_DIMENSIONS[hg];
+            let q = _mm256_set1_ps(query_f32[d]);
+            let w = _mm256_set1_ps(METRIC_WEIGHTS_F32[d]);
+            let v = _mm256_load_ps(block_base.add(d * SLAB_LANES));
+            let delta = _mm256_sub_ps(q, v);
+            high_grade_acc = _mm256_fmadd_ps(w, _mm256_mul_ps(delta, delta), high_grade_acc);
+            hg += 1;
+        }
+        let threshold = _mm256_set1_ps(approx_threshold_sq);
+        let cmp = _mm256_cmp_ps(high_grade_acc, threshold, _CMP_LE_OQ);
+        if _mm256_movemask_ps(cmp) == 0xFF {
+            let mut out = [0.0_f32; SLAB_LANES];
+            _mm256_storeu_ps(out.as_mut_ptr(), scalar_projection);
+            return SlabDistanceBatch {
+                distances: out,
+                escape_mask: u8::MAX,
+            };
+        }
+    }
     let mut acc0 = _mm256_setzero_ps();
     let mut acc1 = _mm256_setzero_ps();
     let mut acc2 = _mm256_setzero_ps();
@@ -343,7 +429,10 @@ unsafe fn slab_distance_avx2(
         }
         lane += 1;
     }
-    out
+    SlabDistanceBatch {
+        distances: out,
+        escape_mask: 0,
+    }
 }
 
 /// Inline helper for layer-0 slab distance computation in hot search paths.
@@ -356,7 +445,8 @@ fn slab_distance(
     slab_ptr: *const f32,
     block: usize,
     query_f32: &[f32; SLAB_DIM],
-) -> [f32; SLAB_LANES] {
+    approx_threshold_sq: f32,
+) -> SlabDistanceBatch {
     #[cfg(all(
         target_arch = "x86_64",
         target_feature = "avx2",
@@ -365,7 +455,7 @@ fn slab_distance(
     {
         // SAFETY: target-feature gated at compile time, pointer invariants are
         // enforced by the caller and match the kernel requirements.
-        return unsafe { slab_distance_avx2(slab_ptr, block, query_f32) };
+        return unsafe { slab_distance_avx2(slab_ptr, block, query_f32, approx_threshold_sq) };
     }
     #[cfg(not(all(
         target_arch = "x86_64",
@@ -373,7 +463,7 @@ fn slab_distance(
         target_feature = "fma"
     )))]
     {
-        slab_distance_scalar(slab_ptr, block, query_f32)
+        slab_distance_scalar(slab_ptr, block, query_f32, approx_threshold_sq)
     }
 }
 
@@ -1037,6 +1127,22 @@ pub struct HnswGraph {
     live_nodes: usize,
     /// Persistent block-major SoA storage for layer-0 vectors.
     layer0_soa: HnswLayer0Slab,
+    /// VFE reference used to scale adaptive low-precision threshold in layer-0 kernels.
+    adaptive_vfe_bits: AtomicU64,
+    /// Tunable base threshold for low-precision escape controller.
+    adaptive_base_threshold_bits: AtomicU64,
+    /// Number of candidates evaluated in low-precision escape controller.
+    escape_total_count: AtomicU64,
+    /// Number of escaped candidates without audited recall degradation.
+    escape_success_count: AtomicU64,
+    /// Number of escaped candidates that failed exact-audit tolerance.
+    recall_drop_count: AtomicU64,
+    /// EMA of escape-rate observations.
+    ema_escape_rate_bits: AtomicU64,
+    /// EMA of recall-drop observations.
+    ema_recall_drop_bits: AtomicU64,
+    /// Previous EMA escape rate used by derivative controller term.
+    prev_escape_rate_bits: AtomicU64,
     #[cfg(test)]
     fail_preinsert_index_conversion: bool,
 }
@@ -1060,6 +1166,25 @@ impl Clone for HnswGraph {
                 blocks: self.layer0_soa.blocks.clone(),
                 node_to_slab: Arc::clone(&self.layer0_soa.node_to_slab),
             },
+            adaptive_vfe_bits: AtomicU64::new(self.adaptive_vfe_bits.load(AtomicOrdering::Relaxed)),
+            adaptive_base_threshold_bits: AtomicU64::new(
+                self.adaptive_base_threshold_bits
+                    .load(AtomicOrdering::Relaxed),
+            ),
+            escape_total_count: AtomicU64::new(self.escape_total_count.load(AtomicOrdering::Relaxed)),
+            escape_success_count: AtomicU64::new(
+                self.escape_success_count.load(AtomicOrdering::Relaxed),
+            ),
+            recall_drop_count: AtomicU64::new(self.recall_drop_count.load(AtomicOrdering::Relaxed)),
+            ema_escape_rate_bits: AtomicU64::new(
+                self.ema_escape_rate_bits.load(AtomicOrdering::Relaxed),
+            ),
+            ema_recall_drop_bits: AtomicU64::new(
+                self.ema_recall_drop_bits.load(AtomicOrdering::Relaxed),
+            ),
+            prev_escape_rate_bits: AtomicU64::new(
+                self.prev_escape_rate_bits.load(AtomicOrdering::Relaxed),
+            ),
             #[cfg(test)]
             fail_preinsert_index_conversion: self.fail_preinsert_index_conversion,
         }
@@ -1138,6 +1263,14 @@ impl HnswGraph {
                 blocks: Vec::with_capacity(INITIAL_SLAB_BLOCK_CAPACITY),
                 node_to_slab: Arc::new(Vec::with_capacity(INITIAL_NODE_CAPACITY)),
             },
+            adaptive_vfe_bits: AtomicU64::new(0),
+            adaptive_base_threshold_bits: AtomicU64::new(BASE_APPROX_PRECISION_THRESHOLD.to_bits()),
+            escape_total_count: AtomicU64::new(0),
+            escape_success_count: AtomicU64::new(0),
+            recall_drop_count: AtomicU64::new(0),
+            ema_escape_rate_bits: AtomicU64::new(0.0f64.to_bits()),
+            ema_recall_drop_bits: AtomicU64::new(0.0f64.to_bits()),
+            prev_escape_rate_bits: AtomicU64::new(0.0f64.to_bits()),
             #[cfg(test)]
             fail_preinsert_index_conversion: false,
         }
@@ -1189,9 +1322,173 @@ impl HnswGraph {
                 blocks: self.layer0_soa.blocks.clone(),
                 node_to_slab,
             },
+            adaptive_vfe_bits: AtomicU64::new(self.adaptive_vfe_bits.load(AtomicOrdering::Relaxed)),
+            adaptive_base_threshold_bits: AtomicU64::new(
+                self.adaptive_base_threshold_bits
+                    .load(AtomicOrdering::Relaxed),
+            ),
+            escape_total_count: AtomicU64::new(self.escape_total_count.load(AtomicOrdering::Relaxed)),
+            escape_success_count: AtomicU64::new(
+                self.escape_success_count.load(AtomicOrdering::Relaxed),
+            ),
+            recall_drop_count: AtomicU64::new(self.recall_drop_count.load(AtomicOrdering::Relaxed)),
+            ema_escape_rate_bits: AtomicU64::new(
+                self.ema_escape_rate_bits.load(AtomicOrdering::Relaxed),
+            ),
+            ema_recall_drop_bits: AtomicU64::new(
+                self.ema_recall_drop_bits.load(AtomicOrdering::Relaxed),
+            ),
+            prev_escape_rate_bits: AtomicU64::new(
+                self.prev_escape_rate_bits.load(AtomicOrdering::Relaxed),
+            ),
             #[cfg(test)]
             fail_preinsert_index_conversion: self.fail_preinsert_index_conversion,
         }
+    }
+
+    /// Updates VFE-controlled adaptive precision for layer-0 distance dispatch.
+    ///
+    /// AX-ID: AXIOMA-003, AXIOMA-013, H_información (LEY_FUNDACIONAL §3.3)
+    pub fn set_adaptive_precision_vfe(&self, vfe: f64) {
+        let sanitized = if vfe.is_finite() && vfe > 0.0 { vfe } else { 1.0 };
+        self.adaptive_vfe_bits
+            .store(sanitized.to_bits(), AtomicOrdering::Relaxed);
+    }
+
+    /// Returns the current adaptive precision threshold for grade-3/4 residual energy.
+    ///
+    /// AX-ID: AXIOMA-003, AXIOMA-013
+    #[inline]
+    pub fn adaptive_precision_threshold(&self) -> f64 {
+        let raw = self.adaptive_vfe_bits.load(AtomicOrdering::Relaxed);
+        if raw == 0 {
+            return 0.0;
+        }
+        adaptive_precision_threshold_from_vfe(self.base_approx_precision_threshold(), f64::from_bits(raw))
+    }
+
+    #[inline(always)]
+    fn adaptive_precision_threshold_sq_f32(&self) -> f32 {
+        let thr = self.adaptive_precision_threshold() as f32;
+        thr * thr
+    }
+
+    /// Current tunable base threshold for low-precision escape policy.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura (LEY_FUNDACIONAL §3.1)
+    #[inline]
+    pub fn base_approx_precision_threshold(&self) -> f64 {
+        f64::from_bits(
+            self.adaptive_base_threshold_bits
+                .load(AtomicOrdering::Relaxed),
+        )
+    }
+
+    /// Number of candidates processed by the low-precision escape controller.
+    ///
+    /// AX-ID: AXIOMA-013
+    #[inline]
+    pub fn escape_total_count(&self) -> u64 {
+        self.escape_total_count.load(AtomicOrdering::Relaxed)
+    }
+
+    /// Number of escaped candidates accepted as successful.
+    ///
+    /// AX-ID: AXIOMA-013
+    #[inline]
+    pub fn escape_success_count(&self) -> u64 {
+        self.escape_success_count.load(AtomicOrdering::Relaxed)
+    }
+
+    /// Number of escaped candidates flagged with recall-drop audit mismatch.
+    ///
+    /// AX-ID: AXIOMA-013
+    #[inline]
+    pub fn recall_drop_count(&self) -> u64 {
+        self.recall_drop_count.load(AtomicOrdering::Relaxed)
+    }
+
+    /// EMA-smoothed escape-rate used by the controller.
+    ///
+    /// AX-ID: AXIOMA-013
+    #[inline]
+    pub fn ema_escape_rate(&self) -> f64 {
+        f64::from_bits(self.ema_escape_rate_bits.load(AtomicOrdering::Relaxed))
+    }
+
+    /// EMA-smoothed recall-drop rate used by the controller.
+    ///
+    /// AX-ID: AXIOMA-013
+    #[inline]
+    pub fn ema_recall_drop_rate(&self) -> f64 {
+        f64::from_bits(self.ema_recall_drop_bits.load(AtomicOrdering::Relaxed))
+    }
+
+    #[inline(always)]
+    fn update_ema(ema_bits: &AtomicU64, observation: f64) -> f64 {
+        let mut current_bits = ema_bits.load(AtomicOrdering::Relaxed);
+        loop {
+            let current = f64::from_bits(current_bits);
+            let updated =
+                (1.0 - EMA_SMOOTHING_FACTOR).mul_add(current, EMA_SMOOTHING_FACTOR * observation);
+            let updated_bits = updated.to_bits();
+            match ema_bits.compare_exchange_weak(
+                current_bits,
+                updated_bits,
+                AtomicOrdering::Relaxed,
+                AtomicOrdering::Relaxed,
+            ) {
+                Ok(_) => return updated,
+                Err(actual) => current_bits = actual,
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn tune_escape_threshold_pd(&self, ema_escape_rate: f64, ema_recall_drop: f64) {
+        let previous_escape = f64::from_bits(
+            self.prev_escape_rate_bits
+                .swap(ema_escape_rate.to_bits(), AtomicOrdering::Relaxed),
+        );
+        let delta_escape = ema_escape_rate - previous_escape;
+        let adaptive_alpha = THRESHOLD_INCREASE_ALPHA * (1.0 + delta_escape.abs());
+        let increase_step = if ema_escape_rate > ESCAPE_RATE_TARGET
+            && ema_recall_drop <= RECALL_DROP_SAFETY_FLOOR
+        {
+            adaptive_alpha
+        } else {
+            0.0
+        };
+        let decrease_step = THRESHOLD_DECREASE_BETA * ema_recall_drop;
+        let mut base = self.base_approx_precision_threshold();
+        if decrease_step > 0.0 {
+            base = (base - decrease_step).max(MIN_APPROX_PRECISION_THRESHOLD);
+        } else if increase_step > 0.0 {
+            base = (base + increase_step).min(MAX_APPROX_PRECISION_THRESHOLD);
+        }
+        self.adaptive_base_threshold_bits
+            .store(base.to_bits(), AtomicOrdering::Relaxed);
+    }
+
+    #[inline(always)]
+    fn record_controller_observation(&self, escaped: bool, recall_drop: bool) {
+        let escape_obs = if escaped { 1.0 } else { 0.0 };
+        let recall_obs = if recall_drop { 1.0 } else { 0.0 };
+        let ema_escape = Self::update_ema(&self.ema_escape_rate_bits, escape_obs);
+        let ema_recall = Self::update_ema(&self.ema_recall_drop_bits, recall_obs);
+        self.tune_escape_threshold_pd(ema_escape, ema_recall);
+    }
+
+    #[inline(always)]
+    fn record_escape_result(&self, escaped: bool, recall_drop: bool) {
+        self.escape_total_count.fetch_add(1, AtomicOrdering::Relaxed);
+        if escaped && !recall_drop {
+            self.escape_success_count.fetch_add(1, AtomicOrdering::Relaxed);
+        }
+        if recall_drop {
+            self.recall_drop_count.fetch_add(1, AtomicOrdering::Relaxed);
+        }
+        self.record_controller_observation(escaped, recall_drop);
     }
 
     fn prevalidate_internal_idx_u32(new_idx: usize) -> Result<u32, GenesisError> {
@@ -1637,8 +1934,64 @@ impl HnswGraph {
         if slab_ptr.is_null() {
             return f64::INFINITY;
         }
-        let distances = slab_distance(slab_ptr, block, query_f32);
-        f64::from(distances[lane])
+        let node_mask = self.nodes[idx].vec.active_mask;
+        let base_threshold_sq = self.adaptive_precision_threshold_sq_f32();
+        let approx_threshold_sq = if base_threshold_sq > 0.0 && (node_mask & GRADE3_GRADE4_MASK) == 0 {
+            f32::INFINITY
+        } else {
+            base_threshold_sq
+        };
+        let batch = slab_distance(slab_ptr, block, query_f32, approx_threshold_sq);
+        let approx = f64::from(batch.distances[lane]);
+        if (batch.escape_mask & (1u8 << lane)) != 0 {
+            let recall_drop = if self.should_audit_escape() {
+                let exact = self.layer0_exact_distance_sq(query_f32, block, lane, slab_ptr);
+                self.recall_drop_detected(approx, exact)
+            } else {
+                false
+            };
+            self.record_escape_result(true, recall_drop);
+        } else {
+            self.record_escape_result(false, false);
+        }
+        approx
+    }
+
+    #[inline(always)]
+    fn recall_drop_detected(&self, approx_dist_sq: f64, exact_dist_sq: f64) -> bool {
+        let tolerance = RECALL_AUDIT_REL_TOLERANCE.mul_add(exact_dist_sq.abs(), 1.0e-12);
+        approx_dist_sq + tolerance < exact_dist_sq
+    }
+
+    #[inline(always)]
+    fn should_audit_escape(&self) -> bool {
+        self.escape_total_count
+            .load(AtomicOrdering::Relaxed)
+            .wrapping_add(1)
+            % ESCAPE_AUDIT_STRIDE
+            == 0
+    }
+
+    #[inline(always)]
+    fn layer0_exact_distance_sq(
+        &self,
+        query_f32: &[f32; SLAB_DIM],
+        block: usize,
+        lane: usize,
+        slab_ptr: *const f32,
+    ) -> f64 {
+        let block_base = block * BLOCK_STRIDE;
+        let mut acc = 0.0f64;
+        let mut d = 0usize;
+        while d < SLAB_DIM {
+            let offset = block_base + d * SLAB_LANES + lane;
+            // SAFETY: caller guarantees `block` and `lane` are within slab bounds.
+            let v = unsafe { *slab_ptr.add(offset) };
+            let delta = f64::from(query_f32[d] - v);
+            acc = METRIC_WEIGHTS[d].mul_add(delta * delta, acc);
+            d += 1;
+        }
+        if acc.is_finite() { acc } else { f64::INFINITY }
     }
 
     fn distance_to_node(&self, query: &SparseCliffordVector, idx: usize, layer: usize) -> f64 {
@@ -1735,6 +2088,7 @@ impl HnswGraph {
                 let mut candidates = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
                 let mut results = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
                 let query_f32 = Self::dense_to_query_f32(query);
+                let approx_threshold_sq = self.adaptive_precision_threshold_sq_f32();
                 let slab_ptr = self.layer0_slab_ptr();
                 let slab_blocks = self.layer0_soa.blocks.len();
                 let nodes_len = self.nodes.len();
@@ -1765,7 +2119,8 @@ impl HnswGraph {
                             debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
                             // SAFETY: `block < slab_blocks`, slab is persistently materialized and
                             // 64-byte aligned; query buffer has fixed 16-lane shape.
-                            let distances = slab_distance(slab_ptr, block, &query_f32);
+                            let batch =
+                                slab_distance(slab_ptr, block, &query_f32, approx_threshold_sq);
                             let mut effective_mask = group.lane_mask;
                             let mut m = group.lane_mask;
                             while m != 0 {
@@ -1783,7 +2138,23 @@ impl HnswGraph {
                                     | !original_bit;
                                 if (effective_mask & original_bit) != 0 {
                                     visited[nb_idx] = search_epoch;
-                                    let d = distances[lane];
+                                    let d = batch.distances[lane];
+                                    if (batch.escape_mask & original_bit) != 0 {
+                                        let recall_drop = if self.should_audit_escape() {
+                                            let exact = self.layer0_exact_distance_sq(
+                                                &query_f32,
+                                                block,
+                                                lane,
+                                                slab_ptr,
+                                            );
+                                            self.recall_drop_detected(f64::from(d), exact)
+                                        } else {
+                                            false
+                                        };
+                                        self.record_escape_result(true, recall_drop);
+                                    } else {
+                                        self.record_escape_result(false, false);
+                                    }
                                     if results.push_or_replace(d, nb_idx as u32) {
                                         candidates.push_or_replace(d, nb_idx as u32);
                                     }
@@ -1844,6 +2215,7 @@ impl HnswGraph {
                 let mut candidates = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
                 let mut results = FixedHeap::<MAX_FIXED_HEAP_CAPACITY>::new(limit);
                 let query_f32 = Self::dense_to_query_f32(query);
+                let approx_threshold_sq = self.adaptive_precision_threshold_sq_f32();
                 let slab_ptr = self.layer0_slab_ptr();
                 let slab_blocks = self.layer0_soa.blocks.len();
                 let nodes_len = self.nodes.len();
@@ -1873,7 +2245,8 @@ impl HnswGraph {
                             debug_assert_eq!(slab_ptr as usize % 64, 0, "slab alignment");
                             // SAFETY: `block < slab_blocks`, slab is persistently materialized and
                             // 64-byte aligned; query buffer has fixed 16-lane shape.
-                            let distances = slab_distance(slab_ptr, block, &query_f32);
+                            let batch =
+                                slab_distance(slab_ptr, block, &query_f32, approx_threshold_sq);
                             let mut effective_mask = group.lane_mask;
                             let mut m = group.lane_mask;
                             while m != 0 {
@@ -1891,7 +2264,23 @@ impl HnswGraph {
                                     | !original_bit;
                                 if (effective_mask & original_bit) != 0 {
                                     visited[nb_idx] = search_epoch;
-                                    let d = distances[lane];
+                                    let d = batch.distances[lane];
+                                    if (batch.escape_mask & original_bit) != 0 {
+                                        let recall_drop = if self.should_audit_escape() {
+                                            let exact = self.layer0_exact_distance_sq(
+                                                &query_f32,
+                                                block,
+                                                lane,
+                                                slab_ptr,
+                                            );
+                                            self.recall_drop_detected(f64::from(d), exact)
+                                        } else {
+                                            false
+                                        };
+                                        self.record_escape_result(true, recall_drop);
+                                    } else {
+                                        self.record_escape_result(false, false);
+                                    }
                                     *work_count += 1;
                                     if results.push_or_replace(d, nb_idx as u32) {
                                         candidates.push_or_replace(d, nb_idx as u32);
@@ -2629,11 +3018,79 @@ mod tests {
         }
         let slab_ptr = graph.layer0_slab_ptr();
         let query_f32 = HnswGraph::dense_to_query_f32(&query);
-        let distances = slab_distance_scalar(slab_ptr, 0, &query_f32);
-        for (slot, distance) in distances.iter().enumerate() {
+        let distances = slab_distance_scalar(slab_ptr, 0, &query_f32, 0.0);
+        for (slot, distance) in distances.distances.iter().enumerate() {
             let scalar = fast_metric_distance_sq(&query, &graph.nodes[slot].vec);
             assert!((f64::from(*distance) - scalar).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn adaptive_precision_threshold_is_inverse_to_vfe() {
+        let graph = HnswGraph::new(16);
+        graph.set_adaptive_precision_vfe(0.1);
+        let low_vfe_threshold = graph.adaptive_precision_threshold();
+        graph.set_adaptive_precision_vfe(100.0);
+        let high_vfe_threshold = graph.adaptive_precision_threshold();
+        assert!(low_vfe_threshold > high_vfe_threshold);
+    }
+
+    #[test]
+    fn escape_controller_increases_base_threshold_when_escape_rate_is_high() {
+        let graph = HnswGraph::new(16);
+        let start = graph.base_approx_precision_threshold();
+        for _ in 0..10_000 {
+            graph.record_escape_result(true, false);
+        }
+        let tuned = graph.base_approx_precision_threshold();
+        assert!(tuned > start);
+    }
+
+    #[test]
+    fn escape_controller_decreases_base_threshold_on_recall_drop() {
+        let graph = HnswGraph::new(16);
+        graph
+            .adaptive_base_threshold_bits
+            .store(0.05f64.to_bits(), AtomicOrdering::Relaxed);
+        for _ in 0..2048 {
+            graph.record_escape_result(true, false);
+        }
+        for _ in 0..1024 {
+            graph.record_escape_result(true, true);
+        }
+        let tuned = graph.base_approx_precision_threshold();
+        assert!(tuned < 0.05);
+        assert!(THRESHOLD_DECREASE_BETA > THRESHOLD_INCREASE_ALPHA);
+    }
+
+    #[test]
+    fn slab_distance_uses_scalar_projection_when_high_grade_is_negligible() {
+        let query_dense = {
+            let mut values = [0.0; 16];
+            values[0] = 2.0;
+            values[7] = 1.0e-4;
+            values[11] = -1.0e-4;
+            values[13] = 1.0e-4;
+            values[14] = -1.0e-4;
+            values[15] = 1.0e-4;
+            values
+        };
+        let query = SparseCliffordVector::from_dense(&query_dense).expect("finite query");
+        let mut graph = HnswGraph::new(16);
+        graph
+            .insert(
+                make_id(0),
+                &SparseCliffordVector::from_dense(&[0.0; 16]).expect("finite vec"),
+            )
+            .expect("insert");
+
+        let slab_ptr = graph.layer0_slab_ptr();
+        let query_f32 = HnswGraph::dense_to_query_f32(&query);
+        let threshold = (BASE_APPROX_PRECISION_THRESHOLD as f32).powi(2);
+        let distances = slab_distance_scalar(slab_ptr, 0, &query_f32, threshold);
+        let expected = (METRIC_WEIGHTS[0] as f32) * query_f32[0] * query_f32[0];
+        assert!((distances.distances[0] - expected).abs() < 1e-6);
+        assert_ne!(distances.escape_mask & 0b1, 0);
     }
 
     #[test]

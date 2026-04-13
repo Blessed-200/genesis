@@ -2162,3 +2162,84 @@ Performance evidence checklist:
 - `cargo check --workspace`
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.29 CRATE-002/001 Adaptive low-precision escape path for HNSW metric dispatch (2026-04-13)
+
+### Root cause
+
+- Layer-0 HNSW distance kernels always evaluate all 16 blades, even when high-grade (3/4) channels are numerically negligible for current inference confidence.
+- No runtime coupling exists between variational confidence (VFE) and metric precision, so the hot path cannot trade precision for throughput when the system is in a low-VFE regime.
+- Dense metric dispatch lacks a scalar-projection short-circuit analogous to product CS gate behavior for approximate-computing scenarios.
+
+### File-level actions
+
+1. `core/genesis-topology/src/hnsw.rs`
+   - Add adaptive-precision control state to `HnswGraph` (`adaptive_vfe_bits`) and public setter/getter APIs.
+   - Introduce grade-3/4 bitmask constants and adaptive threshold derivation (`threshold ∝ 1/(1+VFE)`).
+   - Extend layer-0 slab distance kernels (scalar + AVX2) with a low-precision escape path:
+     - fast high-grade activity prefilter using `active_mask` bits,
+     - SIMD/scalar evaluation of high-grade energy against per-search threshold,
+     - scalar projection fallback returning only grade-0 contribution when negligible.
+   - Thread adaptive threshold through layer-0 distance call sites (`distance_to_layer0_node_sq`, beam search loops).
+   - Add tests validating threshold monotonicity and scalar-projection fallback semantics.
+2. `core/genesis-topology/benches/hnsw_hotpaths.rs`
+   - Add benchmark group comparing baseline-like full precision vs adaptive escape-enabled layer-0 search path.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-topology --bench hnsw_hotpaths -- low_precision_escape --output-format bencher`
+
+## 1.31 CRATE-002 Self-tuning low-precision escape controller for HNSW (2026-04-13)
+
+### Root cause
+
+- The low-precision escape path is currently open-loop: it has no feedback counters to quantify successful escapes or quality regressions.
+- `BASE_APPROX_PRECISION_THRESHOLD` is fixed at compile-time, so runtime workloads cannot push throughput to the highest safe operating point.
+- No online control rule applies the requested policy (`escape_rate > 0.99 => +α`, recall-drop => `-β`, with `β > α`) to automatically regulate precision.
+
+### File-level actions
+
+1. `core/genesis-topology/src/hnsw.rs`
+   - Add lock-free counters (`escape_total`, `escape_success`, `recall_drop`) and adaptive base-threshold state (`adaptive_base_threshold_bits`) to `HnswGraph`.
+   - Extend slab distance dispatch return type with per-lane escape mask to identify which candidates used the low-precision branch.
+   - Add exact-distance audit sampler for escaped lanes and mark recall-drop when approximation error exceeds a conservative bound.
+   - Implement self-tuning controller with required policy:
+     - if `escape_rate > 0.99` and no recall drop in window → increase base threshold by `α`
+     - if recall drop detected → decrease by `β` (`β > α`)
+   - Add public telemetry getters for counters/threshold and tests for auto-increment/decrement behavior.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-topology -- hnsw --output-format bencher`
+
+## 1.32 CRATE-002 EMA + PD self-tuning escape controller refinement (2026-04-13)
+
+### Root cause
+
+- The current self-tuning loop is discrete/window-based and reacts in coarse bursts, which delays adaptation under workload drift.
+- Controller updates do not currently use a derivative signal from escape-rate dynamics, limiting stability near the throughput/quality frontier.
+- Requested policy requires continuous EMA tracking with proportional+derivative style control while keeping lock-free atomic hot-path constraints.
+
+### File-level actions
+
+1. `core/genesis-topology/src/hnsw.rs`
+   - Replace window reset logic with atomic EMA state (`ema_escape_rate`, `ema_recall_drop`, `prev_escape_rate`).
+   - Implement lock-free EMA update helper and PD-style threshold control:
+     - `+alpha * (1 + |Δescape_rate|)` when EMA escape-rate is high and recall-drop EMA remains low.
+     - `-beta * ema_recall_drop` when recall-drop EMA indicates quality pressure.
+   - Preserve bounds and monotonic safety (no positive step when recall pressure is present).
+   - Keep slab SIMD/scalar kernels unchanged (no added branches) and limit changes to controller bookkeeping paths.
+   - Update tests for continuous controller behavior.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+- `cargo bench -p genesis-topology -- hnsw`
