@@ -1942,18 +1942,12 @@ impl HnswGraph {
             base_threshold_sq
         };
         let batch = slab_distance(slab_ptr, block, query_f32, approx_threshold_sq);
-        let approx = f64::from(batch.distances[lane]);
-        if (batch.escape_mask & (1u8 << lane)) != 0 {
-            let recall_drop = if self.should_audit_escape() {
-                let exact = self.layer0_exact_distance_sq(query_f32, block, lane, slab_ptr);
-                self.recall_drop_detected(approx, exact)
-            } else {
-                false
-            };
-            self.record_escape_result(true, recall_drop);
-        } else {
-            self.record_escape_result(false, false);
-        }
+        let d = batch.distances[lane];
+        let approx = f64::from(d);
+        let escape = (batch.escape_mask & (1u8 << lane)) != 0;
+        let audit = self.should_audit_escape();
+        let recall_drop = escape & self.compute_recall_drop(audit, d, query_f32, block, lane, slab_ptr);
+        self.record_escape_result(escape, recall_drop);
         approx
     }
 
@@ -1970,6 +1964,23 @@ impl HnswGraph {
             .wrapping_add(1)
             % ESCAPE_AUDIT_STRIDE
             == 0
+    }
+
+    #[inline(always)]
+    fn compute_recall_drop(
+        &self,
+        audit: bool,
+        d: f32,
+        query_f32: &[f32; SLAB_DIM],
+        block: usize,
+        lane: usize,
+        slab_ptr: *const f32,
+    ) -> bool {
+        if !audit {
+            return false;
+        }
+        let exact = self.layer0_exact_distance_sq(query_f32, block, lane, slab_ptr);
+        self.recall_drop_detected(f64::from(d), exact)
     }
 
     #[inline(always)]
@@ -2092,6 +2103,7 @@ impl HnswGraph {
                 let slab_ptr = self.layer0_slab_ptr();
                 let slab_blocks = self.layer0_soa.blocks.len();
                 let nodes_len = self.nodes.len();
+                let audit = self.should_audit_escape();
 
                 let d0 = self.distance_to_node_sq(query, entry_idx, layer) as f32;
                 visited[entry_idx] = search_epoch;
@@ -2121,7 +2133,6 @@ impl HnswGraph {
                             // 64-byte aligned; query buffer has fixed 16-lane shape.
                             let batch =
                                 slab_distance(slab_ptr, block, &query_f32, approx_threshold_sq);
-                            let mut effective_mask = group.lane_mask;
                             let mut m = group.lane_mask;
                             while m != 0 {
                                 let lane_u8 = m.trailing_zeros() as u8;
@@ -2132,32 +2143,20 @@ impl HnswGraph {
                                     m &= m - 1;
                                     continue;
                                 }
-                                // Branch-free visited check: clears lane bit when visited, equivalent to `if visited[nb_idx] == search_epoch { continue; }`
-                                effective_mask &= ((visited[nb_idx] != search_epoch) as u8
-                                    * original_bit)
-                                    | !original_bit;
-                                if (effective_mask & original_bit) != 0 {
-                                    visited[nb_idx] = search_epoch;
-                                    let d = batch.distances[lane];
-                                    if (batch.escape_mask & original_bit) != 0 {
-                                        let recall_drop = if self.should_audit_escape() {
-                                            let exact = self.layer0_exact_distance_sq(
-                                                &query_f32,
-                                                block,
-                                                lane,
-                                                slab_ptr,
-                                            );
-                                            self.recall_drop_detected(f64::from(d), exact)
-                                        } else {
-                                            false
-                                        };
-                                        self.record_escape_result(true, recall_drop);
-                                    } else {
-                                        self.record_escape_result(false, false);
-                                    }
-                                    if results.push_or_replace(d, nb_idx as u32) {
-                                        candidates.push_or_replace(d, nb_idx as u32);
-                                    }
+                                if visited[nb_idx] == search_epoch {
+                                    m &= m - 1;
+                                    continue;
+                                }
+                                visited[nb_idx] = search_epoch;
+                                let d = batch.distances[lane];
+                                let escape = (batch.escape_mask & original_bit) != 0;
+                                let recall_drop = escape
+                                    & self.compute_recall_drop(
+                                        audit, d, &query_f32, block, lane, slab_ptr,
+                                    );
+                                self.record_escape_result(escape, recall_drop);
+                                if results.push_or_replace(d, nb_idx as u32) {
+                                    candidates.push_or_replace(d, nb_idx as u32);
                                 }
                                 m &= m - 1;
                             }
@@ -2219,6 +2218,7 @@ impl HnswGraph {
                 let slab_ptr = self.layer0_slab_ptr();
                 let slab_blocks = self.layer0_soa.blocks.len();
                 let nodes_len = self.nodes.len();
+                let audit = self.should_audit_escape();
 
                 let d0 = self.distance_to_node_sq(query, entry_idx, layer) as f32;
                 *work_count += 1;
@@ -2247,7 +2247,6 @@ impl HnswGraph {
                             // 64-byte aligned; query buffer has fixed 16-lane shape.
                             let batch =
                                 slab_distance(slab_ptr, block, &query_f32, approx_threshold_sq);
-                            let mut effective_mask = group.lane_mask;
                             let mut m = group.lane_mask;
                             while m != 0 {
                                 let lane_u8 = m.trailing_zeros() as u8;
@@ -2258,33 +2257,21 @@ impl HnswGraph {
                                     m &= m - 1;
                                     continue;
                                 }
-                                // Branch-free visited check: clears lane bit when visited, equivalent to `if visited[nb_idx] == search_epoch { continue; }`
-                                effective_mask &= ((visited[nb_idx] != search_epoch) as u8
-                                    * original_bit)
-                                    | !original_bit;
-                                if (effective_mask & original_bit) != 0 {
-                                    visited[nb_idx] = search_epoch;
-                                    let d = batch.distances[lane];
-                                    if (batch.escape_mask & original_bit) != 0 {
-                                        let recall_drop = if self.should_audit_escape() {
-                                            let exact = self.layer0_exact_distance_sq(
-                                                &query_f32,
-                                                block,
-                                                lane,
-                                                slab_ptr,
-                                            );
-                                            self.recall_drop_detected(f64::from(d), exact)
-                                        } else {
-                                            false
-                                        };
-                                        self.record_escape_result(true, recall_drop);
-                                    } else {
-                                        self.record_escape_result(false, false);
-                                    }
-                                    *work_count += 1;
-                                    if results.push_or_replace(d, nb_idx as u32) {
-                                        candidates.push_or_replace(d, nb_idx as u32);
-                                    }
+                                if visited[nb_idx] == search_epoch {
+                                    m &= m - 1;
+                                    continue;
+                                }
+                                visited[nb_idx] = search_epoch;
+                                let d = batch.distances[lane];
+                                let escape = (batch.escape_mask & original_bit) != 0;
+                                let recall_drop = escape
+                                    & self.compute_recall_drop(
+                                        audit, d, &query_f32, block, lane, slab_ptr,
+                                    );
+                                self.record_escape_result(escape, recall_drop);
+                                *work_count += 1;
+                                if results.push_or_replace(d, nb_idx as u32) {
+                                    candidates.push_or_replace(d, nb_idx as u32);
                                 }
                                 m &= m - 1;
                             }
