@@ -69,26 +69,38 @@ pub(crate) const CLIFFORD_NORM_WEIGHTS_F64: [f64; TOTAL_BLADES] = {
     w
 };
 
-/// ⟨A·Ã⟩₀ with Kahan compensated summation.
+/// Compile-time mask containing all even-grade blades (k=0, 2, 4).
+pub const EVEN_GRADE_MASK: u16 = grade_mask::<0>() | grade_mask::<2>() | grade_mask::<4>();
+
+/// Compile-time mask containing all odd-grade blades (k=1, 3).
+pub const ODD_GRADE_MASK: u16 = grade_mask::<1>() | grade_mask::<3>();
+
+/// ⟨A·Ã⟩₀ with pairwise unrolled accumulation for fixed-size G(1,3) buffers.
 ///
-/// Kahan summation reduces floating-point error from O(n·ε) to O(ε)
-/// for the signed Lorentz metric accumulation. Critical for correct
-/// null-vector detection in G(1,3) where timelike and spacelike
-/// contributions partially cancel.
+/// Uses four independent accumulators to shorten dependency chains and expose
+/// instruction-level parallelism for OoO cores and LLVM vectorization.
 ///
 /// INVARIANT: result matches `derive_all_metadata` `clifford_norm_sq`.
 /// AX-ID: AXIOMA-001
 #[inline]
 pub fn compute_clifford_norm_sq(coeffs: &[f64; 16]) -> f64 {
-    let mut sum = 0.0f64;
-    let mut comp = 0.0f64;
-    for (coeff, w) in coeffs.iter().zip(CLIFFORD_NORM_WEIGHTS_F64.iter()) {
-        let y = (coeff * coeff).mul_add(*w, -comp);
-        let t = sum + y;
-        comp = (t - sum) - y;
-        sum = t;
+    let mut sum0 = 0.0f64;
+    let mut sum1 = 0.0f64;
+    let mut sum2 = 0.0f64;
+    let mut sum3 = 0.0f64;
+
+    for i in 0..4 {
+        let base = i * 4;
+        sum0 = (coeffs[base] * coeffs[base]).mul_add(CLIFFORD_NORM_WEIGHTS_F64[base], sum0);
+        sum1 = (coeffs[base + 1] * coeffs[base + 1])
+            .mul_add(CLIFFORD_NORM_WEIGHTS_F64[base + 1], sum1);
+        sum2 = (coeffs[base + 2] * coeffs[base + 2])
+            .mul_add(CLIFFORD_NORM_WEIGHTS_F64[base + 2], sum2);
+        sum3 = (coeffs[base + 3] * coeffs[base + 3])
+            .mul_add(CLIFFORD_NORM_WEIGHTS_F64[base + 3], sum3);
     }
-    sum
+
+    (sum0 + sum1) + (sum2 + sum3)
 }
 
 /// Clifford norm scalar: sqrt(|⟨A·Ã⟩₀|).
@@ -112,15 +124,18 @@ pub fn compute_clifford_norm(coeffs: &[f64; 16]) -> f64 {
 #[inline]
 pub fn grade_project(v: &SparseCliffordVector, grade: usize) -> SparseCliffordVector {
     debug_assert!(grade <= 4, "grade > 4 violates G(1,3) invariant");
-    #[allow(clippy::cast_possible_truncation)]
-    let g = grade as u8; // grade ≤ 4 (G(1,3) tiene grados 0..4)
+    const GRADE_MASKS: [u16; 5] = [
+        grade_mask::<0>(),
+        grade_mask::<1>(),
+        grade_mask::<2>(),
+        grade_mask::<3>(),
+        grade_mask::<4>(),
+    ];
     let mut buf = [0.0f64; 16];
-    let mut mask = v.active_mask;
+    let mut mask = v.active_mask & GRADE_MASKS[grade];
     while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        if GRADE_TABLE[i] == g {
-            buf[i] = v.coeffs[i];
-        }
+        let i = (mask.trailing_zeros() as usize) & 15;
+        buf[i] = v.coeffs[i];
         mask &= mask - 1;
     }
     SparseCliffordVector::from_dense_buf(&buf)
@@ -170,7 +185,7 @@ where
     let mut buf = [0.0f64; 16];
     let mut mask = v.active_mask & grade_mask::<G>();
     while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
+        let i = (mask.trailing_zeros() as usize) & 15;
         buf[i] = v.coeffs[i];
         mask &= mask - 1;
     }
@@ -183,12 +198,10 @@ where
 #[inline]
 pub fn even_grade(v: &SparseCliffordVector) -> SparseCliffordVector {
     let mut buf = [0.0f64; 16];
-    let mut mask = v.active_mask;
+    let mut mask = v.active_mask & EVEN_GRADE_MASK;
     while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        if (GRADE_TABLE[i] & 1) == 0 {
-            buf[i] = v.coeffs[i];
-        }
+        let i = (mask.trailing_zeros() as usize) & 15;
+        buf[i] = v.coeffs[i];
         mask &= mask - 1;
     }
     SparseCliffordVector::from_dense_buf(&buf)
@@ -198,13 +211,10 @@ pub fn even_grade(v: &SparseCliffordVector) -> SparseCliffordVector {
 #[inline]
 pub fn odd_grade(v: &SparseCliffordVector) -> SparseCliffordVector {
     let mut buf = [0.0f64; 16];
-    let mut mask = v.active_mask;
+    let mut mask = v.active_mask & ODD_GRADE_MASK;
     while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        // CRYSTAL: O62 — inevitable
-        if (GRADE_TABLE[i] & 1) == 1 {
-            buf[i] = v.coeffs[i];
-        }
+        let i = (mask.trailing_zeros() as usize) & 15;
+        buf[i] = v.coeffs[i];
         mask &= mask - 1;
     }
     SparseCliffordVector::from_dense_buf(&buf)
@@ -214,8 +224,8 @@ pub fn odd_grade(v: &SparseCliffordVector) -> SparseCliffordVector {
 ///
 /// Each blade of grade k is scaled by `REVERSE_SIGN[k]` ∈ {+1i8, −1i8}.
 ///
-/// The only float operation is `coef * (sign as f64)`. No float branching,
-/// no ±0.0 risk.
+/// Uses branchless sign application and branchless planck-threshold masking on
+/// each active blade.
 ///
 /// For the Clifford norm: ‖A‖² = ⟨A · Ã⟩₀.
 ///
@@ -224,92 +234,72 @@ pub fn reverse(v: &SparseCliffordVector) -> SparseCliffordVector {
     let mut buf = [0.0f64; 16];
     let mut mask = v.active_mask;
     while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        let grade = GRADE_TABLE[i] as usize;
-        let val = if REVERSE_SIGN[grade] == 1 {
-            v.coeffs[i]
-        } else {
-            -v.coeffs[i]
-        };
-        buf[i] = if val.abs() > COGNITIVE_PLANCK_CONSTANT {
-            val
-        } else {
-            0.0
-        };
+        let i = (mask.trailing_zeros() as usize) & 15;
+        let sign = REVERSE_SIGN[GRADE_TABLE[i] as usize] as f64;
+        let val = v.coeffs[i] * sign;
+        let active = (val.abs() > COGNITIVE_PLANCK_CONSTANT) as u64;
+        let active_mask_bits = active.wrapping_neg();
+        buf[i] = f64::from_bits(val.to_bits() & active_mask_bits);
         mask &= mask - 1;
     }
     SparseCliffordVector::from_dense_buf(&buf)
 }
+
+/// Maps a 16-bit active-blade mask directly to a 5-bit mask of grades present.
+///
+/// Precomputed at compile time to eliminate runtime loops for structural
+/// grade-presence queries.
+const fn build_grade_lut() -> [u8; 65_536] {
+    let mut lut = [0u8; 65_536];
+    let mut i = 0usize;
+    while i < 65_536 {
+        let mut grades = 0u8;
+        let mut mask = i as u16;
+        while mask != 0 {
+            let blade = (mask.trailing_zeros() as usize) & 15;
+            grades |= 1u8 << GRADE_TABLE[blade];
+            mask &= mask - 1;
+        }
+        lut[i] = grades;
+        i += 1;
+    }
+    lut
+}
+
+pub(crate) const GRADE_BITMASK_LUT: [u8; 65_536] = build_grade_lut();
 
 /// Returns a `u8` bitmask of all grades present in the multivector.
 ///
 /// Bit k set ↔ at least one blade of grade k is active.
 /// G(1,3) has grades 0..=4 → fits in `u8`. Zero allocation.
 pub const fn grades_present(v: &SparseCliffordVector) -> u8 {
-    // active_mask already encodes which blades are present.
-    let mut result = 0u8;
-    let mut mask = v.active_mask;
-    while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        result |= 1u8 << GRADE_TABLE[i];
-        mask &= mask - 1;
-    }
-    result
+    GRADE_BITMASK_LUT[v.active_mask as usize]
 }
 
 /// Returns the maximum grade present, or 0 for the zero multivector.
 pub const fn max_grade(v: &SparseCliffordVector) -> u8 {
-    let mut best = 0u8;
-    let mut mask = v.active_mask;
-    while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        let g = GRADE_TABLE[i];
-        // CRYSTAL: O66 — inevitable
-        // CRYSTAL: FO57 — inevitable
-        if g > best {
-            best = g;
-        }
-        mask &= mask - 1;
+    let grades = GRADE_BITMASK_LUT[v.active_mask as usize];
+    if grades == 0 {
+        0
+    } else {
+        (7 - grades.leading_zeros()) as u8
     }
-    best
 }
 
 /// Returns the minimum grade present, or 0 for the zero multivector.
 pub const fn min_grade(v: &SparseCliffordVector) -> u8 {
-    if v.active_mask == 0 {
-        return 0;
+    let grades = GRADE_BITMASK_LUT[v.active_mask as usize];
+    if grades == 0 {
+        0
+    } else {
+        grades.trailing_zeros() as u8
     }
-    let mut best = 4u8;
-    let mut mask = v.active_mask;
-    while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        let g = GRADE_TABLE[i];
-        // CRYSTAL: O67 — inevitable
-        // CRYSTAL: FO58 — inevitable
-        if g < best {
-            best = g;
-        }
-        mask &= mask - 1;
-    }
-    best
 }
 
 /// True if all active blades have the same grade.
 pub const fn is_homogeneous(v: &SparseCliffordVector) -> bool {
-    if v.active_mask == 0 {
-        return true;
-    }
-    let first_idx = v.active_mask.trailing_zeros() as usize;
-    let first_grade = GRADE_TABLE[first_idx];
-    let mut mask = v.active_mask;
-    while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
-        if GRADE_TABLE[i] != first_grade {
-            return false;
-        }
-        mask &= mask - 1;
-    }
-    true
+    let grades = GRADE_BITMASK_LUT[v.active_mask as usize];
+    grades.count_ones() <= 1
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

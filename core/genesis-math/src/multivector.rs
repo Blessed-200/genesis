@@ -36,7 +36,7 @@ use genesis_types::constants::{COGNITIVE_PLANCK_CONSTANT, METRIC_WEIGHTS};
 use genesis_types::error::{GenesisError, SignatureViolationCode};
 use genesis_types::DerivedMetadata;
 
-use crate::basis::{CANONICAL_G13, TOTAL_BLADES};
+use crate::basis::TOTAL_BLADES;
 use crate::grade::{even_grade, grade_project, odd_grade, reverse, CLIFFORD_NORM_WEIGHTS_F64};
 
 /// Multivector of G(1,3) — dense stack layout, cacheline-aligned.
@@ -86,21 +86,13 @@ const _: () = {
 #[inline]
 pub(crate) fn canonicalize_signed_zero(buf: &mut [f64; TOTAL_BLADES]) {
     for coeff in buf.iter_mut() {
-        // IEEE-754: +0.0 and -0.0 are equal as values but differ at the bit level.
-        // `is_sign_negative()` reads the sign bit directly; the compiler
-        // cannot eliminate this branch because `is_sign_negative` reads the
-        // actual bit, not semantic value.
-        // Required so that bytemuck::Pod is safe and the hashes of
-        // SparseCliffordVector remain stable regardless of the zero-sign origin.
-        if *coeff == 0.0 && coeff.is_sign_negative() {
-            *coeff = 0.0_f64; // explicitly +0.0 (sign bit = 0)
-        }
+        *coeff = if *coeff == 0.0 { 0.0_f64 } else { *coeff };
     }
 }
 
 #[inline]
 pub(crate) fn has_non_finite_coeff(buf: &[f64; TOTAL_BLADES]) -> bool {
-    buf.iter().any(|value| !value.is_finite())
+    buf.iter().fold(false, |acc, &value| acc | !value.is_finite())
 }
 
 #[inline]
@@ -115,32 +107,32 @@ pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetad
     for k in 0..TOTAL_BLADES {
         let coeff = buf[k];
         let abs = coeff.abs();
-        if abs > COGNITIVE_PLANCK_CONSTANT {
-            active_mask |= 1u32 << k;
-            // CRYSTAL: FO100 — inevitable
-            max_abs_coeff = max_abs_coeff.max(abs);
-            let y_norm = (coeff * coeff).mul_add(CLIFFORD_NORM_WEIGHTS_F64[k], -comp_norm);
-            let t_norm = clifford_norm_sq + y_norm;
-            comp_norm = (t_norm - clifford_norm_sq) - y_norm;
-            clifford_norm_sq = t_norm;
-        } else {
-            buf[k] = 0.0;
-        }
+        let is_active = abs > COGNITIVE_PLANCK_CONSTANT;
+        let filtered = if is_active { coeff } else { 0.0 };
+        buf[k] = filtered;
+
+        active_mask |= if is_active { 1u32 << k } else { 0 };
+        max_abs_coeff = max_abs_coeff.max(if is_active { abs } else { 0.0 });
+
+        let sq = filtered * filtered;
+        let y_norm = sq.mul_add(CLIFFORD_NORM_WEIGHTS_F64[k], -comp_norm);
+        let t_norm = clifford_norm_sq + y_norm;
+        let next_comp = (t_norm - clifford_norm_sq) - y_norm;
+
+        clifford_norm_sq = if is_active { t_norm } else { clifford_norm_sq };
+        comp_norm = if is_active { next_comp } else { comp_norm };
     }
 
     DerivedMetadata::new(active_mask, max_abs_coeff, clifford_norm_sq)
 }
 
+#[cold]
 #[inline]
 fn normalize_non_finite_payload(value: f64) -> Option<u8> {
-    if value.is_nan() {
-        Some(0)
-    } else if value == f64::INFINITY {
-        Some(1)
-    } else if value == f64::NEG_INFINITY {
-        Some(2)
-    } else {
-        None
+    match value.classify() {
+        core::num::FpCategory::Nan => Some(0),
+        core::num::FpCategory::Infinite => Some(if value.is_sign_positive() { 1 } else { 2 }),
+        _ => None,
     }
 }
 
@@ -194,14 +186,22 @@ impl SparseCliffordVector {
     /// Returns `GenesisError::SignatureViolation` if any coefficient
     /// is NaN or infinite.
     pub fn from_dense(dense: &[f64; TOTAL_BLADES]) -> Result<Self, GenesisError> {
-        for (i, &v) in dense.iter().enumerate() {
-            if !v.is_finite() {
-                return Err(GenesisError::SignatureViolation {
-                    code: SignatureViolationCode::FromDenseInput,
-                    blade_index: i as u16,
-                    normalized_value: normalize_non_finite_payload(v),
-                });
+        if crate::has_non_finite_coeff(dense) {
+            #[cold]
+            #[inline(never)]
+            fn find_violation(dense: &[f64; TOTAL_BLADES]) -> GenesisError {
+                for (i, &v) in dense.iter().enumerate() {
+                    if !v.is_finite() {
+                        return GenesisError::SignatureViolation {
+                            code: SignatureViolationCode::FromDenseInput,
+                            blade_index: i as u16,
+                            normalized_value: normalize_non_finite_payload(v),
+                        };
+                    }
+                }
+                unreachable!("has_non_finite_coeff reported a non-finite value");
             }
+            return Err(find_violation(dense));
         }
         Ok(Self::from_dense_buf(dense))
     }
@@ -272,14 +272,21 @@ impl SparseCliffordVector {
     /// Do NOT use for the CS gate or physics invariants.
     #[inline]
     pub fn l2_norm(&self) -> f64 {
-        let mut sq = 0.0f64;
-        let mut mask = self.active_mask;
-        while mask != 0 {
-            let i = mask.trailing_zeros() as usize;
-            sq = self.coeffs[i].mul_add(self.coeffs[i], sq);
-            mask &= mask - 1;
+        let c = &self.coeffs;
+        let mut s0 = 0.0f64;
+        let mut s1 = 0.0f64;
+        let mut s2 = 0.0f64;
+        let mut s3 = 0.0f64;
+
+        for i in 0..4 {
+            let base = i * 4;
+            s0 = c[base].mul_add(c[base], s0);
+            s1 = c[base + 1].mul_add(c[base + 1], s1);
+            s2 = c[base + 2].mul_add(c[base + 2], s2);
+            s3 = c[base + 3].mul_add(c[base + 3], s3);
         }
-        sq.sqrt()
+
+        ((s0 + s1) + (s2 + s3)).sqrt()
     }
 
     /// True when the multivector is at or below the cognitive noise floor.
@@ -434,26 +441,32 @@ impl SparseCliffordVector {
     /// due to `REVERSE_SIGN[k]`. Use `clifford_norm_sq` for the invariant norm.
     ///
     /// - `metric_scalar_product(&v, &v)` = Σᵢ vᵢ² · ηᵢᵢ (metric-signed sum)
-    /// - `clifford_norm_sq`              = ⟨v·ṽ⟩₀ (incluye signo of reverso)
+    /// - `clifford_norm_sq`              = ⟨v·ṽ⟩₀ (includes reverse-sign factor)
     ///
-    /// Concrete example for e₀₁ (grado 2, coef = 1.0):
+    /// Concrete example for e₀₁ (grade 2, coefficient = 1.0):
     ///   `metric_scalar_product` = +1.0  (`SIGNATURE_TABLE[0b0011]`)
     ///   `clifford_norm_sq`      = −1.0  (`CLIFFORD_NORM_WEIGHTS[0b0011]`)
     ///
-    /// Valid use: contracciones geometrics grade-preservadas, no normas.
+    /// Valid use: grade-preserving geometric contractions, not norms.
     ///
     /// AX-ID: AXIOMA-001
     pub fn metric_scalar_product(&self, rhs: &Self) -> f64 {
-        let shared_mask = self.active_mask & rhs.active_mask;
-        let mut sum = 0.0f64;
-        let mut mask = shared_mask;
-        while mask != 0 {
-            let i = mask.trailing_zeros() as usize;
-            let sig = f64::from(CANONICAL_G13.signature[i]); // ±1, lossless cast
-            sum += self.coeffs[i] * rhs.coeffs[i] * sig;
-            mask &= mask - 1;
+        let a = &self.coeffs;
+        let b = &rhs.coeffs;
+        let mut s0 = 0.0f64;
+        let mut s1 = 0.0f64;
+        let mut s2 = 0.0f64;
+        let mut s3 = 0.0f64;
+
+        for i in 0..4 {
+            let base = i * 4;
+            s0 = (a[base] * b[base]).mul_add(METRIC_WEIGHTS[base], s0);
+            s1 = (a[base + 1] * b[base + 1]).mul_add(METRIC_WEIGHTS[base + 1], s1);
+            s2 = (a[base + 2] * b[base + 2]).mul_add(METRIC_WEIGHTS[base + 2], s2);
+            s3 = (a[base + 3] * b[base + 3]).mul_add(METRIC_WEIGHTS[base + 3], s3);
         }
-        sum
+
+        (s0 + s1) + (s2 + s3)
     }
 
     /// Bivector inner product: `⟨A₂, B₂⟩ = Σ_{grade(i)=2} A[i] · B[i]`.
@@ -482,14 +495,18 @@ impl SparseCliffordVector {
     #[inline]
     pub const fn dot_bivectors(&self, rhs: &Self) -> f64 {
         // Grade-2 blade bitmasks in G(1,3): 3, 5, 6, 9, 10, 12.
-        let mut sum = 0.0f64;
-        sum += self.coeffs[3] * rhs.coeffs[3];
-        sum += self.coeffs[5] * rhs.coeffs[5];
-        sum += self.coeffs[6] * rhs.coeffs[6];
-        sum += self.coeffs[9] * rhs.coeffs[9];
-        sum += self.coeffs[10] * rhs.coeffs[10];
-        sum += self.coeffs[12] * rhs.coeffs[12];
-        sum
+        let p0 = self.coeffs[3] * rhs.coeffs[3];
+        let p1 = self.coeffs[5] * rhs.coeffs[5];
+        let p2 = self.coeffs[6] * rhs.coeffs[6];
+        let p3 = self.coeffs[9] * rhs.coeffs[9];
+        let p4 = self.coeffs[10] * rhs.coeffs[10];
+        let p5 = self.coeffs[12] * rhs.coeffs[12];
+
+        let s0 = p0 + p1;
+        let s1 = p2 + p3;
+        let s2 = p4 + p5;
+
+        s0 + s1 + s2
     }
 
     // ── Geometric product ─────────────────────────────────────────────────────

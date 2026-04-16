@@ -138,7 +138,7 @@ impl CliffordBasis {
     #[inline]
     pub fn grade_of(&self, i: usize) -> u8 {
         debug_assert!(i <= MAX_BLADE_MASK);
-        self.grade[i]
+        self.grade[i & MAX_BLADE_MASK]
     }
 
     /// Returns the exact metric square \(e_I^2\in\{-1,+1\}\) for blade `I`.
@@ -155,12 +155,12 @@ impl CliffordBasis {
     #[allow(clippy::inline_always)]
     // Forced inlining: hot-path function of the geometric product.
     // Benchmark kuramoto_step_1000_nodes = 1.11 ms for N=1000.
-    // Without inline(always) the compiler can introduces frame overhead en
+    // Without inline(always) the compiler can introduce frame overhead in
     // the inner loop of sparse_geometric_product (≥ 10⁸ calls/step).
     #[inline(always)]
     pub fn blade_square(&self, i: usize) -> i8 {
         debug_assert!(i <= MAX_BLADE_MASK);
-        self.signature[i]
+        self.signature[i & MAX_BLADE_MASK]
     }
 
     /// Returns the metric square \(e_I^2\) as `f64` for numeric kernels.
@@ -177,7 +177,7 @@ impl CliffordBasis {
     #[allow(clippy::inline_always)]
     // Forced inlining: hot-path function of the geometric product.
     // Benchmark kuramoto_step_1000_nodes = 1.11 ms for N=1000.
-    // Without inline(always) the compiler can introduces frame overhead en
+    // Without inline(always) the compiler can introduce frame overhead in
     // the inner loop of sparse_geometric_product (≥ 10⁸ calls/step).
     #[inline(always)]
     pub fn blade_square_f64(&self, i: usize) -> f64 {
@@ -191,7 +191,7 @@ impl CliffordBasis {
     #[inline]
     pub fn fenwick_prefix_parity(&self, blade_idx: usize) -> i32 {
         debug_assert!(blade_idx < TOTAL_BLADES);
-        FENWICK_PREFIX_LUT[blade_idx] as i32
+        FENWICK_PREFIX_LUT[blade_idx & MAX_BLADE_MASK] as i32
     }
 
     /// Computes e_I² as `i8` — `const fn` used during compile-time table build.
@@ -218,7 +218,7 @@ impl CliffordBasis {
     ///
     /// # Errors
     /// Returns `bytemuck::PodCastError` if `bytes` does not have the length
-    /// or alignment correcta for `CliffordBasis`.
+    /// or alignment required for `CliffordBasis`.
     #[inline]
     pub fn try_from_bytes(bytes: &[u8]) -> Result<&Self, bytemuck::PodCastError> {
         bytemuck::try_from_bytes(bytes)
@@ -236,6 +236,7 @@ pub const CANONICAL_G13: CliffordBasis = CliffordBasis::build_g13();
 
 /// Convenience reference accessor.
 #[inline]
+#[must_use = "fetching the canonical basis has no side effects"]
 pub const fn g13() -> &'static CliffordBasis {
     &CANONICAL_G13
 }
@@ -405,7 +406,7 @@ mod tests {
 
     #[test]
     fn try_from_bytes_fails_on_wrong_length() {
-        let bad = vec![0u8; 42];
+        let bad = [0u8; 42];
         assert!(CliffordBasis::try_from_bytes(&bad).is_err());
     }
 

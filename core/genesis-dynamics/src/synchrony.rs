@@ -196,6 +196,11 @@ fn merge_grade_totals(
 //   propagate bounds/alias information into callers.
 // - Accumulators remain thread-local per invocation; parallel safety is preserved
 //   by reducer-level merge semantics with no shared mutable state in this function.
+// Complexity note (HOT-086 triage):
+// - The nested loops are degree-bounded by fixed constants: lanes <= 8 and grades = 5.
+// - The `while mask != 0` loop visits only active bits in `contributes_mask` and is
+//   therefore also bounded by <= 8 iterations per block.
+// - End-to-end complexity is O(B) with a constant factor O(8 * 5 * 8), not O(n²+).
 fn reduce_blocks(
     blocks: &[crate::oscillator::OscillatorBlock],
     valid_lanes: usize,
