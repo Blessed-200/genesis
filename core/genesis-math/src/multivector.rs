@@ -36,7 +36,7 @@ use genesis_types::constants::{COGNITIVE_PLANCK_CONSTANT, METRIC_WEIGHTS};
 use genesis_types::error::{GenesisError, SignatureViolationCode};
 use genesis_types::DerivedMetadata;
 
-use crate::basis::TOTAL_BLADES;
+use crate::basis::{CANONICAL_G13, TOTAL_BLADES};
 use crate::grade::{even_grade, grade_project, odd_grade, reverse, CLIFFORD_NORM_WEIGHTS_F64};
 
 /// Multivector of G(1,3) — dense stack layout, cacheline-aligned.
@@ -92,7 +92,8 @@ pub(crate) fn canonicalize_signed_zero(buf: &mut [f64; TOTAL_BLADES]) {
 
 #[inline]
 pub(crate) fn has_non_finite_coeff(buf: &[f64; TOTAL_BLADES]) -> bool {
-    buf.iter().fold(false, |acc, &value| acc | !value.is_finite())
+    buf.iter()
+        .fold(false, |acc, &value| acc | !value.is_finite())
 }
 
 #[inline]
@@ -460,10 +461,13 @@ impl SparseCliffordVector {
 
         for i in 0..4 {
             let base = i * 4;
-            s0 = (a[base] * b[base]).mul_add(METRIC_WEIGHTS[base], s0);
-            s1 = (a[base + 1] * b[base + 1]).mul_add(METRIC_WEIGHTS[base + 1], s1);
-            s2 = (a[base + 2] * b[base + 2]).mul_add(METRIC_WEIGHTS[base + 2], s2);
-            s3 = (a[base + 3] * b[base + 3]).mul_add(METRIC_WEIGHTS[base + 3], s3);
+            s0 = (a[base] * b[base]).mul_add(f64::from(CANONICAL_G13.signature[base]), s0);
+            s1 = (a[base + 1] * b[base + 1])
+                .mul_add(f64::from(CANONICAL_G13.signature[base + 1]), s1);
+            s2 = (a[base + 2] * b[base + 2])
+                .mul_add(f64::from(CANONICAL_G13.signature[base + 2]), s2);
+            s3 = (a[base + 3] * b[base + 3])
+                .mul_add(f64::from(CANONICAL_G13.signature[base + 3]), s3);
         }
 
         (s0 + s1) + (s2 + s3)

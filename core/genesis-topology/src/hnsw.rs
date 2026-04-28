@@ -254,7 +254,11 @@ const fn ordered_f64_bits(value: f64) -> u64 {
 
 #[inline]
 fn adaptive_precision_threshold_from_vfe(base_threshold: f64, vfe: f64) -> f64 {
-    let sanitized_vfe = if vfe.is_finite() && vfe > 0.0 { vfe } else { 1.0 };
+    let sanitized_vfe = if vfe.is_finite() && vfe > 0.0 {
+        vfe
+    } else {
+        1.0
+    };
     (base_threshold / (1.0 + sanitized_vfe)).max(MIN_APPROX_PRECISION_THRESHOLD)
 }
 
@@ -343,9 +347,9 @@ unsafe fn slab_distance_avx2(
     approx_threshold_sq: f32,
 ) -> SlabDistanceBatch {
     use std::arch::x86_64::{
-        _CMP_LE_OQ, _mm256_add_ps, _mm256_cmp_ps, _mm256_fmadd_ps, _mm256_load_ps,
-        _mm256_movemask_ps, _mm256_mul_ps, _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps,
-        _mm256_sub_ps,
+        _mm256_add_ps, _mm256_cmp_ps, _mm256_fmadd_ps, _mm256_load_ps, _mm256_movemask_ps,
+        _mm256_mul_ps, _mm256_set1_ps, _mm256_setzero_ps, _mm256_storeu_ps, _mm256_sub_ps,
+        _CMP_LE_OQ,
     };
 
     macro_rules! fused_dim4 {
@@ -1171,7 +1175,9 @@ impl Clone for HnswGraph {
                 self.adaptive_base_threshold_bits
                     .load(AtomicOrdering::Relaxed),
             ),
-            escape_total_count: AtomicU64::new(self.escape_total_count.load(AtomicOrdering::Relaxed)),
+            escape_total_count: AtomicU64::new(
+                self.escape_total_count.load(AtomicOrdering::Relaxed),
+            ),
             escape_success_count: AtomicU64::new(
                 self.escape_success_count.load(AtomicOrdering::Relaxed),
             ),
@@ -1327,7 +1333,9 @@ impl HnswGraph {
                 self.adaptive_base_threshold_bits
                     .load(AtomicOrdering::Relaxed),
             ),
-            escape_total_count: AtomicU64::new(self.escape_total_count.load(AtomicOrdering::Relaxed)),
+            escape_total_count: AtomicU64::new(
+                self.escape_total_count.load(AtomicOrdering::Relaxed),
+            ),
             escape_success_count: AtomicU64::new(
                 self.escape_success_count.load(AtomicOrdering::Relaxed),
             ),
@@ -1350,7 +1358,11 @@ impl HnswGraph {
     ///
     /// AX-ID: AXIOMA-003, AXIOMA-013, H_información (LEY_FUNDACIONAL §3.3)
     pub fn set_adaptive_precision_vfe(&self, vfe: f64) {
-        let sanitized = if vfe.is_finite() && vfe > 0.0 { vfe } else { 1.0 };
+        let sanitized = if vfe.is_finite() && vfe > 0.0 {
+            vfe
+        } else {
+            1.0
+        };
         self.adaptive_vfe_bits
             .store(sanitized.to_bits(), AtomicOrdering::Relaxed);
     }
@@ -1364,7 +1376,10 @@ impl HnswGraph {
         if raw == 0 {
             return 0.0;
         }
-        adaptive_precision_threshold_from_vfe(self.base_approx_precision_threshold(), f64::from_bits(raw))
+        adaptive_precision_threshold_from_vfe(
+            self.base_approx_precision_threshold(),
+            f64::from_bits(raw),
+        )
     }
 
     #[inline(always)]
@@ -1481,9 +1496,11 @@ impl HnswGraph {
 
     #[inline(always)]
     fn record_escape_result(&self, escaped: bool, recall_drop: bool) {
-        self.escape_total_count.fetch_add(1, AtomicOrdering::Relaxed);
+        self.escape_total_count
+            .fetch_add(1, AtomicOrdering::Relaxed);
         if escaped && !recall_drop {
-            self.escape_success_count.fetch_add(1, AtomicOrdering::Relaxed);
+            self.escape_success_count
+                .fetch_add(1, AtomicOrdering::Relaxed);
         }
         if recall_drop {
             self.recall_drop_count.fetch_add(1, AtomicOrdering::Relaxed);
@@ -1936,17 +1953,19 @@ impl HnswGraph {
         }
         let node_mask = self.nodes[idx].vec.active_mask;
         let base_threshold_sq = self.adaptive_precision_threshold_sq_f32();
-        let approx_threshold_sq = if base_threshold_sq > 0.0 && (node_mask & GRADE3_GRADE4_MASK) == 0 {
-            f32::INFINITY
-        } else {
-            base_threshold_sq
-        };
+        let approx_threshold_sq =
+            if base_threshold_sq > 0.0 && (node_mask & GRADE3_GRADE4_MASK) == 0 {
+                f32::INFINITY
+            } else {
+                base_threshold_sq
+            };
         let batch = slab_distance(slab_ptr, block, query_f32, approx_threshold_sq);
         let d = batch.distances[lane];
         let approx = f64::from(d);
         let escape = (batch.escape_mask & (1u8 << lane)) != 0;
         let audit = self.should_audit_escape();
-        let recall_drop = escape & self.compute_recall_drop(audit, d, query_f32, block, lane, slab_ptr);
+        let recall_drop =
+            escape & self.compute_recall_drop(audit, d, query_f32, block, lane, slab_ptr);
         self.record_escape_result(escape, recall_drop);
         approx
     }
@@ -2002,7 +2021,11 @@ impl HnswGraph {
             acc = METRIC_WEIGHTS[d].mul_add(delta * delta, acc);
             d += 1;
         }
-        if acc.is_finite() { acc } else { f64::INFINITY }
+        if acc.is_finite() {
+            acc
+        } else {
+            f64::INFINITY
+        }
     }
 
     fn distance_to_node(&self, query: &SparseCliffordVector, idx: usize, layer: usize) -> f64 {

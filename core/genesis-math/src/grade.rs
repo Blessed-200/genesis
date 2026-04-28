@@ -75,32 +75,24 @@ pub const EVEN_GRADE_MASK: u16 = grade_mask::<0>() | grade_mask::<2>() | grade_m
 /// Compile-time mask containing all odd-grade blades (k=1, 3).
 pub const ODD_GRADE_MASK: u16 = grade_mask::<1>() | grade_mask::<3>();
 
-/// ⟨A·Ã⟩₀ with pairwise unrolled accumulation for fixed-size G(1,3) buffers.
+/// ⟨A·Ã⟩₀ with Kahan compensated summation.
 ///
-/// Uses four independent accumulators to shorten dependency chains and expose
-/// instruction-level parallelism for OoO cores and LLVM vectorization.
+/// Kahan summation reduces floating-point error from O(n·ε) to O(ε)
+/// for signed Lorentz metric accumulation, especially under cancellation.
 ///
 /// INVARIANT: result matches `derive_all_metadata` `clifford_norm_sq`.
 /// AX-ID: AXIOMA-001
 #[inline]
 pub fn compute_clifford_norm_sq(coeffs: &[f64; 16]) -> f64 {
-    let mut sum0 = 0.0f64;
-    let mut sum1 = 0.0f64;
-    let mut sum2 = 0.0f64;
-    let mut sum3 = 0.0f64;
-
-    for i in 0..4 {
-        let base = i * 4;
-        sum0 = (coeffs[base] * coeffs[base]).mul_add(CLIFFORD_NORM_WEIGHTS_F64[base], sum0);
-        sum1 = (coeffs[base + 1] * coeffs[base + 1])
-            .mul_add(CLIFFORD_NORM_WEIGHTS_F64[base + 1], sum1);
-        sum2 = (coeffs[base + 2] * coeffs[base + 2])
-            .mul_add(CLIFFORD_NORM_WEIGHTS_F64[base + 2], sum2);
-        sum3 = (coeffs[base + 3] * coeffs[base + 3])
-            .mul_add(CLIFFORD_NORM_WEIGHTS_F64[base + 3], sum3);
+    let mut sum = 0.0f64;
+    let mut comp = 0.0f64;
+    for (coeff, w) in coeffs.iter().zip(CLIFFORD_NORM_WEIGHTS_F64.iter()) {
+        let y = (coeff * coeff).mul_add(*w, -comp);
+        let t = sum + y;
+        comp = (t - sum) - y;
+        sum = t;
     }
-
-    (sum0 + sum1) + (sum2 + sum3)
+    sum
 }
 
 /// Clifford norm scalar: sqrt(|⟨A·Ã⟩₀|).
@@ -123,7 +115,9 @@ pub fn compute_clifford_norm(coeffs: &[f64; 16]) -> f64 {
 /// AX-ID: AXIOMA-001
 #[inline]
 pub fn grade_project(v: &SparseCliffordVector, grade: usize) -> SparseCliffordVector {
-    debug_assert!(grade <= 4, "grade > 4 violates G(1,3) invariant");
+    if grade > 4 {
+        return SparseCliffordVector::zero();
+    }
     const GRADE_MASKS: [u16; 5] = [
         grade_mask::<0>(),
         grade_mask::<1>(),

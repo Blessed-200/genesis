@@ -112,15 +112,15 @@ impl CliffordBasis {
     /// Builds the G(1,3) basis at compile time. Called only from the `const`
     /// block initializing `CANONICAL_G13`.
     const fn build_g13() -> Self {
-        let mut grade     = [0u8;  TOTAL_BLADES    ];
-        let mut signature = [0i8;  TOTAL_BLADES    ];
-        let mut fenwick   = [0i32; TOTAL_BLADES + 1];
+        let mut grade = [0u8; TOTAL_BLADES];
+        let mut signature = [0i8; TOTAL_BLADES];
+        let mut fenwick = [0i32; TOTAL_BLADES + 1];
 
         let mut blade = 0usize;
         while blade < TOTAL_BLADES {
             #[allow(clippy::cast_possible_truncation)]
             let g = blade.count_ones() as u8;
-            grade[blade]     = g;
+            grade[blade] = g;
             signature[blade] = Self::blade_square_const(blade);
 
             if (g & 1) != 0 {
@@ -131,7 +131,11 @@ impl CliffordBasis {
             blade += 1;
         }
 
-        Self { grade, signature, fenwick_parity_tree: fenwick }
+        Self {
+            grade,
+            signature,
+            fenwick_parity_tree: fenwick,
+        }
     }
 
     /// Grassmann grade of blade `i`. Returns `u8` ∈ {0..=4}.
@@ -289,7 +293,7 @@ mod tests {
 
     #[test]
     fn vg1_basis_vector_signatures() {
-        assert_eq!(CANONICAL_G13.blade_square(0b0001),  1i8, "e₀²  (timelike)");
+        assert_eq!(CANONICAL_G13.blade_square(0b0001), 1i8, "e₀²  (timelike)");
         assert_eq!(CANONICAL_G13.blade_square(0b0010), -1i8, "e₁²  (spacelike)");
         assert_eq!(CANONICAL_G13.blade_square(0b0100), -1i8, "e₂²  (spacelike)");
         assert_eq!(CANONICAL_G13.blade_square(0b1000), -1i8, "e₃²  (spacelike)");
@@ -391,8 +395,16 @@ mod tests {
     #[test]
     fn struct_size_and_alignment() {
         const MANUAL: usize = 16 + 16 + 17 * 4; // grade[16] + sig[16] + fenwick[17]×4
-        assert_eq!(std::mem::size_of::<CliffordBasis>(), 100, "must be 100 bytes");
-        assert_eq!(std::mem::size_of::<CliffordBasis>(), MANUAL, "zero implicit padding");
+        assert_eq!(
+            std::mem::size_of::<CliffordBasis>(),
+            100,
+            "must be 100 bytes"
+        );
+        assert_eq!(
+            std::mem::size_of::<CliffordBasis>(),
+            MANUAL,
+            "zero implicit padding"
+        );
         assert_eq!(std::mem::align_of::<CliffordBasis>(), 4, "must be align 4");
     }
 
@@ -421,13 +433,16 @@ mod tests {
         // AX-ID: AXIOMA-001 — Clifford basis is static, immutable, zero-cost.
         let a = &CANONICAL_G13;
         let b = &CANONICAL_G13;
-        assert_eq!(a.grade,               b.grade,               "grade invariant");
-        assert_eq!(a.signature,           b.signature,           "signature invariant");
-        assert_eq!(a.fenwick_parity_tree, b.fenwick_parity_tree, "fenwick invariant");
+        assert_eq!(a.grade, b.grade, "grade invariant");
+        assert_eq!(a.signature, b.signature, "signature invariant");
+        assert_eq!(
+            a.fenwick_parity_tree, b.fenwick_parity_tree,
+            "fenwick invariant"
+        );
 
         // Verify Minkowski signature (+,-,-,-) via blade bitmask indices.
-        assert_eq!(a.signature[0], 1i8,  "scalar (0b0000)  → +1");
-        assert_eq!(a.signature[1], 1i8,  "e0     (0b0001)  → +1 (timelike)");
+        assert_eq!(a.signature[0], 1i8, "scalar (0b0000)  → +1");
+        assert_eq!(a.signature[1], 1i8, "e0     (0b0001)  → +1 (timelike)");
         assert_eq!(a.signature[2], -1i8, "e1     (0b0010)  → -1 (spacelike)");
         assert_eq!(a.signature[4], -1i8, "e2     (0b0100)  → -1 (spacelike)");
         assert_eq!(a.signature[8], -1i8, "e3     (0b1000)  → -1 (spacelike)");
