@@ -21,10 +21,10 @@ pub fn hodge_dual(value: &SparseCliffordVector) -> SparseCliffordVector {
     let mut mask = value.active_mask;
 
     while mask != 0 {
-        let i = mask.trailing_zeros() as usize;
+        let i = (mask.trailing_zeros() as usize) & 15;
         let k = i ^ PSEUDOSCALAR_INDEX;
         let sign = -f64::from(CAYLEY_SIGN[i][PSEUDOSCALAR_INDEX]);
-        out[k] += value.coeffs[i] * sign;
+        out[k & 15] += value.coeffs[i] * sign;
         mask &= mask - 1;
     }
 
@@ -101,13 +101,16 @@ impl SparseDualVector {
         let mut clifford_norm_sq_value = 0.0f64;
         let mut clifford_norm_sq_grad = 0.0f64;
 
-        for (k, dual) in buf.iter().copied().enumerate() {
+        for k in 0..TOTAL_BLADES {
+            let dual = buf[k];
             let abs = dual.value.abs();
-            if abs > COGNITIVE_PLANCK_CONSTANT {
-                active_mask |= 1u16 << k;
-                // CRYSTAL: FO25 — inevitable
-                max_abs_coeff_value = max_abs_coeff_value.max(abs);
-            }
+
+            let is_active = abs > COGNITIVE_PLANCK_CONSTANT;
+            active_mask |= (is_active as u16) << k;
+
+            let conditional_abs = if is_active { abs } else { 0.0 };
+            max_abs_coeff_value = max_abs_coeff_value.max(conditional_abs);
+
             let weight = crate::grade::CLIFFORD_NORM_WEIGHTS_F64[k];
             clifford_norm_sq_value = dual
                 .value
@@ -135,16 +138,10 @@ impl SparseDualVector {
 
 impl From<SparseCliffordVector> for SparseDualVector {
     fn from(value: SparseCliffordVector) -> Self {
-        let mut coeffs = [Dual {
-            value: 0.0,
+        let coeffs = std::array::from_fn(|i| Dual {
+            value: value.coeffs[i],
             grad: 0.0,
-        }; TOTAL_BLADES];
-        for (i, coeff) in coeffs.iter_mut().enumerate() {
-            *coeff = Dual {
-                value: value.coeffs[i],
-                grad: 0.0,
-            };
-        }
+        });
 
         Self {
             coeffs,
@@ -250,6 +247,8 @@ mod tests {
         let x = SparseDualVector::from_dense_buf(&coeffs);
         let product = geometric_product_dual(&x, &x).expect("x*x should stay above Planck gate");
 
+        // The geometric product of a pure scalar with itself is exact in IEEE-754
+        // for dyadic rationals. For 3.5 (7/2), 3.5 * 3.5 = 12.25 is exact.
         assert_eq!(product.coeffs[0].value, x0 * x0);
         assert_eq!(product.coeffs[0].grad, 2.0 * x0);
     }
@@ -269,44 +268,24 @@ mod tests {
     fn hodge_double_dual_is_negation_in_g13() {
         use crate::{hodge_dual, hodge_undual, SparseCliffordVector};
 
-        let a = SparseCliffordVector::from_iter([(0, 1.0)]).unwrap();
-        let got = hodge_undual(&hodge_dual(&a));
-        assert!(
-            (got.coeffs[0] + 1.0).abs() < 1e-12,
-            "double dual of scalar: expected -1.0, got {}",
-            got.coeffs[0]
-        );
+        let cases = [
+            (0, "scalar"),
+            (1, "e1"),
+            (3, "e1^e2"),
+            (7, "trivector"),
+            (15, "pseudoscalar"),
+        ];
 
-        let e1 = SparseCliffordVector::from_iter([(1, 1.0)]).unwrap();
-        let got_e1 = hodge_undual(&hodge_dual(&e1));
-        assert!(
-            (got_e1.coeffs[1] + 1.0).abs() < 1e-12,
-            "double dual of e1: expected -1.0, got {}",
-            got_e1.coeffs[1]
-        );
-
-        let biv = SparseCliffordVector::from_iter([(3, 1.0)]).unwrap();
-        let got_biv = hodge_undual(&hodge_dual(&biv));
-        assert!(
-            (got_biv.coeffs[3] + 1.0).abs() < 1e-12,
-            "double dual of e1^e2: expected -1.0, got {}",
-            got_biv.coeffs[3]
-        );
-
-        let triv = SparseCliffordVector::from_iter([(7, 1.0)]).unwrap();
-        let got_triv = hodge_undual(&hodge_dual(&triv));
-        assert!(
-            (got_triv.coeffs[7] + 1.0).abs() < 1e-12,
-            "double dual of trivector: expected -1.0, got {}",
-            got_triv.coeffs[7]
-        );
-
-        let ps = SparseCliffordVector::from_iter([(15, 1.0)]).unwrap();
-        let got_ps = hodge_undual(&hodge_dual(&ps));
-        assert!(
-            (got_ps.coeffs[15] + 1.0).abs() < 1e-12,
-            "double dual of pseudoscalar: expected -1.0, got {}",
-            got_ps.coeffs[15]
-        );
+        for (blade, name) in cases {
+            let mv = SparseCliffordVector::from_iter([(blade, 1.0)]).unwrap();
+            let got = hodge_undual(&hodge_dual(&mv));
+            // Exact floating-point assertion: Hodge dual permutations strictly
+            // multiply coefficients by exact integer ±1 cast to f64.
+            assert_eq!(
+                got.coeffs[blade], -1.0,
+                "double dual of {name}: expected -1.0, got {}",
+                got.coeffs[blade]
+            );
+        }
     }
 }
