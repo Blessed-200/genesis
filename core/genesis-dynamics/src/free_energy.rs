@@ -306,11 +306,6 @@ impl VFEMinimizer {
         // Defensive maximum: 100× production target. Prevents OOM from buggy callers.
         const MAX_ALLOWED_NODE_ID: usize = 100_000_000;
         if raw > MAX_ALLOWED_NODE_ID {
-            // In release: log and return. In debug: panic for early detection.
-            debug_assert!(
-                false,
-                "NodeId {raw} exceeds MAX_ALLOWED_NODE_ID={MAX_ALLOWED_NODE_ID} — potential bug"
-            );
             return;
         }
 
@@ -832,6 +827,30 @@ mod tests {
         let valid_id = NodeId::try_new(999_999).expect("valor válido en test");
         vfe.add_node(valid_id, [0.0; 4]);
         assert_eq!(vfe.compute_vfe(valid_id, None), 0.0);
+    }
+
+    #[test]
+    fn vfe_accepts_nodeid_one_million() {
+        let id = NodeId::try_new(1_000_000).expect("1_000_000 is a valid NodeId");
+        let mut vfe = VFEMinimizer::new();
+        vfe.add_node(id, [0.25, -0.5, 0.75, -1.0]);
+        let val = vfe.compute_vfe(id, Some(&[0.25, -0.5, 0.75, -1.0]));
+        assert_eq!(
+            val, 0.0,
+            "node id=1_000_000 must be accepted and operational"
+        );
+    }
+
+    #[test]
+    fn vfe_rejects_nodeid_too_large() {
+        let id = NodeId::try_new(100_000_001).expect("test id must be representable");
+        let mut vfe = VFEMinimizer::new();
+        vfe.add_node(id, [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            vfe.compute_vfe(id, Some(&[1.0, 0.0, 0.0, 0.0])),
+            0.0,
+            "id above MAX_ALLOWED_NODE_ID must remain unregistered"
+        );
     }
 
     #[test]

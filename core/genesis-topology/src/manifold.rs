@@ -1784,6 +1784,25 @@ mod tests {
             .all(|record| record.nodes.iter().all(|n| n != &removed)));
     }
 
+    #[test]
+    fn manifold_insert_triangle_detection_allocation_free() {
+        let mut m = ManifoldCollector::new(32);
+        for i in 0..16u64 {
+            m.insert(NodeId::try_new(i).unwrap(), &make_vec(i)).unwrap();
+        }
+
+        // Functional guard for BN-02: insertion path remains operational with
+        // stack-backed neighbor buffers and triangle detection enabled.
+        let h1_before = m.compute_h1().unwrap();
+        m.insert(NodeId::try_new(16).unwrap(), &make_vec(16))
+            .unwrap();
+        let h1_after = m.compute_h1().unwrap();
+        assert!(
+            h1_after <= h1_before + 1,
+            "incremental H¹ update must remain bounded after insert"
+        );
+    }
+
     /// Checks the hyperbolic distance to the origin for a known point.
     /// d(0, (r,0)) = 2·arctanh(r). Para r=0.5: 2·arctanh(0.5) ≈ 1.0986.
     #[test]

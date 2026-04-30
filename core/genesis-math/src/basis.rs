@@ -112,15 +112,15 @@ impl CliffordBasis {
     /// Builds the G(1,3) basis at compile time. Called only from the `const`
     /// block initializing `CANONICAL_G13`.
     const fn build_g13() -> Self {
-        let mut grade     = [0u8;  TOTAL_BLADES    ];
-        let mut signature = [0i8;  TOTAL_BLADES    ];
-        let mut fenwick   = [0i32; TOTAL_BLADES + 1];
+        let mut grade = [0u8; TOTAL_BLADES];
+        let mut signature = [0i8; TOTAL_BLADES];
+        let mut fenwick = [0i32; TOTAL_BLADES + 1];
 
         let mut blade = 0usize;
         while blade < TOTAL_BLADES {
             #[allow(clippy::cast_possible_truncation)]
             let g = blade.count_ones() as u8;
-            grade[blade]     = g;
+            grade[blade] = g;
             signature[blade] = Self::blade_square_const(blade);
 
             if (g & 1) != 0 {
@@ -131,14 +131,18 @@ impl CliffordBasis {
             blade += 1;
         }
 
-        Self { grade, signature, fenwick_parity_tree: fenwick }
+        Self {
+            grade,
+            signature,
+            fenwick_parity_tree: fenwick,
+        }
     }
 
     /// Grassmann grade of blade `i`. Returns `u8` ∈ {0..=4}.
     #[inline]
     pub fn grade_of(&self, i: usize) -> u8 {
         debug_assert!(i <= MAX_BLADE_MASK);
-        self.grade[i]
+        self.grade[i & MAX_BLADE_MASK]
     }
 
     /// Returns the exact metric square \(e_I^2\in\{-1,+1\}\) for blade `I`.
@@ -155,12 +159,12 @@ impl CliffordBasis {
     #[allow(clippy::inline_always)]
     // Forced inlining: hot-path function of the geometric product.
     // Benchmark kuramoto_step_1000_nodes = 1.11 ms for N=1000.
-    // Without inline(always) the compiler can introduces frame overhead en
+    // Without inline(always) the compiler can introduce frame overhead in
     // the inner loop of sparse_geometric_product (≥ 10⁸ calls/step).
     #[inline(always)]
     pub fn blade_square(&self, i: usize) -> i8 {
         debug_assert!(i <= MAX_BLADE_MASK);
-        self.signature[i]
+        self.signature[i & MAX_BLADE_MASK]
     }
 
     /// Returns the metric square \(e_I^2\) as `f64` for numeric kernels.
@@ -177,7 +181,7 @@ impl CliffordBasis {
     #[allow(clippy::inline_always)]
     // Forced inlining: hot-path function of the geometric product.
     // Benchmark kuramoto_step_1000_nodes = 1.11 ms for N=1000.
-    // Without inline(always) the compiler can introduces frame overhead en
+    // Without inline(always) the compiler can introduce frame overhead in
     // the inner loop of sparse_geometric_product (≥ 10⁸ calls/step).
     #[inline(always)]
     pub fn blade_square_f64(&self, i: usize) -> f64 {
@@ -191,7 +195,7 @@ impl CliffordBasis {
     #[inline]
     pub fn fenwick_prefix_parity(&self, blade_idx: usize) -> i32 {
         debug_assert!(blade_idx < TOTAL_BLADES);
-        FENWICK_PREFIX_LUT[blade_idx] as i32
+        FENWICK_PREFIX_LUT[blade_idx & MAX_BLADE_MASK] as i32
     }
 
     /// Computes e_I² as `i8` — `const fn` used during compile-time table build.
@@ -218,7 +222,7 @@ impl CliffordBasis {
     ///
     /// # Errors
     /// Returns `bytemuck::PodCastError` if `bytes` does not have the length
-    /// or alignment correcta for `CliffordBasis`.
+    /// or alignment required for `CliffordBasis`.
     #[inline]
     pub fn try_from_bytes(bytes: &[u8]) -> Result<&Self, bytemuck::PodCastError> {
         bytemuck::try_from_bytes(bytes)
@@ -236,6 +240,7 @@ pub const CANONICAL_G13: CliffordBasis = CliffordBasis::build_g13();
 
 /// Convenience reference accessor.
 #[inline]
+#[must_use = "fetching the canonical basis has no side effects"]
 pub const fn g13() -> &'static CliffordBasis {
     &CANONICAL_G13
 }
@@ -288,7 +293,7 @@ mod tests {
 
     #[test]
     fn vg1_basis_vector_signatures() {
-        assert_eq!(CANONICAL_G13.blade_square(0b0001),  1i8, "e₀²  (timelike)");
+        assert_eq!(CANONICAL_G13.blade_square(0b0001), 1i8, "e₀²  (timelike)");
         assert_eq!(CANONICAL_G13.blade_square(0b0010), -1i8, "e₁²  (spacelike)");
         assert_eq!(CANONICAL_G13.blade_square(0b0100), -1i8, "e₂²  (spacelike)");
         assert_eq!(CANONICAL_G13.blade_square(0b1000), -1i8, "e₃²  (spacelike)");
@@ -390,8 +395,16 @@ mod tests {
     #[test]
     fn struct_size_and_alignment() {
         const MANUAL: usize = 16 + 16 + 17 * 4; // grade[16] + sig[16] + fenwick[17]×4
-        assert_eq!(std::mem::size_of::<CliffordBasis>(), 100, "must be 100 bytes");
-        assert_eq!(std::mem::size_of::<CliffordBasis>(), MANUAL, "zero implicit padding");
+        assert_eq!(
+            std::mem::size_of::<CliffordBasis>(),
+            100,
+            "must be 100 bytes"
+        );
+        assert_eq!(
+            std::mem::size_of::<CliffordBasis>(),
+            MANUAL,
+            "zero implicit padding"
+        );
         assert_eq!(std::mem::align_of::<CliffordBasis>(), 4, "must be align 4");
     }
 
@@ -405,7 +418,7 @@ mod tests {
 
     #[test]
     fn try_from_bytes_fails_on_wrong_length() {
-        let bad = vec![0u8; 42];
+        let bad = [0u8; 42];
         assert!(CliffordBasis::try_from_bytes(&bad).is_err());
     }
 
@@ -420,13 +433,16 @@ mod tests {
         // AX-ID: AXIOMA-001 — Clifford basis is static, immutable, zero-cost.
         let a = &CANONICAL_G13;
         let b = &CANONICAL_G13;
-        assert_eq!(a.grade,               b.grade,               "grade invariant");
-        assert_eq!(a.signature,           b.signature,           "signature invariant");
-        assert_eq!(a.fenwick_parity_tree, b.fenwick_parity_tree, "fenwick invariant");
+        assert_eq!(a.grade, b.grade, "grade invariant");
+        assert_eq!(a.signature, b.signature, "signature invariant");
+        assert_eq!(
+            a.fenwick_parity_tree, b.fenwick_parity_tree,
+            "fenwick invariant"
+        );
 
         // Verify Minkowski signature (+,-,-,-) via blade bitmask indices.
-        assert_eq!(a.signature[0], 1i8,  "scalar (0b0000)  → +1");
-        assert_eq!(a.signature[1], 1i8,  "e0     (0b0001)  → +1 (timelike)");
+        assert_eq!(a.signature[0], 1i8, "scalar (0b0000)  → +1");
+        assert_eq!(a.signature[1], 1i8, "e0     (0b0001)  → +1 (timelike)");
         assert_eq!(a.signature[2], -1i8, "e1     (0b0010)  → -1 (spacelike)");
         assert_eq!(a.signature[4], -1i8, "e2     (0b0100)  → -1 (spacelike)");
         assert_eq!(a.signature[8], -1i8, "e3     (0b1000)  → -1 (spacelike)");

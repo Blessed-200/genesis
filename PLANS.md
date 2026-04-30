@@ -2243,3 +2243,25 @@ Performance evidence checklist:
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
 - `cargo bench -p genesis-topology -- hnsw`
+
+## 1.29 CRATE-002/003 BN-04 projection reuse + BN-08 serial/parallel synchrony parity guard (2026-04-30)
+
+### Root cause
+
+- `CliffordHashTable::new()` rebuilds the same packed bivector projection matrix for every instance, duplicating deterministic work and causing avoidable allocation/copy overhead on construction.
+- BN-08 requires an explicit regression guard proving `synchrony_order_fast` remains numerically equivalent across serial and rayon reduction paths.
+
+### File-level actions
+
+1. `core/genesis-topology/src/lsh.rs`
+   - Introduce process-wide lazy projection cache using `std::sync::OnceLock<[[f64; 6]; TOTAL_PROJECTIONS]>`.
+   - Move projection packing to a single initialization routine and reuse immutable cached coefficients from all `CliffordHashTable` instances.
+   - Remove per-instance `proj_bivector_coeffs` storage and keep hashing path allocation-free.
+2. `core/genesis-dynamics/src/synchrony.rs`
+   - Add/rename an explicit test `synchrony_order_fast_matches_serial` that validates serial vs parallel reduction equivalence with strict tolerance.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
