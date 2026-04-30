@@ -569,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn parallel_and_serial_reduction_match_above_rayon_threshold() {
+    fn synchrony_order_fast_matches_serial() {
         let node_count = 4_352usize;
         let net = uniform_phase_net(node_count);
         let oscs = net.phases();

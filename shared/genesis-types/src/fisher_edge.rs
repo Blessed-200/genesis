@@ -229,6 +229,35 @@ mod tests {
     }
 
     #[test]
+    fn fisher_edge_metric_set_existing_edge() {
+        let mut metric = FisherEdgeMetric::new(vec![((node(10), node(11)), 1.25)]);
+        metric.set(node(11), node(10), 2.5);
+        assert!((metric.get(node(10), node(11)) - 2.5).abs() < 1e-15);
+        assert_eq!(
+            metric.edges.len(),
+            1,
+            "existing edge update must not duplicate"
+        );
+        assert!(metric.is_current(node(10)));
+        assert!(metric.is_current(node(11)));
+    }
+
+    #[test]
+    fn fisher_edge_metric_set_new_edge_rare() {
+        let mut metric = FisherEdgeMetric::new(vec![((node(1), node(2)), 0.5)]);
+        metric.set(node(3), node(4), 0.75);
+
+        assert!((metric.get(node(3), node(4)) - 0.75).abs() < 1e-15);
+        assert!(metric.is_current(node(3)));
+        assert!(metric.is_current(node(4)));
+        assert_eq!(metric.edges.len(), 2);
+        assert!(
+            metric.edges[0].0 <= metric.edges[1].0,
+            "edges must remain sorted"
+        );
+    }
+
+    #[test]
     fn set_maintains_sorted_order_for_binary_search() {
         let mut m = FisherEdgeMetric::new(vec![]);
         // Insert in non-sequential order

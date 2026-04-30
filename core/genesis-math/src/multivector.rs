@@ -187,7 +187,7 @@ impl SparseCliffordVector {
     /// Returns `GenesisError::SignatureViolation` if any coefficient
     /// is NaN or infinite.
     pub fn from_dense(dense: &[f64; TOTAL_BLADES]) -> Result<Self, GenesisError> {
-        if crate::has_non_finite_coeff(dense) {
+        if has_non_finite_coeff(dense) {
             #[cold]
             #[inline(never)]
             fn find_violation(dense: &[f64; TOTAL_BLADES]) -> GenesisError {

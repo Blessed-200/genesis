@@ -1299,6 +1299,34 @@ mod tests {
     }
 
     #[test]
+    fn proof_small_witness_no_allocation() {
+        let mut builder = WitnessBuilder::new();
+        let scope = AllocationScope::begin();
+        for _ in 0..64 {
+            builder.check(AxiomID::MinkowskiSignature, || true).unwrap();
+        }
+        let proof = builder.build(0);
+
+        assert_eq!(
+            scope.delta(),
+            0,
+            "small witness path must stay allocation-free"
+        );
+        assert!(proof.witness.len() <= WITNESS_INLINE_CAPACITY);
+    }
+
+    #[test]
+    fn proof_large_witness_uses_vec() {
+        let mut builder = WitnessBuilder::new();
+        for _ in 0..129 {
+            builder.check(AxiomID::MinkowskiSignature, || true).unwrap();
+        }
+
+        let proof = builder.build(0);
+        assert!(proof.witness.spilled(), "large witness must spill to heap");
+    }
+
+    #[test]
     fn witness_encodes_axiom_id_correctly() {
         let proof = build_proof(&[(AxiomID::AlgebraicConnectivity, true)]).unwrap();
         // Frame[0] = axiom_id = 2

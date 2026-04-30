@@ -5,6 +5,7 @@ use genesis_math::SparseCliffordVector;
 /// Buckets: Vec<Vec<NodeId>> indexed by sorted (u32, Vec<NodeId>) pairs.
 /// No `HashMap`. O(log N) amortized.
 use genesis_types::NodeId;
+use std::sync::OnceLock;
 
 /// Number of projection hyperplanes per table.
 const N_PROJECTIONS: usize = 8;
@@ -130,14 +131,30 @@ impl LshTable {
 /// AX-ID: AXIOMA-013
 pub struct CliffordHashTable {
     tables: [LshTable; N_TABLES],
-    /// Packed bivector-only projection coefficients.
-    ///
-    /// Layout: `[projection][bivector_lane]` where lane order follows `BIVECTOR_BLADES`.
-    /// This allows branchless fixed-width kernels (`6` lanes) for signature hashing,
-    /// avoiding sparse iterator overhead in hot paths.
-    ///
-    /// AX-ID: AXIOMA-013
-    proj_bivector_coeffs: [[f64; 6]; TOTAL_PROJECTIONS],
+}
+
+/// Process-wide immutable cache for packed bivector projection coefficients.
+///
+/// HOT PATH: projection hashing reads from this array for every insertion and query.
+/// The coefficients are initialized exactly once to avoid repeated packing work.
+///
+/// AX-ID: AXIOMA-013
+static PACKED_BIVECTOR_PROJECTIONS: OnceLock<[[f64; 6]; TOTAL_PROJECTIONS]> = OnceLock::new();
+
+#[inline]
+fn packed_bivector_projections() -> &'static [[f64; 6]; TOTAL_PROJECTIONS] {
+    PACKED_BIVECTOR_PROJECTIONS.get_or_init(|| {
+        core::array::from_fn(|i| {
+            [
+                PROJ_COEFFS[i][BIVECTOR_BLADES[0]],
+                PROJ_COEFFS[i][BIVECTOR_BLADES[1]],
+                PROJ_COEFFS[i][BIVECTOR_BLADES[2]],
+                PROJ_COEFFS[i][BIVECTOR_BLADES[3]],
+                PROJ_COEFFS[i][BIVECTOR_BLADES[4]],
+                PROJ_COEFFS[i][BIVECTOR_BLADES[5]],
+            ]
+        })
+    })
 }
 
 /// Pack a multivector into a fixed 6-lane bivector array.
@@ -167,18 +184,9 @@ fn dot_bivector_lanes(lhs: &[f64; 6], rhs: &[f64; 6]) -> f64 {
 }
 
 impl CliffordHashTable {
-    /// Create a new empty hash table with prepacked bivector projections.
+    /// Create a new empty hash table.
     pub fn new() -> Self {
-        let proj_bivector_coeffs = core::array::from_fn(|i| {
-            [
-                PROJ_COEFFS[i][BIVECTOR_BLADES[0]],
-                PROJ_COEFFS[i][BIVECTOR_BLADES[1]],
-                PROJ_COEFFS[i][BIVECTOR_BLADES[2]],
-                PROJ_COEFFS[i][BIVECTOR_BLADES[3]],
-                PROJ_COEFFS[i][BIVECTOR_BLADES[4]],
-                PROJ_COEFFS[i][BIVECTOR_BLADES[5]],
-            ]
-        });
+        let _ = packed_bivector_projections();
         Self {
             tables: [
                 LshTable::new(),
@@ -186,7 +194,6 @@ impl CliffordHashTable {
                 LshTable::new(),
                 LshTable::new(),
             ],
-            proj_bivector_coeffs,
         }
     }
 
@@ -198,7 +205,7 @@ impl CliffordHashTable {
     fn hash_packed_bivector(&self, packed_bivector: &[f64; 6], t: usize) -> u32 {
         let start = t * N_PROJECTIONS;
         let mut bits: u32 = 0;
-        let coeffs = &self.proj_bivector_coeffs;
+        let coeffs = packed_bivector_projections();
         for p in 0..N_PROJECTIONS {
             let dot = dot_bivector_lanes(packed_bivector, &coeffs[start + p]);
             bits |= ((dot >= 0.0) as u32) << p;

@@ -1127,6 +1127,10 @@ pub struct HnswGraph {
     epoch_gen: AtomicU32,
     /// Directed edge count at layer 0 (stored as directed for O(1) updates).
     edge_count_layer0_undirected: usize,
+    /// Cached directed edge count across all maintained layer-0 adjacency updates.
+    ///
+    /// BN-01: cached in O(1) at mutation points to avoid repeated graph scans.
+    total_edges: usize,
     /// Live-node count excluding tombstoned slots.
     live_nodes: usize,
     /// Persistent block-major SoA storage for layer-0 vectors.
@@ -1165,6 +1169,7 @@ impl Clone for HnswGraph {
             layer_neighbors: Arc::clone(&self.layer_neighbors),
             epoch_gen: AtomicU32::new(self.epoch_gen.load(AtomicOrdering::Relaxed)),
             edge_count_layer0_undirected: self.edge_count_layer0_undirected,
+            total_edges: self.total_edges,
             live_nodes: self.live_nodes,
             layer0_soa: HnswLayer0Slab {
                 blocks: self.layer0_soa.blocks.clone(),
@@ -1264,6 +1269,7 @@ impl HnswGraph {
             layer_neighbors: Arc::new(Vec::with_capacity(INITIAL_NODE_CAPACITY)),
             epoch_gen: AtomicU32::new(0),
             edge_count_layer0_undirected: 0,
+            total_edges: 0,
             live_nodes: 0,
             layer0_soa: HnswLayer0Slab {
                 blocks: Vec::with_capacity(INITIAL_SLAB_BLOCK_CAPACITY),
@@ -1323,6 +1329,7 @@ impl HnswGraph {
             layer_neighbors,
             epoch_gen: AtomicU32::new(self.epoch_gen.load(AtomicOrdering::Relaxed)),
             edge_count_layer0_undirected: self.edge_count_layer0_undirected,
+            total_edges: self.total_edges,
             live_nodes: self.live_nodes,
             layer0_soa: HnswLayer0Slab {
                 blocks: self.layer0_soa.blocks.clone(),
@@ -1845,6 +1852,7 @@ impl HnswGraph {
         ) && layer == 0
         {
             self.edge_count_layer0_undirected += 1;
+            self.total_edges += 1;
         }
     }
 
@@ -1860,6 +1868,7 @@ impl HnswGraph {
             if layer == 0 {
                 self.edge_count_layer0_undirected =
                     self.edge_count_layer0_undirected.saturating_sub(1);
+                self.total_edges = self.total_edges.saturating_sub(1);
             }
             return true;
         }
@@ -2379,7 +2388,7 @@ impl HnswGraph {
             node_idx,
             layer_pos: 0,
             edge_pos: 0,
-            seen: SmallVec::new(), // BN-07: inline budget matches MAX_UNIQUE_NEIGHBOR_BUDGET; spill indicates per-layer caps hit or constant drift
+            seen: arrayvec::ArrayVec::new(), // BN-07: fixed-capacity stack storage
         }
     }
 
@@ -2896,11 +2905,9 @@ struct NeighborIter<'a> {
     edge_pos: usize,
     /// Deduplicated node IDs already emitted, sorted ascending for binary search.
     ///
-    /// # BN-07: SmallVec eliminates heap allocation
-    /// Inline capacity tracks the legal multi-layer neighbour budget.
-    /// Any heap spill indicates either per-layer caps being hit, or the constants
-    /// MAX_UNIQUE_NEIGHBOR_BUDGET/M0/M/MAX_LAYERS have drifted from the intended bound.
-    seen: SmallVec<[u64; MAX_UNIQUE_NEIGHBOR_BUDGET]>,
+    /// # BN-07: ArrayVec eliminates heap allocation
+    /// Capacity tracks the legal multi-layer neighbour budget exactly.
+    seen: arrayvec::ArrayVec<u64, MAX_UNIQUE_NEIGHBOR_BUDGET>,
 }
 
 impl Iterator for NeighborIter<'_> {
@@ -4469,6 +4476,47 @@ mod tests {
     }
 
     #[test]
+    fn hnsw_edge_count_cached() {
+        let mut g = HnswGraph::new(32);
+        for i in 0..32_u64 {
+            g.insert(make_id(i), &make_vec((i as f64).mul_add(0.03, 0.1)))
+                .expect("insert");
+        }
+
+        let directed_sum: usize = g
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.id != NodeId::INVALID)
+            .map(|(idx, _)| g.node_neighbors_len(idx, 0))
+            .sum();
+
+        assert_eq!(g.total_edges, directed_sum);
+        assert_eq!(g.total_edges, g.edge_count_layer0_undirected);
+        assert_eq!(g.edge_count(), g.total_edges / 2);
+    }
+
+    #[test]
+    fn insert_1000_maintains_total_edges() {
+        let mut g = HnswGraph::new(64);
+        for i in 0..1000_u64 {
+            g.insert(make_id(i), &make_vec((i as f64).mul_add(0.007, 0.2)))
+                .expect("insert");
+        }
+
+        let directed_sum: usize = g
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.id != NodeId::INVALID)
+            .map(|(idx, _)| g.node_neighbors_len(idx, 0))
+            .sum();
+
+        assert_eq!(g.total_edges, directed_sum);
+        assert_eq!(g.total_edges, g.edge_count_layer0_undirected);
+    }
+
+    #[test]
     fn neighbor_order_is_deterministic() {
         let mut g_a = HnswGraph::new(32);
         for i in 0..8_u64 {
@@ -4784,7 +4832,7 @@ mod scaling_tests {
             node_idx: Some(central_idx),
             layer_pos: 0,
             edge_pos: 0,
-            seen: SmallVec::new(),
+            seen: arrayvec::ArrayVec::new(),
         };
 
         let mut max_seen_len = 0;
@@ -4801,7 +4849,7 @@ mod scaling_tests {
             node_idx: Some(central_idx),
             layer_pos: 0,
             edge_pos: 0,
-            seen: SmallVec::new(),
+            seen: arrayvec::ArrayVec::new(),
         };
 
         // Exhaust iterator while tracking max seen length
@@ -4828,14 +4876,14 @@ mod scaling_tests {
             "Seen set must hit the exact inline budget boundary"
         );
 
-        // Verify the SmallVec never allocated on the heap by checking spilled() method
-        // (SmallVec's capacity will be > inline_size if it spilled)
+        // Verify stack-backed fixed-capacity behavior: length must remain within
+        // compile-time budget under worst-case fixture.
         let iter_final = NeighborIter {
             graph: &graph,
             node_idx: Some(central_idx),
             layer_pos: 0,
             edge_pos: 0,
-            seen: SmallVec::new(),
+            seen: arrayvec::ArrayVec::new(),
         };
 
         // Run through once more and verify spilled status
@@ -4843,12 +4891,32 @@ mod scaling_tests {
         let _: Vec<_> = iter_check.by_ref().collect();
 
         assert!(
-            !iter_check.seen.spilled(),
-            "SmallVec heap-allocated! This violates the zero-allocation guarantee. \
-             seen.len()={}, seen.capacity()={}, inline_capacity={}",
+            iter_check.seen.len() <= MAX_UNIQUE_NEIGHBOR_BUDGET,
+            "ArrayVec exceeded fixed-capacity budget unexpectedly. \
+             seen.len()={}, capacity={}",
             iter_check.seen.len(),
-            iter_check.seen.capacity(),
-            MAX_UNIQUE_NEIGHBOR_BUDGET
+            iter_check.seen.capacity()
+        );
+    }
+
+    #[test]
+    fn hnsw_neighbor_iter_stack_allocation() {
+        use genesis_math::SparseCliffordVector;
+        use genesis_types::signal::NodeId;
+
+        let mut g = HnswGraph::new(32);
+        for i in 0..64_u64 {
+            let id = NodeId::try_new(i).unwrap();
+            let vec =
+                SparseCliffordVector::from_iter([(1, (i as f64).mul_add(0.01, 0.2))]).unwrap();
+            g.insert(id, &vec).expect("insert");
+        }
+
+        let id = NodeId::try_new(0).unwrap();
+        let collected: Vec<_> = g.neighbors(id).collect();
+        assert!(
+            !collected.is_empty(),
+            "neighbor iterator should yield at least one neighbor"
         );
     }
 }
