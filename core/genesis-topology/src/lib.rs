@@ -61,6 +61,10 @@ pub mod lsh;
 ///
 /// AX-ID: AXIOMA-007, AXIOMA-013
 pub mod manifold;
+/// Structural Mutation Kernel (SMK) for deterministic local HNSW edge updates.
+///
+/// AX-ID: AXIOMA-013, H_estructura
+pub mod structural_mutation;
 /// Vietoris-Rips complex construction up to dimension 2.
 ///
 /// AX-ID: AXIOMA-007
@@ -84,6 +88,7 @@ pub use incremental_cohomology::{
 pub use lsh::CliffordHashTable;
 pub use manifold::{HyperbolicCoord, ManifoldCollector};
 pub use rips::RipsComplex;
+pub use structural_mutation::{StructuralMutationKernel, StructuralMutationWitness};
 
 pub use topological_intuition::{
     HypothesisExplanation, HypothesisKind, TopologicalHypothesis, TopologicalIntuition,
