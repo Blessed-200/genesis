@@ -21,6 +21,7 @@ use genesis_math::{
 };
 use genesis_types::{GenesisError, NodeId, CLIFFORD_BASIS_SIZE, METRIC_WEIGHTS};
 use smallvec::SmallVec;
+use crate::structural_mutation::{StructuralMutationKernel, StructuralMutationWitness};
 
 pub(crate) const SLAB_LANES: usize = 8;
 pub(crate) const SLAB_DIM: usize = CLIFFORD_BASIS_SIZE;
@@ -139,6 +140,8 @@ thread_local! {
     static VISITED_EPOCH: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
     static INSERT_DISTANCE_CACHE: RefCell<Vec<(u32, f32)>> = const { RefCell::new(Vec::new()) };
     static REMOVE_SCRATCH: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
+    static BFS_QUEUE: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
+    static BFS_QUEUE_BACK: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone)]
@@ -1853,6 +1856,7 @@ impl HnswGraph {
         {
             self.edge_count_layer0_undirected += 1;
             self.total_edges += 1;
+            debug_assert_eq!(self.total_edges, self.edge_count_layer0_undirected);
         }
     }
 
@@ -1869,6 +1873,7 @@ impl HnswGraph {
                 self.edge_count_layer0_undirected =
                     self.edge_count_layer0_undirected.saturating_sub(1);
                 self.total_edges = self.total_edges.saturating_sub(1);
+                debug_assert_eq!(self.total_edges, self.edge_count_layer0_undirected);
             }
             return true;
         }
@@ -2465,6 +2470,20 @@ impl HnswGraph {
             .map(|n| n.id)
     }
 
+    pub(crate) fn total_slots(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub(crate) fn node_id_at_slot(&self, slot: usize) -> Option<NodeId> {
+        self.nodes
+            .get(slot)
+            .and_then(|n| (n.id != NodeId::INVALID).then_some(n.id))
+    }
+
+    pub(crate) fn slot_of_id(&self, id: NodeId) -> Option<usize> {
+        self.idx(id)
+    }
+
     /// Number of live nodes in the graph (excluding tombstoned slots).
     ///
     /// This cannot be `const fn` because `Arc` dereference is not const-evaluable
@@ -2587,6 +2606,8 @@ impl HnswGraph {
         self.edge_count_layer0_undirected = self
             .edge_count_layer0_undirected
             .saturating_sub(outgoing_layer0);
+        self.total_edges = self.total_edges.saturating_sub(outgoing_layer0);
+        debug_assert_eq!(self.total_edges, self.edge_count_layer0_undirected);
 
         // Step 3: Invalidate direct_index entry.
         let raw = id.get();
@@ -2636,6 +2657,381 @@ impl HnswGraph {
         }
 
         Ok(())
+    }
+
+    /// Global structural energy proxy over all live layer-0 directed edges.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura
+    pub fn global_structural_energy(&self) -> f64 {
+        let mut total = 0.0;
+        for idx in 0..self.nodes.len() {
+            if self.nodes[idx].id == NodeId::INVALID {
+                continue;
+            }
+            for nb in self.node_neighbors_iter(idx, 0) {
+                let nb_idx = nb as usize;
+                if nb_idx <= idx {
+                    continue;
+                }
+                if self.nodes[nb as usize].id == NodeId::INVALID {
+                    continue;
+                }
+                total += self
+                    .local_edge_hamiltonian(self.nodes[idx].id, self.nodes[nb as usize].id)
+                    .unwrap_or(0.0);
+            }
+        }
+        total
+    }
+
+    pub(crate) fn shortcut_density(&self) -> f64 {
+        if self.live_nodes == 0 {
+            return 0.0;
+        }
+        let mut count = 0usize;
+        for idx in 0..self.nodes.len() {
+            if self.nodes[idx].id != NodeId::INVALID && self.node_neighbors_len(idx, 0) > 1 {
+                count += 1;
+            }
+        }
+        count as f64 / self.live_nodes as f64
+    }
+
+    #[cfg(debug_assertions)]
+    fn audit_graph_integrity(&self) {
+        let mut directed = 0usize;
+        for idx in 0..self.nodes.len() {
+            if self.nodes[idx].id == NodeId::INVALID {
+                continue;
+            }
+            let mut last: Option<u32> = None;
+            for nb in self.node_neighbors_iter(idx, 0) {
+                directed += 1;
+                debug_assert_ne!(nb as usize, idx, "self-loop detected");
+                if let Some(prev) = last {
+                    debug_assert!(prev < nb, "adjacency must remain sorted and unique");
+                }
+                last = Some(nb);
+                debug_assert!((nb as usize) < self.nodes.len(), "neighbor index out of bounds");
+                debug_assert_ne!(self.nodes[nb as usize].id, NodeId::INVALID, "tombstone neighbor");
+                debug_assert!(self.node_neighbors_iter(nb as usize, 0).any(|back| back as usize == idx));
+            }
+            debug_assert!(self.node_neighbors_len(idx, 0) <= Self::layer_max_neighbors(0));
+        }
+        debug_assert_eq!(directed, self.total_edges);
+        debug_assert_eq!(directed, self.directed_edge_count_layer0());
+        debug_assert_eq!(self.undirected_edge_pairs_layer0(), self.directed_edge_count_layer0() / 2);
+        if let Some(entry_idx) = self.entry {
+            debug_assert!(self.nodes[entry_idx].id != NodeId::INVALID);
+            debug_assert!(self.entry_layer <= self.nodes[entry_idx].max_layer);
+        }
+    }
+
+    pub(crate) const fn directed_edge_count_layer0(&self) -> usize {
+        self.edge_count_layer0_undirected
+    }
+
+    pub(crate) const fn undirected_edge_pairs_layer0(&self) -> usize {
+        self.edge_count_layer0_undirected / 2
+    }
+
+    /// Computes local structural Hamiltonian delta for candidate edge mutation.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura
+    pub fn local_edge_hamiltonian(&self, a: NodeId, b: NodeId) -> Result<f64, GenesisError> {
+        let ia = self.idx(a).ok_or(GenesisError::InvariantViolation { axiom_id: 13 })?;
+        let ib = self.idx(b).ok_or(GenesisError::InvariantViolation { axiom_id: 13 })?;
+        if ia == ib {
+            return Ok(f64::INFINITY);
+        }
+        let dist = self.distance_to_node(&self.nodes[ia].vec, ib, 0);
+        let da = self.node_neighbors_len(ia, 0) as f64;
+        let db = self.node_neighbors_len(ib, 0) as f64;
+        Ok(dist + 0.05 * (da + db))
+    }
+
+    /// Backward-compatible alias for local structural edge Hamiltonian.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura
+    pub fn delta_h_structural(&self, a: NodeId, b: NodeId) -> Result<f64, GenesisError> {
+        self.local_edge_hamiltonian(a, b)
+    }
+
+    /// Attempts a deterministic local edge addition.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura
+    pub fn try_add_edge(&mut self, a: NodeId, b: NodeId) -> Result<Option<StructuralMutationWitness>, GenesisError> {
+        let h_edge = self.local_edge_hamiltonian(a, b)?;
+        let ia = self.idx(a).ok_or(GenesisError::InvariantViolation { axiom_id: 13 })?;
+        let ib = self.idx(b).ok_or(GenesisError::InvariantViolation { axiom_id: 13 })?;
+        if self
+            .node_neighbors_iter(ia, 0)
+            .any(|nb_idx_u32| nb_idx_u32 as usize == ib)
+        {
+            return Ok(None);
+        }
+        let dist = self.distance_to_node(&self.nodes[ia].vec, ib, 0);
+        self.add_edge(ia, 0, ib, dist);
+        self.add_edge(ib, 0, ia, dist);
+        Ok(Some(StructuralMutationKernel::accepted_witness(a, None, Some(b), h_edge)))
+    }
+
+    /// Attempts a deterministic local edge removal while preserving connectivity.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura
+    pub fn try_remove_edge(&mut self, a: NodeId, b: NodeId) -> Result<Option<StructuralMutationWitness>, GenesisError> {
+        let h_edge = self.local_edge_hamiltonian(a, b)?;
+        let ia = self.idx(a).ok_or(GenesisError::InvariantViolation { axiom_id: 13 })?;
+        let ib = self.idx(b).ok_or(GenesisError::InvariantViolation { axiom_id: 13 })?;
+        if self.node_neighbors_len(ia, 0) <= 1 || self.node_neighbors_len(ib, 0) <= 1 {
+            return Ok(None);
+        }
+        if !self.has_alternate_path_excluding_edge(ia, ib, 4) {
+            return Ok(None);
+        }
+        self.remove_edge_bidirectional(ia, 0, ib);
+        Ok(Some(StructuralMutationKernel::accepted_witness(a, Some(b), None, -h_edge)))
+    }
+
+    /// Attempts deterministic local rewiring `a-old_b` to `a-new_b`.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura
+    pub fn try_rewire(&mut self, a: NodeId, old_b: NodeId, new_b: NodeId, max_delta: f64) -> Result<Option<StructuralMutationWitness>, GenesisError> {
+        let h_old = self.local_edge_hamiltonian(a, old_b)?;
+        let h_new = self.local_edge_hamiltonian(a, new_b)?;
+        let delta = h_new - h_old;
+        if delta > max_delta {
+            return Ok(None);
+        }
+        let ia = self.idx(a).ok_or(GenesisError::InvariantViolation { axiom_id: 13 })?;
+        let inew = match self.idx(new_b) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        if self.node_neighbors_iter(ia, 0).any(|nb| nb as usize == inew) {
+            return Ok(None);
+        }
+        let iold = match self.idx(old_b) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        if self.node_neighbors_len(ia, 0) <= 1 || self.node_neighbors_len(iold, 0) <= 1 {
+            return Ok(None);
+        }
+        if !self.has_alternate_path_excluding_edge(ia, iold, 4) {
+            return Ok(None);
+        }
+        if self.node_neighbors_len(ia, 0) >= Self::layer_max_neighbors(0)
+            || self.node_neighbors_len(inew, 0) >= Self::layer_max_neighbors(0)
+        {
+            return Ok(None);
+        }
+
+        // Validate→Commit: all checks are complete. No rollback path should be needed.
+        if self.try_remove_edge(a, old_b)?.is_none() {
+            return Err(GenesisError::InvariantViolation { axiom_id: 13 });
+        }
+        if self.try_add_edge(a, new_b)?.is_none() {
+            return Err(GenesisError::InvariantViolation { axiom_id: 13 });
+        }
+        Ok(Some(StructuralMutationKernel::accepted_witness(a, Some(old_b), Some(new_b), delta)))
+    }
+
+    pub(crate) fn smk_find_local_rewire(
+        &self,
+        source: NodeId,
+        max_delta: f64,
+    ) -> Result<Option<(NodeId, NodeId)>, GenesisError> {
+        let src_idx = match self.idx(source) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let mut old_id = None;
+        let mut old_energy = f64::NEG_INFINITY;
+        for nb_idx_u32 in self.node_neighbors_iter(src_idx, 0) {
+            let neighbor_id = self.nodes[nb_idx_u32 as usize].id;
+            if neighbor_id == NodeId::INVALID {
+                continue;
+            }
+            let energy = self.local_edge_hamiltonian(source, neighbor_id)?;
+            if energy > old_energy {
+                old_energy = energy;
+                old_id = Some(neighbor_id);
+            }
+        }
+        let Some(old_id) = old_id else { return Ok(None); };
+        let h_current = self.local_edge_hamiltonian(source, old_id)?;
+        let b_idx = match self.idx(old_id) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let d_ab = self.distance_to_node(&self.nodes[src_idx].vec, b_idx, 0);
+        let distance_limit = max_delta + h_current - d_ab;
+        let mut second_order: SmallVec<[NodeId; M0 * M0]> = SmallVec::new();
+        let stamp = self.next_search_epoch();
+        VISITED_EPOCH.with(|marks_cell| {
+            let mut marks = marks_cell.borrow_mut();
+            if marks.len() < self.nodes.len() {
+                marks.resize(self.nodes.len(), 0);
+            }
+            for first_hop_idx_u32 in self.node_neighbors_iter(src_idx, 0) {
+                let first_hop_idx = first_hop_idx_u32 as usize;
+                for second_hop_idx_u32 in self.node_neighbors_iter(first_hop_idx, 0) {
+                    let second_hop_idx = second_hop_idx_u32 as usize;
+                    let second_hop_id = self.nodes[second_hop_idx].id;
+                    if second_hop_id == NodeId::INVALID
+                        || second_hop_id == source
+                        || second_hop_id == old_id
+                        || marks[second_hop_idx] == stamp
+                    {
+                        continue;
+                    }
+                    marks[second_hop_idx] = stamp;
+                    second_order.push(second_hop_id);
+                }
+            }
+        });
+        let mut best_candidate = None;
+        let mut best_score = h_current + max_delta;
+        for candidate_id in second_order {
+            let c_idx = match self.idx(candidate_id) {
+                Some(v) => v,
+                None => continue,
+            };
+            let d_bc = self.distance_to_node(&self.nodes[b_idx].vec, c_idx, 0);
+            if d_bc > distance_limit {
+                continue;
+            }
+            let h_new = self.local_edge_hamiltonian(source, candidate_id)?;
+            if h_new < best_score {
+                best_score = h_new;
+                best_candidate = Some(candidate_id);
+            }
+        }
+        Ok(best_candidate.map(|c| (old_id, c)))
+    }
+
+    pub(crate) fn smk_local_energy_signature(
+        &self,
+        source: NodeId,
+        tol: f64,
+    ) -> Result<u64, GenesisError> {
+        let src_idx = self
+            .idx(source)
+            .ok_or(GenesisError::InvariantViolation { axiom_id: 13 })?;
+        // HOT PATH: O(K), called for each candidate source during SMK discovery.
+        // Unrolled accumulation preserves commutativity while reducing loop overhead.
+        let mut acc0 = 0_u64;
+        let mut acc1 = 0_u64;
+        let mut acc2 = 0_u64;
+        let mut acc3 = 0_u64;
+        let neighbors: SmallVec<[u32; M0]> = self.node_neighbors_iter(src_idx, 0).collect();
+        let mut i = 0usize;
+        while i + 3 < neighbors.len() {
+            let n0 = neighbors[i] as usize;
+            let n1 = neighbors[i + 1] as usize;
+            let n2 = neighbors[i + 2] as usize;
+            let n3 = neighbors[i + 3] as usize;
+            let d0 = self.distance_to_node(&self.nodes[src_idx].vec, n0, 0);
+            let d1 = self.distance_to_node(&self.nodes[src_idx].vec, n1, 0);
+            let d2 = self.distance_to_node(&self.nodes[src_idx].vec, n2, 0);
+            let d3 = self.distance_to_node(&self.nodes[src_idx].vec, n3, 0);
+            let q0 = (d0 / tol).round().to_bits();
+            let q1 = (d1 / tol).round().to_bits();
+            let q2 = (d2 / tol).round().to_bits();
+            let q3 = (d3 / tol).round().to_bits();
+            let r0 = self.nodes[n0].id.get();
+            let r1 = self.nodes[n1].id.get();
+            let r2 = self.nodes[n2].id.get();
+            let r3 = self.nodes[n3].id.get();
+            let h0 = q0.wrapping_mul(0x517c_c1b7_2722_0a95) ^ r0.wrapping_mul(0x9e37_79b1_85eb_ca87);
+            let h1 = q1.wrapping_mul(0x517c_c1b7_2722_0a95) ^ r1.wrapping_mul(0x9e37_79b1_85eb_ca87);
+            let h2 = q2.wrapping_mul(0x517c_c1b7_2722_0a95) ^ r2.wrapping_mul(0x9e37_79b1_85eb_ca87);
+            let h3 = q3.wrapping_mul(0x517c_c1b7_2722_0a95) ^ r3.wrapping_mul(0x9e37_79b1_85eb_ca87);
+            acc0 = acc0.wrapping_add(h0.rotate_left(((r0 as u32) & 63) + 1));
+            acc1 = acc1.wrapping_add(h1.rotate_left(((r1 as u32) & 63) + 1));
+            acc2 = acc2.wrapping_add(h2.rotate_left(((r2 as u32) & 63) + 1));
+            acc3 = acc3.wrapping_add(h3.rotate_left(((r3 as u32) & 63) + 1));
+            i += 4;
+        }
+        let mut acc = acc0
+            .wrapping_add(acc1)
+            .wrapping_add(acc2)
+            .wrapping_add(acc3);
+        while i < neighbors.len() {
+            let nb_idx = neighbors[i] as usize;
+            let dist = self.distance_to_node(&self.nodes[src_idx].vec, nb_idx, 0);
+            let quantized = (dist / tol).round().to_bits();
+            let neighbor_raw = self.nodes[nb_idx].id.get();
+            let item_hash = quantized.wrapping_mul(0x517c_c1b7_2722_0a95)
+                ^ neighbor_raw.wrapping_mul(0x9e37_79b1_85eb_ca87);
+            let rot = ((neighbor_raw as u32) & 63) + 1;
+            acc = acc.wrapping_add(item_hash.rotate_left(rot));
+            i += 1;
+        }
+        Ok(acc.wrapping_mul(0x517c_c1b7_2722_0a95).rotate_left(31))
+    }
+
+    fn has_alternate_path_excluding_edge(
+        &self,
+        src_idx: usize,
+        dst_idx: usize,
+        depth_limit: usize,
+    ) -> bool {
+        let avg_degree = (self.node_neighbors_len(src_idx, 0) + self.node_neighbors_len(dst_idx, 0))
+            as f64
+            / 2.0;
+        let adaptive_depth = if avg_degree > 16.0 {
+            depth_limit
+        } else if avg_degree > 8.0 {
+            depth_limit + 1
+        } else {
+            depth_limit + 2
+        };
+        let stamp = self.next_search_epoch();
+        let stamp_back = stamp.wrapping_add(1);
+        VISITED_EPOCH.with(|marks_cell| {
+            let mut marks = marks_cell.borrow_mut();
+            if marks.len() < self.nodes.len() { marks.resize(self.nodes.len(), 0); }
+            BFS_QUEUE.with(|front_cell| BFS_QUEUE_BACK.with(|back_cell| {
+                let mut front = front_cell.borrow_mut();
+                let mut back = back_cell.borrow_mut();
+                front.clear(); back.clear();
+                front.push((src_idx, 0));
+                back.push((dst_idx, 0));
+                marks[src_idx] = stamp;
+                marks[dst_idx] = stamp_back;
+                let mut fh = 0usize;
+                let mut bh = 0usize;
+                while fh < front.len() || bh < back.len() {
+                    if fh < front.len() {
+                        let (current, depth) = front[fh]; fh += 1;
+                        if depth < adaptive_depth {
+                            for nb_idx_u32 in self.node_neighbors_iter(current, 0) {
+                                let nb = nb_idx_u32 as usize;
+                                if (current == src_idx && nb == dst_idx) || (current == dst_idx && nb == src_idx) { continue; }
+                                if marks[nb] == stamp_back { return true; }
+                                if marks[nb] == stamp || self.nodes[nb].id == NodeId::INVALID { continue; }
+                                marks[nb] = stamp; front.push((nb, depth + 1));
+                            }
+                        }
+                    }
+                    if bh < back.len() {
+                        let (current, depth) = back[bh]; bh += 1;
+                        if depth < adaptive_depth {
+                            for nb_idx_u32 in self.node_neighbors_iter(current, 0) {
+                                let nb = nb_idx_u32 as usize;
+                                if (current == src_idx && nb == dst_idx) || (current == dst_idx && nb == src_idx) { continue; }
+                                if marks[nb] == stamp { return true; }
+                                if marks[nb] == stamp_back || self.nodes[nb].id == NodeId::INVALID { continue; }
+                                marks[nb] = stamp_back; back.push((nb, depth + 1));
+                            }
+                        }
+                    }
+                }
+                false
+            }))
+        })
     }
 }
 
@@ -2793,6 +3189,57 @@ impl LockFreeHnswIndex {
             unsafe {
                 drop(Arc::from_raw(candidate));
             }
+        }
+    }
+
+    /// Executes one lock-free structural-mutation sweep via snapshot CAS publication.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura
+    pub fn structural_mutation_sweep(
+        &self,
+        kernel: &mut StructuralMutationKernel,
+    ) -> Result<usize, GenesisError> {
+        const MAX_CAS_ATTEMPTS: usize = 16;
+        let mut attempts = 0usize;
+        loop {
+            attempts += 1;
+            let base = self.load_snapshot();
+            let intents = kernel.discover_hypotheses(&base)?;
+            if intents.is_empty() {
+                return Ok(0);
+            }
+            let current = Arc::as_ptr(&base).cast_mut();
+            let delta = HnswDelta::Insert;
+            let mut updated = (*base).clone_with_delta(&delta);
+            let accepted = kernel.apply_intents(&mut updated, &intents)?;
+            if accepted == 0 {
+                return Ok(0);
+            }
+            #[cfg(debug_assertions)]
+            updated.audit_graph_integrity();
+            let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
+            let cas_success = self
+                .head
+                .compare_exchange(
+                    current,
+                    candidate,
+                    AtomicOrdering::AcqRel,
+                    AtomicOrdering::Acquire,
+                )
+                .is_ok();
+            if cas_success {
+                unsafe { drop(Arc::from_raw(current)); }
+                kernel.commit_signatures();
+                return Ok(accepted);
+            }
+            self.cas_retries.value.fetch_add(1, AtomicOrdering::Relaxed);
+            unsafe { drop(Arc::from_raw(candidate)); }
+            // TODO(Ω_STRUCTURAL): Merge disjoint intent logs across failed CAS epochs
+            // to avoid full rediscovery under high contention while preserving determinism.
+            if attempts >= MAX_CAS_ATTEMPTS {
+                return Ok(0);
+            }
+            std::hint::spin_loop();
         }
     }
 
