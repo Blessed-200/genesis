@@ -1129,7 +1129,7 @@ pub struct HnswGraph {
     /// Current search generation for epoch-marked visited state.
     epoch_gen: AtomicU32,
     /// Directed edge count at layer 0 (stored as directed for O(1) updates).
-    edge_count_layer0_undirected: usize,
+    directed_edge_count_layer0_raw: usize,
     /// Cached directed edge count across all maintained layer-0 adjacency updates.
     ///
     /// BN-01: cached in O(1) at mutation points to avoid repeated graph scans.
@@ -1171,7 +1171,7 @@ impl Clone for HnswGraph {
             state: self.state,
             layer_neighbors: Arc::clone(&self.layer_neighbors),
             epoch_gen: AtomicU32::new(self.epoch_gen.load(AtomicOrdering::Relaxed)),
-            edge_count_layer0_undirected: self.edge_count_layer0_undirected,
+            directed_edge_count_layer0_raw: self.directed_edge_count_layer0_raw,
             total_edges: self.total_edges,
             live_nodes: self.live_nodes,
             layer0_soa: HnswLayer0Slab {
@@ -1271,7 +1271,7 @@ impl HnswGraph {
             state: GraphState::Online,
             layer_neighbors: Arc::new(Vec::with_capacity(INITIAL_NODE_CAPACITY)),
             epoch_gen: AtomicU32::new(0),
-            edge_count_layer0_undirected: 0,
+            directed_edge_count_layer0_raw: 0,
             total_edges: 0,
             live_nodes: 0,
             layer0_soa: HnswLayer0Slab {
@@ -1331,7 +1331,7 @@ impl HnswGraph {
             state: self.state,
             layer_neighbors,
             epoch_gen: AtomicU32::new(self.epoch_gen.load(AtomicOrdering::Relaxed)),
-            edge_count_layer0_undirected: self.edge_count_layer0_undirected,
+            directed_edge_count_layer0_raw: self.directed_edge_count_layer0_raw,
             total_edges: self.total_edges,
             live_nodes: self.live_nodes,
             layer0_soa: HnswLayer0Slab {
@@ -1854,9 +1854,9 @@ impl HnswGraph {
             max_neighbors,
         ) && layer == 0
         {
-            self.edge_count_layer0_undirected += 1;
+            self.directed_edge_count_layer0_raw += 1;
             self.total_edges += 1;
-            debug_assert_eq!(self.total_edges, self.edge_count_layer0_undirected);
+            debug_assert_eq!(self.total_edges, self.directed_edge_count_layer0_raw);
         }
     }
 
@@ -1870,10 +1870,10 @@ impl HnswGraph {
             .remove_neighbor(layer, to_idx as u32)
         {
             if layer == 0 {
-                self.edge_count_layer0_undirected =
-                    self.edge_count_layer0_undirected.saturating_sub(1);
+                self.directed_edge_count_layer0_raw =
+                    self.directed_edge_count_layer0_raw.saturating_sub(1);
                 self.total_edges = self.total_edges.saturating_sub(1);
-                debug_assert_eq!(self.total_edges, self.edge_count_layer0_undirected);
+                debug_assert_eq!(self.total_edges, self.directed_edge_count_layer0_raw);
             }
             return true;
         }
@@ -2505,7 +2505,7 @@ impl HnswGraph {
 
     /// Total number of undirected edges at layer 0 (base connectivity).
     pub const fn edge_count(&self) -> usize {
-        self.edge_count_layer0_undirected / 2
+        self.directed_edge_count_layer0_raw / 2
     }
 
     /// Build a contiguous layer-0 SoA snapshot for read-heavy numeric pipelines.
@@ -2515,8 +2515,8 @@ impl HnswGraph {
         let mut node_ids = Vec::with_capacity(self.live_nodes);
         let mut node_to_slab = Vec::with_capacity(self.live_nodes);
         let mut neighbor_offsets = Vec::with_capacity(self.live_nodes);
-        let mut neighbor_ids = Vec::with_capacity(self.edge_count_layer0_undirected);
-        let mut neighbor_distances = Vec::with_capacity(self.edge_count_layer0_undirected);
+        let mut neighbor_ids = Vec::with_capacity(self.directed_edge_count_layer0_raw);
+        let mut neighbor_distances = Vec::with_capacity(self.directed_edge_count_layer0_raw);
 
         for (node_idx, node) in self.nodes.iter().enumerate() {
             if node.id == NodeId::INVALID {
@@ -2603,11 +2603,11 @@ impl HnswGraph {
         for layer in 0..=self.nodes[idx].max_layer {
             Self::cow_vec_mut(&mut self.layer_neighbors)[idx].clear_layer(layer);
         }
-        self.edge_count_layer0_undirected = self
-            .edge_count_layer0_undirected
+        self.directed_edge_count_layer0_raw = self
+            .directed_edge_count_layer0_raw
             .saturating_sub(outgoing_layer0);
         self.total_edges = self.total_edges.saturating_sub(outgoing_layer0);
-        debug_assert_eq!(self.total_edges, self.edge_count_layer0_undirected);
+        debug_assert_eq!(self.total_edges, self.directed_edge_count_layer0_raw);
 
         // Step 3: Invalidate direct_index entry.
         let raw = id.get();
@@ -2662,7 +2662,7 @@ impl HnswGraph {
     /// Global structural energy proxy over all live layer-0 directed edges.
     ///
     /// AX-ID: AXIOMA-013, H_estructura
-    pub fn global_structural_energy(&self) -> f64 {
+    pub fn global_structural_energy(&self) -> Result<f64, GenesisError> {
         let mut total = 0.0;
         for idx in 0..self.nodes.len() {
             if self.nodes[idx].id == NodeId::INVALID {
@@ -2676,12 +2676,12 @@ impl HnswGraph {
                 if self.nodes[nb as usize].id == NodeId::INVALID {
                     continue;
                 }
-                total += self
-                    .local_edge_hamiltonian(self.nodes[idx].id, self.nodes[nb as usize].id)
-                    .unwrap_or(0.0);
+                let energy =
+                    self.local_edge_hamiltonian(self.nodes[idx].id, self.nodes[nb as usize].id)?;
+                total += energy;
             }
         }
-        total
+        Ok(total)
     }
 
     pub(crate) fn shortcut_density(&self) -> f64 {
@@ -2727,12 +2727,25 @@ impl HnswGraph {
         }
     }
 
-    pub(crate) const fn directed_edge_count_layer0(&self) -> usize {
-        self.edge_count_layer0_undirected
+    /// Returns the number of directed edge slots in layer-0 storage.
+    ///
+    /// Internal representation stores each undirected pair as two directed edges.
+    pub const fn raw_directed_edge_count_layer0(&self) -> usize {
+        self.directed_edge_count_layer0_raw
     }
 
-    pub(crate) const fn undirected_edge_pairs_layer0(&self) -> usize {
-        self.edge_count_layer0_undirected / 2
+    /// Returns the number of directed edges at semantic API level for layer 0.
+    ///
+    /// Internal representation stores each undirected pair as two directed edges.
+    pub const fn directed_edge_count_layer0(&self) -> usize {
+        self.directed_edge_count_layer0_raw
+    }
+
+    /// Returns the number of undirected edge pairs in layer-0 semantic topology.
+    ///
+    /// Internal representation stores each undirected pair as two directed edges.
+    pub const fn undirected_edge_pairs_layer0(&self) -> usize {
+        self.directed_edge_count_layer0_raw / 2
     }
 
     /// Computes local structural Hamiltonian delta for candidate edge mutation.
@@ -4939,7 +4952,7 @@ mod tests {
             .sum();
 
         assert_eq!(g.total_edges, directed_sum);
-        assert_eq!(g.total_edges, g.edge_count_layer0_undirected);
+        assert_eq!(g.total_edges, g.directed_edge_count_layer0_raw);
         assert_eq!(g.edge_count(), g.total_edges / 2);
     }
 
@@ -4960,7 +4973,7 @@ mod tests {
             .sum();
 
         assert_eq!(g.total_edges, directed_sum);
-        assert_eq!(g.total_edges, g.edge_count_layer0_undirected);
+        assert_eq!(g.total_edges, g.directed_edge_count_layer0_raw);
     }
 
     #[test]
@@ -5271,7 +5284,7 @@ mod scaling_tests {
             0,
             "layer-0 directed edge count must be even in a bidirectional fixture"
         );
-        graph.edge_count_layer0_undirected = directed_layer0_edges;
+        graph.directed_edge_count_layer0_raw = directed_layer0_edges;
 
         // Create a NeighborIter and exhaust it, tracking the maximum seen.len()
         let iter = NeighborIter {

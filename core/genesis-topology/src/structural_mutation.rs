@@ -117,6 +117,7 @@ impl StructuralMutationKernel {
                 .is_some_and(|pos| self.previous_signatures_by_id[pos].1 == signature);
             if stable {
                 self.swap_buffer[slot] = signature;
+                self.pending_signatures.push((raw, signature));
                 continue;
             }
             if let Some((old_b, new_b)) = graph.smk_find_local_rewire(id, self.current_max_delta)? {
@@ -183,9 +184,15 @@ impl StructuralMutationKernel {
     ///
     /// AX-ID: AXIOMA-013, H_estructura
     pub fn commit_signatures(&mut self) {
-        self.previous_signatures_by_id = self.pending_signatures.clone();
-        self.previous_signatures_by_id.sort_unstable_by_key(|(id, _)| *id);
-        self.previous_signatures_by_id.dedup_by_key(|(id, _)| *id);
+        for (id, sig) in self.pending_signatures.drain(..) {
+            match self
+                .previous_signatures_by_id
+                .binary_search_by_key(&id, |(node_id, _)| *node_id)
+            {
+                Ok(pos) => self.previous_signatures_by_id[pos].1 = sig,
+                Err(pos) => self.previous_signatures_by_id.insert(pos, (id, sig)),
+            }
+        }
     }
 
     /// Returns convergence diagnostics `(sweep_count, current_max_delta)`.
@@ -241,8 +248,8 @@ impl StructuralMutationKernel {
         graph: &HnswGraph,
         intents_count: usize,
         accepted_count: usize,
-    ) -> StructuralPhaseMetrics {
-        let global_energy = graph.global_structural_energy();
+    ) -> Result<StructuralPhaseMetrics, GenesisError> {
+        let global_energy = graph.global_structural_energy()?;
         let accepted_ratio = if intents_count == 0 {
             0.0
         } else {
@@ -256,13 +263,13 @@ impl StructuralMutationKernel {
             nonzero as f64 / self.swap_buffer.len() as f64
         };
         let shortcut_density = graph.shortcut_density();
-        StructuralPhaseMetrics {
+        Ok(StructuralPhaseMetrics {
             global_energy,
             accepted_ratio,
             rewiring_pressure,
             topology_entropy,
             shortcut_density,
-        }
+        })
     }
 
     fn build_witness(
