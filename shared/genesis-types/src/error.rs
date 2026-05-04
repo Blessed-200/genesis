@@ -233,6 +233,40 @@ pub enum GenesisError {
     // ------------------------------------------------------------------
     // CRATE-004: genesis-evolution — Ricci / Fisher / Heat errors
     // ------------------------------------------------------------------
+    /// D² has a negative eigenvalue at scalar grade; Lorentzian signature violation.
+    #[error("Spectral error: D² signature violation at node {node_id} with eigenvalue {eigenvalue}")]
+    SpectralSignatureViolation {
+        /// Node identifier where the signature violation was observed.
+        node_id: u64,
+        /// Negative eigenvalue detected in the scalar-grade component of D².
+        eigenvalue: f64,
+    },
+
+    /// Spectral flow diverged after Armijo line-search.
+    #[error("Spectral error: divergence at iteration {iteration} with delta {delta}")]
+    SpectralDivergence {
+        /// Spectral flow iteration count at divergence detection.
+        iteration: u32,
+        /// Positive action delta observed after Armijo backtracking.
+        delta: f64,
+    },
+
+    /// Spectral lambda scale underflowed below stable floor.
+    #[error("Spectral error: lambda underflow {lambda}")]
+    SpectralLambdaUnderflow {
+        /// Lambda scale that fell below the minimum spectral regularization floor.
+        lambda: f64,
+    },
+
+    /// Spectral action requires at least one node.
+    #[error("Spectral error: insufficient nodes, found {found}, required {required}")]
+    SpectralInsufficientNodes {
+        /// Number of nodes provided to the spectral evaluator.
+        found: usize,
+        /// Minimum node count required to evaluate a meaningful trace.
+        required: usize,
+    },
+
     /// The Sinkhorn transport algorithm failed to converges within
     /// `SINKHORN_MAX_ITER` iterations (Ollivier-Ricci curvature aborted).
     ///
@@ -520,6 +554,10 @@ impl GenesisError {
             | Self::KuramotoDuplicateNodeId { .. }
             | Self::PrematureCollapse { .. }
             | Self::VfeNonFinite { .. }
+            | Self::SpectralSignatureViolation { .. }
+            | Self::SpectralDivergence { .. }
+            | Self::SpectralLambdaUnderflow { .. }
+            | Self::SpectralInsufficientNodes { .. }
             | Self::SinkhornNotConverged { .. }
             | Self::RicciMetricDegenerate { .. }
             | Self::ProjectionHomeomorphismViolated { .. }

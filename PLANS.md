@@ -2265,3 +2265,30 @@ Performance evidence checklist:
 - `cargo check --workspace`
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.29 CRATE-004 genesis-spectral phase 5A bootstrap (2026-05-04)
+
+### Root cause
+
+- Workspace lacks CRATE-004 spectral crate and API surface needed for Phase 5A spectral action/flow.
+- `GenesisError` and constants do not yet expose spectral invariants (lambda floor, roundtrip tolerance, spectral divergence/signature errors).
+- No spectral operators/action-flow implementation exists, preventing proofs and monotone spectral descent checks.
+
+### File-level actions
+
+1. `Cargo.toml`
+   - Register `core/genesis-spectral` in workspace members and workspace dependencies.
+2. `shared/genesis-types/src/constants.rs`
+   - Add `SPECTRAL_LAMBDA_MIN` and `ROUNDTRIP_TOL` constants with AX-ID docs.
+3. `shared/genesis-types/src/error.rs`
+   - Add spectral error variants under CRATE-004 section.
+4. `core/genesis-spectral/*`
+   - Create crate with modules: `lib`, `error`, `sparse_matrix`, `dirac`, `action`, `flow`, `zeta`.
+   - Implement sparse 16x16 storage, Dirac operator construction/proof generation, spectral action evaluation + gradients, Armijo spectral flow, and zeta regularization helpers.
+   - Add required unit/property tests for monotonicity, proof generation, sparse matrix behavior, and spectral/metric consistency.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
