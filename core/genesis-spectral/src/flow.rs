@@ -31,6 +31,8 @@ pub struct SpectralFlowHistory {
 }
 
 impl SpectralFlowEngine {
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn new(
         lambda: f64,
         tau: f64,
@@ -44,6 +46,8 @@ impl SpectralFlowEngine {
             candidate_buffer: Vec::new(),
         }
     }
+    /// # Errors
+    /// Returns `GenesisError::SpectralDivergence` when Armijo backtracking fails.
     pub fn step(
         &mut self,
         node_blades: &mut [(u64, [f64; 16])],

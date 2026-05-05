@@ -376,6 +376,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "genesis-spectral"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "genesis-math",
+ "genesis-topology",
+ "genesis-types",
+ "proptest",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
 name = "genesis-topology"
 version = "0.1.0"
 dependencies = [

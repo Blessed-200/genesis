@@ -5,10 +5,11 @@ use crate::sparse_matrix::SparseMatrix16;
 
 /// Baseline algebraic contribution of Tr(D²)/4 in G(1,3) with Minkowski signature (+,-,-,-).
 ///
-/// Derived from Σ_μ η^μμ = +1-1-1-1 over the 16-blade Clifford basis.
+/// Derived from `Σ_μ η^μμ = +1-1-1-1` over the 16-blade Clifford basis.
 /// Subtracted in `squared()` so `ricci_scalar` measures relative curvature
 /// with respect to the canonical flat manifold.
 const FLAT_DIRAC_TRACE_BASELINE: f64 = -8.0;
+const SIGNATURES: [f64; 4] = [1.0, -1.0, -1.0, -1.0];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -21,7 +22,8 @@ pub enum LorentzIndex {
 
 impl LorentzIndex {
     #[inline]
-    pub fn metric_signature(self) -> f64 {
+    #[must_use]
+    pub const fn metric_signature(self) -> f64 {
         match self {
             Self::Time => 1.0,
             Self::X | Self::Y | Self::Z => -1.0,
@@ -46,6 +48,8 @@ pub struct DiracOperator {
 }
 
 impl DiracOperator {
+    /// # Errors
+    /// Returns `GenesisError::SpectralLambdaUnderflow` when lambda is invalid.
     pub fn from_blades(blades: &[f64; 16], lambda: f64) -> Result<Self, GenesisError> {
         if !lambda.is_finite() || lambda < SPECTRAL_LAMBDA_MIN {
             return Err(GenesisError::SpectralLambdaUnderflow { lambda });
@@ -59,7 +63,7 @@ impl DiracOperator {
                         LorentzIndex::Y,
                         LorentzIndex::Z,
                     ][mu],
-                    output_grade: grade as u8,
+                    output_grade: u8::try_from(grade).unwrap_or(u8::MAX),
                     coefficient: [1.0, 0.0],
                 })
             })
@@ -77,12 +81,13 @@ impl DiracOperator {
         })
     }
 
+    /// # Errors
+    /// Returns `GenesisError` when coefficients cannot build valid multivectors.
     pub fn apply(&self, mv_coeffs: &[f64; 16]) -> Result<[f64; 16], GenesisError> {
         let _ = &self.gamma_table;
         let center = SparseCliffordVector::from_dense(&self.center_blades)?;
         let mv = SparseCliffordVector::from_dense(mv_coeffs)?;
 
-        const SIGNATURES: [f64; 4] = [1.0, -1.0, -1.0, -1.0];
         let mut out = [0.0_f64; 16];
 
         for (mu, sig) in SIGNATURES.iter().copied().enumerate() {
@@ -106,15 +111,17 @@ impl DiracOperator {
         Ok(out)
     }
 
+    /// # Errors
+    /// Returns `GenesisError` when intermediate Dirac applications fail.
     pub fn squared(&self) -> Result<DiracSquared, GenesisError> {
         let mut dense = [[0.0_f64; 16]; 16];
         for j in 0..16 {
             let mut basis = [0.0_f64; 16];
             basis[j] = 1.0;
-            let d_basis = self.apply(&basis)?;
-            let d2_basis = self.apply(&d_basis)?;
+            let first_apply = self.apply(&basis)?;
+            let second_apply = self.apply(&first_apply)?;
             for i in 0..16 {
-                dense[i][j] = d2_basis[i];
+                dense[i][j] = second_apply[i];
             }
         }
         let matrix = SparseMatrix16::from_dense(&dense);
@@ -125,6 +132,8 @@ impl DiracOperator {
         })
     }
 
+    /// # Errors
+    /// Returns `GenesisError` when input dimensions or multivector construction are invalid.
     pub fn commutator_norm(&self, f_values: &[f64]) -> Result<f64, GenesisError> {
         if f_values.len() != 16 {
             return Err(GenesisError::DimensionMismatch {
@@ -136,11 +145,11 @@ impl DiracOperator {
         for (i, w) in weighted.iter_mut().enumerate() {
             *w = self.center_blades[i] * f_values[i];
         }
-        let d_fmv = self.apply(&weighted)?;
-        let d_mv = self.apply(&self.center_blades)?;
+        let d_comm_left = self.apply(&weighted)?;
+        let d_comm_right = self.apply(&self.center_blades)?;
         let mut sum = 0.0;
         for i in 0..16 {
-            let delta = d_fmv[i] - f_values[i] * d_mv[i];
+            let delta = f_values[i].mul_add(-d_comm_right[i], d_comm_left[i]);
             sum += delta * delta;
         }
         Ok(sum.sqrt())

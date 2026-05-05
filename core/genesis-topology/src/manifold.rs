@@ -312,12 +312,10 @@ impl ManifoldCollector {
 
     /// Return the number of nodes.
     ///
-    /// Delegates to Arc-backed HNSW storage, so this is intentionally not `const fn`.
-    ///
     /// AX-ID: AXIOMA-013
     #[allow(clippy::inline_always)]
     #[inline(always)]
-    pub fn node_count(&self) -> usize {
+    pub const fn node_count(&self) -> usize {
         self.graph.node_count()
     }
 

@@ -9,6 +9,9 @@ pub enum CutoffFunction {
     Sharp,
 }
 impl CutoffFunction {
+    #[must_use]
+    /// # Errors
+    /// Returns `GenesisError` when input is empty or Dirac construction fails.
     pub fn evaluate(self, x: f64) -> f64 {
         match self {
             Self::Gaussian => (-x).exp(),
@@ -25,12 +28,13 @@ impl CutoffFunction {
             }
         }
     }
+    #[must_use]
     pub fn derivative(self, x: f64) -> f64 {
         match self {
             Self::Gaussian => -(-x).exp(),
             Self::Polynomial { exponent } => {
                 let exp_i32 = i32::try_from(exponent).unwrap_or(i32::MAX);
-                -(exponent as f64) * (1.0 + x).powi(-exp_i32 - 1)
+                -f64::from(exponent) * (1.0 + x).powi(-exp_i32 - 1)
             }
             Self::Sharp => 0.0,
         }
@@ -55,9 +59,12 @@ impl SpectralActionEngine {
         (lambda * lambda).max(SPECTRAL_LAMBDA_MIN * SPECTRAL_LAMBDA_MIN)
     }
 
-    pub fn new(cutoff: CutoffFunction, lambda: f64) -> Self {
+    #[must_use]
+    pub const fn new(cutoff: CutoffFunction, lambda: f64) -> Self {
         Self { cutoff, lambda }
     }
+    /// # Errors
+    /// Returns `GenesisError` when input is empty or Dirac construction fails.
     pub fn evaluate(
         &self,
         node_blades: &[(u64, [f64; 16])],
@@ -82,7 +89,7 @@ impl SpectralActionEngine {
             let _ = d.construction_proof;
             builder.check(AxiomID::ProofGuard, || true)?;
         }
-        let a0 = node_blades.len() as f64;
+        let a0 = f64::from(u32::try_from(node_blades.len()).unwrap_or(u32::MAX));
         let a4 = if a0 > 0.0 { (a2 * a2) / a0 } else { 0.0 };
         let mean_curvature = if a0 > 0.0 { 6.0 * a2 / a0 } else { 0.0 };
         let proof = builder.build(0);
@@ -94,6 +101,8 @@ impl SpectralActionEngine {
             evaluation_proof: proof.hash,
         })
     }
+    /// # Errors
+    /// Returns `GenesisError` when input is empty or finite-difference evaluations fail.
     pub fn gradient_only(
         &self,
         node_blades: &[(u64, [f64; 16])],
@@ -104,7 +113,6 @@ impl SpectralActionEngine {
                 required: 1,
             });
         }
-        const EPS: f64 = 1e-7;
         let mut out = Vec::with_capacity(node_blades.len());
         for &(id, blades) in node_blades {
             let d_base = DiracOperator::from_blades(&blades, self.lambda)?;
@@ -115,13 +123,13 @@ impl SpectralActionEngine {
             let mut grad = [0.0_f64; 16];
             for j in 0..16 {
                 let mut perturbed = blades;
-                perturbed[j] += EPS;
+                perturbed[j] += 1e-7;
                 let d_p = DiracOperator::from_blades(&perturbed, self.lambda)?;
                 let sq_p = d_p.squared()?;
                 let e_p = self
                     .cutoff
                     .evaluate(sq_p.matrix.trace() / Self::lambda_sq_floor(self.lambda));
-                grad[j] = (e_p - e_base) / EPS;
+                grad[j] = (e_p - e_base) / 1e-7;
             }
             out.push((id, grad));
         }

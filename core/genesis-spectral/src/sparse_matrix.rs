@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 #[derive(Clone, Debug)]
-pub(crate) struct SparseMatrix16 {
+pub struct SparseMatrix16 {
     entries: Vec<(u8, u8, f64)>,
     row_ptr: [u32; 17],
 }
@@ -10,14 +10,18 @@ impl SparseMatrix16 {
         let mut entries = Vec::new();
         let mut row_ptr = [0_u32; 17];
         for (r, row) in dense.iter().enumerate() {
-            row_ptr[r] = entries.len() as u32;
+            row_ptr[r] = u32::try_from(entries.len()).unwrap_or(u32::MAX);
             for (c, value) in row.iter().enumerate() {
                 if value.abs() > 1e-14 {
-                    entries.push((r as u8, c as u8, *value));
+                    entries.push((
+                        u8::try_from(r).unwrap_or(u8::MAX),
+                        u8::try_from(c).unwrap_or(u8::MAX),
+                        *value,
+                    ));
                 }
             }
         }
-        row_ptr[16] = entries.len() as u32;
+        row_ptr[16] = u32::try_from(entries.len()).unwrap_or(u32::MAX);
         Self { entries, row_ptr }
     }
 
