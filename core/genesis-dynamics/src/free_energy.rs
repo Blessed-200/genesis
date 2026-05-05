@@ -288,10 +288,8 @@ impl VFEMinimizer {
     ///
     /// # Scaling (BN-05)
     ///
-    /// The former hard cap of `NodeId < 1_000_000` is removed. The direct-index
-    /// Vec grows dynamically to `id.get() + 1` entries. A defensive maximum of
-    /// `MAX_ALLOWED_NODE_ID = 100_000_000` prevents runaway allocation from
-    /// adversarial or buggy IDs (4 bytes × 10⁸ = 400 MB absolute worst case).
+    /// The former hard cap of `NodeId < 1_000_000` is removed. The paged direct index
+    /// grows dynamically to include any valid `NodeId` representable as `usize`.
     ///
     /// Duplicate insertions (same ID) are idempotent — the existing entry is kept.
     /// Non-finite prior means are silently rejected.
@@ -302,12 +300,6 @@ impl VFEMinimizer {
         let Ok(raw) = usize::try_from(id.get()) else {
             return;
         };
-
-        // Defensive maximum: 100× production target. Prevents OOM from buggy callers.
-        const MAX_ALLOWED_NODE_ID: usize = 100_000_000;
-        if raw > MAX_ALLOWED_NODE_ID {
-            return;
-        }
 
         if self.id_to_idx.get(raw).is_none() {
             let Ok(idx) = u32::try_from(self.beliefs.len()) else {
@@ -810,9 +802,8 @@ mod tests {
         // NodeId::MAX_VALID = u64::MAX − 1; only u64::MAX is rechazado per try_new.
         assert!(NodeId::try_new(u64::MAX).is_err());
 
-        // BN-05: 2_000_000 is now well within the new MAX_ALLOWED_NODE_ID = 100_000_000.
-        // The former 1_000_000 hard cap is removed. Verify that a NodeId of 2M
-        // is accepted and functional.
+        // BN-05: the former 1_000_000 hard cap is removed. Verify that a NodeId
+        // of 2_000_000 is accepted and functional.
         let formerly_rejected = NodeId::try_new(2_000_000).expect("2_000_000 is valid NodeId");
         let mut vfe = VFEMinimizer::new();
         vfe.add_node(formerly_rejected, [1.5, 0.0, 0.0, 0.0]);
@@ -830,27 +821,24 @@ mod tests {
     }
 
     #[test]
-    fn vfe_accepts_nodeid_one_million() {
-        let id = NodeId::try_new(1_000_000).expect("1_000_000 is a valid NodeId");
+    fn vfe_accepts_node_id_at_and_beyond_one_million() {
         let mut vfe = VFEMinimizer::new();
-        vfe.add_node(id, [0.25, -0.5, 0.75, -1.0]);
-        let val = vfe.compute_vfe(id, Some(&[0.25, -0.5, 0.75, -1.0]));
-        assert_eq!(
-            val, 0.0,
-            "node id=1_000_000 must be accepted and operational"
-        );
-    }
 
-    #[test]
-    fn vfe_rejects_nodeid_too_large() {
-        let id = NodeId::try_new(100_000_001).expect("test id must be representable");
-        let mut vfe = VFEMinimizer::new();
-        vfe.add_node(id, [1.0, 0.0, 0.0, 0.0]);
+        let at_limit = NodeId::try_new(1_000_000).expect("1_000_000 is a valid NodeId");
+        vfe.add_node(at_limit, [0.25, -0.5, 0.75, -1.0]);
+        assert!(vfe.lookup(at_limit).is_some(), "NodeId >= 1_000_000 must be accepted");
         assert_eq!(
-            vfe.compute_vfe(id, Some(&[1.0, 0.0, 0.0, 0.0])),
-            0.0,
-            "id above MAX_ALLOWED_NODE_ID must remain unregistered"
+            vfe.compute_vfe(at_limit, Some(&[0.25, -0.5, 0.75, -1.0])),
+            0.0
         );
+
+        let beyond_limit = NodeId::try_new(1_000_001).expect("1_000_001 is a valid NodeId");
+        vfe.add_node(beyond_limit, [1.0, 0.0, 0.0, 0.0]);
+        assert!(
+            vfe.lookup(beyond_limit).is_some(),
+            "NodeId >= 1_000_000 must be accepted"
+        );
+        assert_eq!(vfe.compute_vfe(beyond_limit, Some(&[1.0, 0.0, 0.0, 0.0])), 0.0);
     }
 
     #[test]
