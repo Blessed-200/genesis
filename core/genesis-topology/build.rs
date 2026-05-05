@@ -4,8 +4,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(genesis_const_layer0_codec)");
 
     let const_requested = std::env::var("GENESIS_ENABLE_CONST_LAYER0_CODEC")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+        .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
 
     if const_requested && rustc_minor() >= Some(83) {
         println!("cargo:rustc-cfg=genesis_const_layer0_codec");

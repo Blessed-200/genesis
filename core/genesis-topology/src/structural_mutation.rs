@@ -152,9 +152,10 @@ impl StructuralMutationKernel {
             {
                 accepted += 1;
                 if let Some(slot) = graph.slot_of_id(src) {
-                    self.swap_buffer[slot] =
-                        graph.smk_local_energy_signature(src, self.equilibrium_signature_tolerance)?;
-                    self.pending_signatures.push((src.get(), self.swap_buffer[slot]));
+                    self.swap_buffer[slot] = graph
+                        .smk_local_energy_signature(src, self.equilibrium_signature_tolerance)?;
+                    self.pending_signatures
+                        .push((src.get(), self.swap_buffer[slot]));
                 }
                 if let Some(slot) = graph.slot_of_id(old_b) {
                     self.swap_buffer[slot] = 0;
@@ -162,16 +163,16 @@ impl StructuralMutationKernel {
                 if let Some(slot) = graph.slot_of_id(new_b) {
                     self.swap_buffer[slot] = 0;
                 }
-            }
-            else {
+            } else {
                 self.record_failed_intent(edge_hash);
             }
         }
         if accepted == 0 && !intents.is_empty() {
             self.consecutive_stable_sweeps = self.consecutive_stable_sweeps.saturating_add(1);
             if self.consecutive_stable_sweeps > 3 {
-                let decay = 0.5_f64.powi((self.consecutive_stable_sweeps - 3) as i32);
-                self.current_max_delta = (self.initial_max_delta * decay).max(self.initial_max_delta * 0.01);
+                let decay = 0.5_f64.powi((self.consecutive_stable_sweeps - 3).cast_signed());
+                self.current_max_delta =
+                    (self.initial_max_delta * decay).max(self.initial_max_delta * 0.01);
             }
         } else {
             self.consecutive_stable_sweeps = 0;
@@ -184,14 +185,15 @@ impl StructuralMutationKernel {
     /// AX-ID: AXIOMA-013, H_estructura
     pub fn commit_signatures(&mut self) {
         self.previous_signatures_by_id = self.pending_signatures.clone();
-        self.previous_signatures_by_id.sort_unstable_by_key(|(id, _)| *id);
+        self.previous_signatures_by_id
+            .sort_unstable_by_key(|(id, _)| *id);
         self.previous_signatures_by_id.dedup_by_key(|(id, _)| *id);
     }
 
     /// Returns convergence diagnostics `(sweep_count, current_max_delta)`.
     ///
     /// AX-ID: AXIOMA-013, H_estructura
-    pub fn convergence_stats(&self) -> (u64, f64) {
+    pub const fn convergence_stats(&self) -> (u64, f64) {
         (self.sweep_count, self.current_max_delta)
     }
 
@@ -276,7 +278,11 @@ impl StructuralMutationKernel {
         witness.extend_from_slice(&old_target.unwrap_or(NodeId::INVALID).get().to_le_bytes());
         witness.extend_from_slice(&new_target.unwrap_or(NodeId::INVALID).get().to_le_bytes());
         witness.extend_from_slice(&delta_h_structural.to_le_bytes());
-        Proof::new(AxiomSet::from_slice(genesis_types::proof::AxiomID::STRUCTURAL_REQUIRED), witness, 0)
+        Proof::new(
+            AxiomSet::from_slice(genesis_types::proof::AxiomID::STRUCTURAL_REQUIRED),
+            witness,
+            0,
+        )
     }
 
     pub(crate) fn accepted_witness(
@@ -292,5 +298,42 @@ impl StructuralMutationKernel {
             delta_h_structural,
             proof: Self::build_witness(source, old_target, new_target, delta_h_structural),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StructuralMutationKernel;
+    use genesis_types::NodeId;
+
+    #[test]
+    fn accepted_witness_serializes_targets_and_delta() {
+        let source = NodeId::try_new(1).expect("id");
+        let old_target = NodeId::try_new(2).expect("id");
+        let new_target = NodeId::try_new(3).expect("id");
+        let witness = StructuralMutationKernel::accepted_witness(
+            source,
+            Some(old_target),
+            Some(new_target),
+            -0.25,
+        );
+
+        assert_eq!(witness.source, source);
+        assert_eq!(witness.old_target, Some(old_target));
+        assert_eq!(witness.new_target, Some(new_target));
+        assert!((witness.delta_h_structural + 0.25).abs() < 1e-12);
+        assert_ne!(witness.proof.hash, [0_u8; 32]);
+    }
+
+    #[test]
+    fn failed_intents_are_suppressed_after_repeated_rejection() {
+        let mut kernel = StructuralMutationKernel::new(0.1);
+        let edge_hash = 0xCAFE_BABE_u64;
+        assert!(!kernel.should_suppress(edge_hash));
+        kernel.record_failed_intent(edge_hash);
+        kernel.record_failed_intent(edge_hash);
+        kernel.record_failed_intent(edge_hash);
+        assert!(kernel.should_suppress(edge_hash));
+        assert_eq!(kernel.convergence_stats(), (0, 0.1));
     }
 }

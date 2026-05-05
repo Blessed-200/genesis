@@ -5,6 +5,7 @@ members = [
     "core/genesis-math",
     "core/genesis-topology",
     "core/genesis-dynamics",
+    "core/genesis-spectral",
 ]
 
 [workspace.dependencies]

@@ -31,7 +31,7 @@ operations with algebraic invariants, not statistical approximations.
 
 | Crate | Phase | Role |
 |-------|-------|------|
-| `genesis-evolution` | 5 | Ricci flow, wormhole collapse, dimensional expansion |
+| `genesis-spectral` | 5 | Dirac operator, spectral action S_Λ[D], spectral flow |
 | `genesis-consciousness` | 6 | Global observer Ω, duality gate, decision signals |
 | `genesis-io` | 7 | Sensory projection Π, adjoint manifestation Π* |
 
@@ -52,13 +52,13 @@ that measures **angular coherence weighted by inferential certainty**.
 
 ### 16D belief over G(1,3)
 `VFEMinimizer` maintains beliefs over all 16 G(1,3) blade coefficients.
-`compute_vfe_with_grad()` returns `[f64; 16]`, providing `DiscreteRicciFlow` (CRATE-004)
+`compute_vfe_with_grad()` returns `[f64; 16]`, providing `SpectralFlowEngine` (CRATE-004)
 with the complete curvature signal across all grades — not just the 4D vector approximation.
 
 ### Hyperbolic coordinate contract
 `ManifoldCollector` stores `Option<HyperbolicCoord>` per node (Poincaré disk).
-Returns `None` until `DiscreteRicciFlow` populates coordinates based on Ollivier-Ricci
-curvature: root concepts at the disk centre, leaf concepts at the periphery.
+Returns `None` until `SpectralFlowEngine`-driven updates populate coordinates from
+spectral curvature estimates: root concepts at the disk centre, leaf concepts at the periphery.
 
 ### Mutation proof system
 Every structural mutation generates a **BLAKE3-hashed witness** before execution.
@@ -191,7 +191,7 @@ Full mathematical derivation and implementation contracts are in `docs/`.
 - **Variational Free Energy / Active Inference:** Friston et al. (2010–2022)
 - **Geometric Algebra / Spacetime Algebra:** Hestenes, *Space-Time Algebra* (1966/2015)
 - **Kuramoto model:** Kuramoto (1984); Strogatz (2000)
-- **Ollivier-Ricci flow:** Ollivier (2009); Lin et al. (2011)
+- **Spectral action and geometry:** Chamseddine & Connes (1997); Connes (1994)
 - **HNSW:** Malkov & Yashunin (2018)
 - **Poincaré embeddings:** Nickel & Kiela (2017)
 - **Johnson-Lindenstrauss lemma:** Johnson & Lindenstrauss (1984)

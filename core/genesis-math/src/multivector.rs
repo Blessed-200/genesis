@@ -129,7 +129,7 @@ pub(crate) fn derive_all_metadata(buf: &mut [f64; TOTAL_BLADES]) -> DerivedMetad
 
 #[cold]
 #[inline]
-fn normalize_non_finite_payload(value: f64) -> Option<u8> {
+const fn normalize_non_finite_payload(value: f64) -> Option<u8> {
     match value.classify() {
         core::num::FpCategory::Nan => Some(0),
         core::num::FpCategory::Infinite => Some(if value.is_sign_positive() { 1 } else { 2 }),

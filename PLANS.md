@@ -2265,3 +2265,58 @@ Performance evidence checklist:
 - `cargo check --workspace`
 - `cargo test --workspace`
 - `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.29 CRATE-004 genesis-spectral phase 5A bootstrap (2026-05-04)
+
+### Root cause
+
+- Workspace lacks CRATE-004 spectral crate and API surface needed for Phase 5A spectral action/flow.
+- `GenesisError` and constants do not yet expose spectral invariants (lambda floor, roundtrip tolerance, spectral divergence/signature errors).
+- No spectral operators/action-flow implementation exists, preventing proofs and monotone spectral descent checks.
+
+### File-level actions
+
+1. `Cargo.toml`
+   - Register `core/genesis-spectral` in workspace members and workspace dependencies.
+2. `shared/genesis-types/src/constants.rs`
+   - Add `SPECTRAL_LAMBDA_MIN` and `ROUNDTRIP_TOL` constants with AX-ID docs.
+3. `shared/genesis-types/src/error.rs`
+   - Add spectral error variants under CRATE-004 section.
+4. `core/genesis-spectral/*`
+   - Create crate with modules: `lib`, `error`, `sparse_matrix`, `dirac`, `action`, `flow`, `zeta`.
+   - Implement sparse 16x16 storage, Dirac operator construction/proof generation, spectral action evaluation + gradients, Armijo spectral flow, and zeta regularization helpers.
+   - Add required unit/property tests for monotonicity, proof generation, sparse matrix behavior, and spectral/metric consistency.
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
+## 1.30 CRATE-004 spectral validation and coverage hardening (2026-05-05)
+
+### Root cause
+
+- `DiracOperator::from_blades` validates lambda scale but does not validate blade coefficients, allowing invalid spectral operator state to be constructed and proof-hashed before later failures.
+- New spectral/topology/structural mutation paths need direct regression coverage for cutoff branches, zeta helpers, sparse matrix norms, Dirac error branches, Armijo divergence, HNSW mutation helpers, and SMK witness/statistics paths.
+
+### File-level actions
+
+1. `core/genesis-spectral/src/dirac.rs`
+   - Validate `center_blades` with `SparseCliffordVector::from_dense(blades)?` before proof construction.
+   - Add tests covering invalid blades/lambda, Lorentz signatures, commutator dimension mismatch, thermal silence/zero-output branches, and scalar Dirac application.
+2. `core/genesis-spectral/src/action.rs`, `flow.rs`, `sparse_matrix.rs`, `zeta.rs`
+   - Add tests for cutoff sharp/polynomial derivative branches, empty-gradient error, divergence on invalid lambda, Frobenius norm, and zeta regularization/dimension helpers.
+3. `core/genesis-topology/src/hnsw.rs`
+   - Add targeted tests for compact/wide id lookup paths, local edge add/remove/rewire helpers, local connectivity guard behavior, SMK local rewire search, and lock-free SMK CAS publication path.
+4. `core/genesis-topology/src/structural_mutation.rs`
+   - Add tests for failed-intent tracking, convergence stats, accepted witness payloads, and adaptive sweep behavior.
+
+### Validation
+
+- `cargo fmt --all`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test -p genesis-spectral --lib`
+- `cargo test -p genesis-topology --lib`
+- `cargo test --workspace`
+- `cargo fmt --all -- --check`

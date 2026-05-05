@@ -202,6 +202,7 @@ impl CliffordHashTable {
     ///
     /// AX-ID: AXIOMA-013
     #[inline]
+    #[allow(clippy::unused_self)]
     fn hash_packed_bivector(&self, packed_bivector: &[f64; 6], t: usize) -> u32 {
         let start = t * N_PROJECTIONS;
         let mut bits: u32 = 0;

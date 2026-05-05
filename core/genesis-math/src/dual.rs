@@ -101,8 +101,8 @@ impl SparseDualVector {
         let mut clifford_norm_sq_value = 0.0f64;
         let mut clifford_norm_sq_grad = 0.0f64;
 
-        for k in 0..TOTAL_BLADES {
-            let dual = buf[k];
+        for (k, dual_ref) in buf.iter().enumerate().take(TOTAL_BLADES) {
+            let dual = *dual_ref;
             let abs = dual.value.abs();
 
             let is_active = abs > COGNITIVE_PLANCK_CONSTANT;

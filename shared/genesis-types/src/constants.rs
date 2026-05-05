@@ -103,6 +103,20 @@ pub const METRIC_WEIGHTS: [f64; CLIFFORD_BASIS_SIZE] = [
 ];
 
 // ============================================================================
+// SPECTRAL REGULARIZATION CONSTANTS
+// ============================================================================
+
+/// Minimum spectral eigenvalue allowed by zeta regularization.
+///
+/// AX-ID: AXIOMA-015, H_compresión
+pub const SPECTRAL_LAMBDA_MIN: f64 = 1e-8;
+
+/// Maximum tolerated sensory roundtrip error for Π*∘Π.
+///
+/// AX-ID: AXIOMA-011, H_restricción
+pub const ROUNDTRIP_TOL: f64 = 1e-6;
+
+// ============================================================================
 // SATIATION PARAMETERS
 // ============================================================================
 

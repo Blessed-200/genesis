@@ -79,7 +79,11 @@ macro_rules! impl_scalar_arithmetic {
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, TransparentWrapper, Zeroable, Pod)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    allow(clippy::unsafe_derive_deserialize),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct Phase(f64);
 
 impl Phase {
@@ -112,7 +116,11 @@ impl Phase {
 /// AX-ID: AXIOMA-006, AXIOMA-008, H_dinámica (LEY_FUNDACIONAL §3.2)
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, TransparentWrapper, Zeroable, Pod)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    allow(clippy::unsafe_derive_deserialize),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct Amplitude(f64);
 
 impl Amplitude {
@@ -145,7 +153,11 @@ impl Amplitude {
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, TransparentWrapper, Zeroable, Pod)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    allow(clippy::unsafe_derive_deserialize),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct Frequency(f64);
 
 impl Frequency {
@@ -178,7 +190,11 @@ impl Frequency {
 /// AX-ID: AXIOMA-002, AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, TransparentWrapper, Zeroable, Pod)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    allow(clippy::unsafe_derive_deserialize),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct TimeStep(f64);
 
 impl TimeStep {
@@ -211,7 +227,11 @@ impl TimeStep {
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, TransparentWrapper, Zeroable, Pod)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    allow(clippy::unsafe_derive_deserialize),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct SyncOrder(f64);
 
 impl SyncOrder {
@@ -253,7 +273,11 @@ impl SyncOrder {
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, TransparentWrapper, Zeroable, Pod)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    allow(clippy::unsafe_derive_deserialize),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct Temperature(f64);
 
 impl Temperature {
@@ -286,7 +310,11 @@ impl Temperature {
 /// AX-ID: AXIOMA-006, AXIOMA-007, H_estructura (LEY_FUNDACIONAL §3.1)
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, TransparentWrapper, Zeroable, Pod)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    allow(clippy::unsafe_derive_deserialize),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct LearningRate(f64);
 
 impl LearningRate {
@@ -319,7 +347,11 @@ impl LearningRate {
 /// AX-ID: AXIOMA-006, H_dinámica (LEY_FUNDACIONAL §3.2)
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Zeroable, Pod)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    allow(clippy::unsafe_derive_deserialize),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct ComplexPhasor {
     /// Real part.
     pub re: f64,

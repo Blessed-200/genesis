@@ -1063,7 +1063,7 @@ mod tests {
                     core::mem::swap(edge_left, edge_right);
                 }
             }
-            normalized.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+            normalized.sort_unstable_by_key(|(lhs, _)| *lhs);
             normalized.dedup_by(|lhs, rhs| lhs.0 == rhs.0);
             let expected = normalized
                 .iter()

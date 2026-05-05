@@ -279,23 +279,23 @@ impl QuantumKuramotoNetwork {
     }
 
     #[inline]
-    fn is_dirty(&self) -> bool {
+    const fn is_dirty(&self) -> bool {
         (self.flags & DIRTY_FLAG) != 0
     }
 
-    #[inline(always)]
-    fn set_dirty(&mut self, value: bool) {
+    #[inline]
+    const fn set_dirty(&mut self, value: bool) {
         let value_mask = (value as u8).wrapping_neg() & DIRTY_FLAG;
         self.flags = (self.flags & !DIRTY_FLAG) | value_mask;
     }
 
     #[inline]
-    fn is_sync_dirty(&self) -> bool {
+    const fn is_sync_dirty(&self) -> bool {
         (self.flags & SYNC_DIRTY_FLAG) != 0
     }
 
-    #[inline(always)]
-    fn set_sync_dirty(&mut self, value: bool) {
+    #[inline]
+    const fn set_sync_dirty(&mut self, value: bool) {
         let value_mask = (value as u8).wrapping_neg() & SYNC_DIRTY_FLAG;
         self.flags = (self.flags & !SYNC_DIRTY_FLAG) | value_mask;
     }
@@ -1160,7 +1160,7 @@ impl QuantumKuramotoNetwork {
         for (triangle_idx, &(e_ij, e_jk, e_ki)) in self.triangles.iter().enumerate() {
             let triangle_idx_u32 =
                 u32::try_from(triangle_idx).expect("triangle count must stay below u32::MAX");
-            for edge_u32 in [e_ij, e_jk, e_ki] {
+            for edge_u32 in <[u32; 3]>::from((e_ij, e_jk, e_ki)) {
                 let edge = edge_u32 as usize;
                 let cursor = self.triangle_cursor_scratch[edge] as usize;
                 self.triangle_ids[cursor] = triangle_idx_u32;
