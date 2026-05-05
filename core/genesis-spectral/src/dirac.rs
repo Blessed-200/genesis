@@ -47,7 +47,7 @@ pub struct DiracOperator {
 
 impl DiracOperator {
     pub fn from_blades(blades: &[f64; 16], lambda: f64) -> Result<Self, GenesisError> {
-        if lambda < SPECTRAL_LAMBDA_MIN {
+        if !lambda.is_finite() || lambda < SPECTRAL_LAMBDA_MIN {
             return Err(GenesisError::SpectralLambdaUnderflow { lambda });
         }
         let gamma_table = std::array::from_fn(|mu| {
@@ -126,15 +126,21 @@ impl DiracOperator {
     }
 
     pub fn commutator_norm(&self, f_values: &[f64]) -> Result<f64, GenesisError> {
+        if f_values.len() != 16 {
+            return Err(GenesisError::DimensionMismatch {
+                lhs: 16,
+                rhs: f_values.len(),
+            });
+        }
         let mut weighted = [0.0; 16];
         for (i, w) in weighted.iter_mut().enumerate() {
-            *w = self.center_blades[i] * f_values.get(i).copied().unwrap_or(0.0);
+            *w = self.center_blades[i] * f_values[i];
         }
         let d_fmv = self.apply(&weighted)?;
         let d_mv = self.apply(&self.center_blades)?;
         let mut sum = 0.0;
         for i in 0..16 {
-            let delta = d_fmv[i] - f_values.get(i).copied().unwrap_or(0.0) * d_mv[i];
+            let delta = d_fmv[i] - f_values[i] * d_mv[i];
             sum += delta * delta;
         }
         Ok(sum.sqrt())

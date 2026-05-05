@@ -12,7 +12,10 @@ impl CutoffFunction {
     pub fn evaluate(self, x: f64) -> f64 {
         match self {
             Self::Gaussian => (-x).exp(),
-            Self::Polynomial { exponent } => (1.0 + x).powi(-(exponent as i32)),
+            Self::Polynomial { exponent } => {
+                let exp_i32 = i32::try_from(exponent).unwrap_or(i32::MAX);
+                (1.0 + x).powi(-exp_i32)
+            }
             Self::Sharp => {
                 if x <= 1.0 {
                     1.0
@@ -26,7 +29,8 @@ impl CutoffFunction {
         match self {
             Self::Gaussian => -(-x).exp(),
             Self::Polynomial { exponent } => {
-                -f64::from(exponent) * (1.0 + x).powi(-(exponent as i32) - 1)
+                let exp_i32 = i32::try_from(exponent).unwrap_or(i32::MAX);
+                -(exponent as f64) * (1.0 + x).powi(-exp_i32 - 1)
             }
             Self::Sharp => 0.0,
         }

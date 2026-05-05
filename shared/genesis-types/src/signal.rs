@@ -531,7 +531,7 @@ impl SpikeComponents {
             pairs[i] = (buf[i].1, buf[i].2);
         }
 
-        pairs[..filled].sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        pairs[..filled].sort_unstable_by_key(|a| a.0);
 
         // Copy into canonical SpikeComponents arrays.
         let mut indices = [u16::MAX; SPIKE_MAX_COMPONENTS];
