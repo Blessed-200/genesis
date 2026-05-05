@@ -243,8 +243,8 @@ pub fn reverse(v: &SparseCliffordVector) -> SparseCliffordVector {
 ///
 /// Precomputed at compile time to eliminate runtime loops for structural
 /// grade-presence queries.
-const fn build_grade_lut() -> [u8; 65_536] {
-    let mut lut = [0u8; 65_536];
+fn build_grade_lut() -> Box<[u8; 65_536]> {
+    let mut lut = vec![0u8; 65_536].into_boxed_slice();
     let mut i = 0usize;
     while i < 65_536 {
         let mut grades = 0u8;
@@ -257,32 +257,40 @@ const fn build_grade_lut() -> [u8; 65_536] {
         lut[i] = grades;
         i += 1;
     }
-    lut
+    let arr: Box<[u8; 65_536]> = lut
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("fixed-size LUT allocation must match"));
+    arr
 }
 
-pub(crate) const GRADE_BITMASK_LUT: [u8; 65_536] = build_grade_lut();
+static GRADE_BITMASK_LUT: std::sync::OnceLock<Box<[u8; 65_536]>> = std::sync::OnceLock::new();
+
+#[inline]
+fn grade_bitmask_lut() -> &'static [u8; 65_536] {
+    GRADE_BITMASK_LUT.get_or_init(build_grade_lut)
+}
 
 /// Returns a `u8` bitmask of all grades present in the multivector.
 ///
 /// Bit k set ↔ at least one blade of grade k is active.
 /// G(1,3) has grades 0..=4 → fits in `u8`. Zero allocation.
-pub const fn grades_present(v: &SparseCliffordVector) -> u8 {
-    GRADE_BITMASK_LUT[v.active_mask as usize]
+pub fn grades_present(v: &SparseCliffordVector) -> u8 {
+    grade_bitmask_lut()[v.active_mask as usize]
 }
 
 /// Returns the maximum grade present, or 0 for the zero multivector.
-pub const fn max_grade(v: &SparseCliffordVector) -> u8 {
-    let grades = GRADE_BITMASK_LUT[v.active_mask as usize];
+pub fn max_grade(v: &SparseCliffordVector) -> u8 {
+    let grades = grade_bitmask_lut()[v.active_mask as usize];
     if grades == 0 {
         0
     } else {
-        (7 - grades.leading_zeros()) as u8
+        grades.ilog2() as u8
     }
 }
 
 /// Returns the minimum grade present, or 0 for the zero multivector.
-pub const fn min_grade(v: &SparseCliffordVector) -> u8 {
-    let grades = GRADE_BITMASK_LUT[v.active_mask as usize];
+pub fn min_grade(v: &SparseCliffordVector) -> u8 {
+    let grades = grade_bitmask_lut()[v.active_mask as usize];
     if grades == 0 {
         0
     } else {
@@ -291,8 +299,8 @@ pub const fn min_grade(v: &SparseCliffordVector) -> u8 {
 }
 
 /// True if all active blades have the same grade.
-pub const fn is_homogeneous(v: &SparseCliffordVector) -> bool {
-    let grades = GRADE_BITMASK_LUT[v.active_mask as usize];
+pub fn is_homogeneous(v: &SparseCliffordVector) -> bool {
+    let grades = grade_bitmask_lut()[v.active_mask as usize];
     grades.count_ones() <= 1
 }
 
