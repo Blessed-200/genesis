@@ -111,13 +111,13 @@ struct HnswLayer0Slab {
 struct CompactNodeId(u32);
 
 impl CompactNodeId {
-    #[inline(always)]
+    #[inline]
     const fn raw(self) -> u32 {
         self.0
     }
 }
 
-#[inline(always)]
+#[inline]
 fn try_compact_node_id(id: NodeId) -> Option<CompactNodeId> {
     let raw = id.get();
     let compact = u32::try_from(raw).ok()?;
@@ -342,7 +342,7 @@ fn slab_distance_scalar(
     target_feature = "avx2",
     target_feature = "fma"
 ))]
-#[inline(always)]
+#[inline]
 unsafe fn slab_distance_avx2(
     slab_ptr: *const f32,
     block: usize,
@@ -447,7 +447,7 @@ unsafe fn slab_distance_avx2(
 #[allow(clippy::inline_always)]
 // HOT PATH: Criterion shows unacceptable search latency regression without
 // forced inlining on AVX2 distance kernels (register-pressure-sensitive callsite).
-#[inline(always)]
+#[inline]
 fn slab_distance(
     slab_ptr: *const f32,
     block: usize,
@@ -476,7 +476,7 @@ fn slab_distance(
 
 // Maintenance policy for critical topology modules.
 //
-// - `#[inline(always)]` is prohibited except for a documented exception with
+// - `#[inline]` is prohibited except for a documented exception with
 //   benchmark reproducible + architectural rationale + risk evaluation.
 // - Layer-0 codec symbols must maintain `cfg` symmetry:
 //   `feature = "hnsw-f16"`, `genesis_const_layer0_codec`, and `test`.
@@ -997,7 +997,7 @@ fn encode_layer0(values: &[f32; CLIFFORD_BASIS_SIZE]) -> Result<Layer0Coeffs, Ge
 
 #[cfg(feature = "hnsw-f16")]
 #[allow(clippy::inline_always)]
-#[inline(always)]
+#[inline]
 /// # Panics
 ///
 /// Panics only if the decompressed coefficients become non-finite, which
@@ -1013,7 +1013,7 @@ pub fn fast_metric_distance_f16(
 
 #[cfg(feature = "hnsw-f16")]
 #[allow(clippy::inline_always)]
-#[inline(always)]
+#[inline]
 /// # Panics
 ///
 /// Panics only if the decompressed coefficients become non-finite, which
@@ -1292,11 +1292,11 @@ impl HnswGraph {
     }
 
     #[inline]
-    fn clone_with_delta(&self, delta: &HnswDelta) -> Self {
+    fn clone_with_delta(&self, delta: HnswDelta) -> Self {
         self.apply_delta(delta)
     }
 
-    fn apply_delta(&self, delta: &HnswDelta) -> Self {
+    fn apply_delta(&self, delta: HnswDelta) -> Self {
         let (nodes, id_index, wide_id_index, direct_index, layer_neighbors, node_to_slab) =
             match delta {
                 // INSERT mutates all structural vectors.
@@ -1392,7 +1392,7 @@ impl HnswGraph {
         )
     }
 
-    #[inline(always)]
+    #[inline]
     fn adaptive_precision_threshold_sq_f32(&self) -> f32 {
         let thr = self.adaptive_precision_threshold() as f32;
         thr * thr
@@ -1449,7 +1449,7 @@ impl HnswGraph {
         f64::from_bits(self.ema_recall_drop_bits.load(AtomicOrdering::Relaxed))
     }
 
-    #[inline(always)]
+    #[inline]
     fn update_ema(ema_bits: &AtomicU64, observation: f64) -> f64 {
         let mut current_bits = ema_bits.load(AtomicOrdering::Relaxed);
         loop {
@@ -1469,7 +1469,7 @@ impl HnswGraph {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn tune_escape_threshold_pd(&self, ema_escape_rate: f64, ema_recall_drop: f64) {
         let previous_escape = f64::from_bits(
             self.prev_escape_rate_bits
@@ -1495,7 +1495,7 @@ impl HnswGraph {
             .store(base.to_bits(), AtomicOrdering::Relaxed);
     }
 
-    #[inline(always)]
+    #[inline]
     fn record_controller_observation(&self, escaped: bool, recall_drop: bool) {
         let escape_obs = if escaped { 1.0 } else { 0.0 };
         let recall_obs = if recall_drop { 1.0 } else { 0.0 };
@@ -1504,7 +1504,7 @@ impl HnswGraph {
         self.tune_escape_threshold_pd(ema_escape, ema_recall);
     }
 
-    #[inline(always)]
+    #[inline]
     fn record_escape_result(&self, escaped: bool, recall_drop: bool) {
         self.escape_total_count
             .fetch_add(1, AtomicOrdering::Relaxed);
@@ -1522,7 +1522,7 @@ impl HnswGraph {
         u32::try_from(new_idx).map_err(|_| GenesisError::InvariantViolation { axiom_id: 13 })
     }
 
-    #[inline(always)]
+    #[inline]
     fn cow_vec_mut<T: Clone>(arc: &mut Arc<Vec<T>>) -> &mut Vec<T> {
         if Arc::strong_count(arc) == 1 {
             Arc::get_mut(arc).expect("strong_count == 1 implies unique Arc")
@@ -1540,13 +1540,13 @@ impl HnswGraph {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn node_neighbors_len(&self, node_idx: usize, layer: usize) -> usize {
         debug_assert!(node_idx < self.layer_neighbors.len());
         self.layer_neighbors[node_idx].neighbors_len(layer)
     }
 
-    #[inline(always)]
+    #[inline]
     fn node_neighbors_iter(&self, node_idx: usize, layer: usize) -> NodeAdjIter<'_> {
         debug_assert!(node_idx < self.layer_neighbors.len());
         self.layer_neighbors[node_idx].neighbors_iter(layer)
@@ -1608,7 +1608,7 @@ impl HnswGraph {
     }
 
     /// Lookup internal index by `NodeId`. O(1) average with direct index, fallback O(log N).
-    #[inline(always)]
+    #[inline]
     fn idx(&self, id: NodeId) -> Option<usize> {
         // Contract CRATE-002: direct_index addressing assumes NodeId values remain
         // within the platform-indexable range and deployment cardinality stays < 2^32.
@@ -1626,30 +1626,32 @@ impl HnswGraph {
         }
 
         match self.state {
-            GraphState::Compacted => {
-                if let Some(compact) = try_compact_node_id(id) {
-                    self.id_index
-                        .binary_search_by_key(&compact.raw(), |&(nid, _)| nid.raw())
-                        .ok()
-                        .map(|pos| self.id_index[pos].1)
-                } else {
+            GraphState::Compacted => try_compact_node_id(id).map_or_else(
+                || {
                     self.wide_id_index
                         .binary_search_by_key(&id.get(), |&(nid, _)| nid.get())
                         .ok()
                         .map(|pos| self.wide_id_index[pos].1)
-                }
-            }
-            GraphState::Online => {
-                if let Some(compact) = try_compact_node_id(id) {
+                },
+                |compact| {
                     self.id_index
-                        .iter()
-                        .find_map(|&(nid, idx)| (nid == compact).then_some(idx))
-                } else {
+                        .binary_search_by_key(&compact.raw(), |&(nid, _)| nid.raw())
+                        .ok()
+                        .map(|pos| self.id_index[pos].1)
+                },
+            ),
+            GraphState::Online => try_compact_node_id(id).map_or_else(
+                || {
                     self.wide_id_index
                         .iter()
                         .find_map(|&(nid, idx)| (nid == id).then_some(idx))
-                }
-            }
+                },
+                |compact| {
+                    self.id_index
+                        .iter()
+                        .find_map(|&(nid, idx)| (nid == compact).then_some(idx))
+                },
+            ),
         }
     }
 
@@ -1706,6 +1708,7 @@ impl HnswGraph {
     /// without modifying the graph.
     ///
     /// AX-ID: AXIOMA-013, `H_restricción`
+    #[allow(clippy::too_many_lines)]
     pub fn insert(&mut self, id: NodeId, vec: &SparseCliffordVector) -> Result<(), GenesisError> {
         if self.state == GraphState::Compacted {
             return Err(GenesisError::InvariantViolation { axiom_id: 13 });
@@ -1984,22 +1987,22 @@ impl HnswGraph {
         approx
     }
 
-    #[inline(always)]
+    #[inline]
+    #[allow(clippy::unused_self)]
     fn recall_drop_detected(&self, approx_dist_sq: f64, exact_dist_sq: f64) -> bool {
         let tolerance = RECALL_AUDIT_REL_TOLERANCE.mul_add(exact_dist_sq.abs(), 1.0e-12);
         approx_dist_sq + tolerance < exact_dist_sq
     }
 
-    #[inline(always)]
+    #[inline]
     fn should_audit_escape(&self) -> bool {
         self.escape_total_count
             .load(AtomicOrdering::Relaxed)
             .wrapping_add(1)
-            % ESCAPE_AUDIT_STRIDE
-            == 0
+            .is_multiple_of(ESCAPE_AUDIT_STRIDE)
     }
 
-    #[inline(always)]
+    #[inline]
     fn compute_recall_drop(
         &self,
         audit: bool,
@@ -2016,7 +2019,8 @@ impl HnswGraph {
         self.recall_drop_detected(f64::from(d), exact)
     }
 
-    #[inline(always)]
+    #[inline]
+    #[allow(clippy::unused_self)]
     fn layer0_exact_distance_sq(
         &self,
         query_f32: &[f32; SLAB_DIM],
@@ -2489,8 +2493,8 @@ impl HnswGraph {
     /// This cannot be `const fn` because `Arc` dereference is not const-evaluable
     /// on stable Rust (`nodes` is Arc-backed for snapshot sharing).
     #[allow(clippy::inline_always)]
-    #[inline(always)]
-    pub fn node_count(&self) -> usize {
+    #[inline]
+    pub const fn node_count(&self) -> usize {
         self.live_nodes
     }
 
@@ -2498,8 +2502,8 @@ impl HnswGraph {
     ///
     /// Alias for `node_count()` for clarity at call sites.
     #[allow(clippy::inline_always)]
-    #[inline(always)]
-    pub fn live_node_count(&self) -> usize {
+    #[inline]
+    pub const fn live_node_count(&self) -> usize {
         self.live_nodes
     }
 
@@ -2763,7 +2767,7 @@ impl HnswGraph {
         let dist = self.distance_to_node(&self.nodes[ia].vec, ib, 0);
         let da = self.node_neighbors_len(ia, 0) as f64;
         let db = self.node_neighbors_len(ib, 0) as f64;
-        Ok(dist + 0.05 * (da + db))
+        Ok(0.05_f64.mul_add(da + db, dist))
     }
 
     /// Backward-compatible alias for local structural edge Hamiltonian.
@@ -2854,9 +2858,8 @@ impl HnswGraph {
         let ia = self
             .idx(a)
             .ok_or(GenesisError::InvariantViolation { axiom_id: 13 })?;
-        let inew = match self.idx(new_b) {
-            Some(v) => v,
-            None => return Ok(None),
+        let Some(inew) = self.idx(new_b) else {
+            return Ok(None);
         };
         if self
             .node_neighbors_iter(ia, 0)
@@ -2864,9 +2867,8 @@ impl HnswGraph {
         {
             return Ok(None);
         }
-        let iold = match self.idx(old_b) {
-            Some(v) => v,
-            None => return Ok(None),
+        let Some(iold) = self.idx(old_b) else {
+            return Ok(None);
         };
         if self.node_neighbors_len(ia, 0) <= 1 || self.node_neighbors_len(iold, 0) <= 1 {
             return Ok(None);
@@ -2900,9 +2902,8 @@ impl HnswGraph {
         source: NodeId,
         max_delta: f64,
     ) -> Result<Option<(NodeId, NodeId)>, GenesisError> {
-        let src_idx = match self.idx(source) {
-            Some(v) => v,
-            None => return Ok(None),
+        let Some(src_idx) = self.idx(source) else {
+            return Ok(None);
         };
         let mut old_id = None;
         let mut old_energy = f64::NEG_INFINITY;
@@ -2921,9 +2922,8 @@ impl HnswGraph {
             return Ok(None);
         };
         let h_current = self.local_edge_hamiltonian(source, old_id)?;
-        let b_idx = match self.idx(old_id) {
-            Some(v) => v,
-            None => return Ok(None),
+        let Some(b_idx) = self.idx(old_id) else {
+            return Ok(None);
         };
         let d_ab = self.distance_to_node(&self.nodes[src_idx].vec, b_idx, 0);
         let distance_limit = max_delta + h_current - d_ab;
@@ -2954,9 +2954,8 @@ impl HnswGraph {
         let mut best_candidate = None;
         let mut best_score = h_current + max_delta;
         for candidate_id in second_order {
-            let c_idx = match self.idx(candidate_id) {
-                Some(v) => v,
-                None => continue,
+            let Some(c_idx) = self.idx(candidate_id) else {
+                continue;
             };
             let d_bc = self.distance_to_node(&self.nodes[b_idx].vec, c_idx, 0);
             if d_bc > distance_limit {
@@ -3180,7 +3179,7 @@ impl LockFreeHnswIndex {
             let base = self.load_snapshot();
             let current = Arc::as_ptr(&base).cast_mut();
             let delta = HnswDelta::Insert;
-            let mut updated = (*base).clone_with_delta(&delta);
+            let mut updated = (*base).clone_with_delta(delta);
             updated.insert(id, vec)?;
             let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
 
@@ -3215,6 +3214,8 @@ impl LockFreeHnswIndex {
             if cas_success {
                 // SAFETY: Successful CAS replaced the head's strong reference from
                 // `current` to `candidate`; release the superseded head ref.
+                // SAFETY: `current` was produced by `Arc::into_raw` in this CAS loop and
+                // this branch owns the matching decrement after successful publication.
                 unsafe {
                     drop(Arc::from_raw(current));
                 }
@@ -3222,6 +3223,8 @@ impl LockFreeHnswIndex {
             }
             self.cas_retries.value.fetch_add(1, AtomicOrdering::Relaxed);
             // SAFETY: CAS failed, so `candidate` was never published.
+            // SAFETY: `candidate` was created by `Arc::into_raw` for this failed CAS attempt;
+            // converting back exactly once restores ownership for proper drop.
             unsafe {
                 drop(Arc::from_raw(candidate));
             }
@@ -3236,7 +3239,7 @@ impl LockFreeHnswIndex {
             let base = self.load_snapshot();
             let current = Arc::as_ptr(&base).cast_mut();
             let delta = HnswDelta::Remove;
-            let mut updated = (*base).clone_with_delta(&delta);
+            let mut updated = (*base).clone_with_delta(delta);
             updated.remove_node(id)?;
             let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
 
@@ -3270,6 +3273,8 @@ impl LockFreeHnswIndex {
 
             if cas_success {
                 // SAFETY: Successful CAS replaced the head-owned strong ref.
+                // SAFETY: `current` was produced by `Arc::into_raw` in this CAS loop and
+                // this branch owns the matching decrement after successful publication.
                 unsafe {
                     drop(Arc::from_raw(current));
                 }
@@ -3277,6 +3282,8 @@ impl LockFreeHnswIndex {
             }
             self.cas_retries.value.fetch_add(1, AtomicOrdering::Relaxed);
             // SAFETY: CAS failed, candidate snapshot was not published.
+            // SAFETY: `candidate` was created by `Arc::into_raw` for this failed CAS attempt;
+            // converting back exactly once restores ownership for proper drop.
             unsafe {
                 drop(Arc::from_raw(candidate));
             }
@@ -3301,7 +3308,7 @@ impl LockFreeHnswIndex {
             }
             let current = Arc::as_ptr(&base).cast_mut();
             let delta = HnswDelta::Insert;
-            let mut updated = (*base).clone_with_delta(&delta);
+            let mut updated = (*base).clone_with_delta(delta);
             let accepted = kernel.apply_intents(&mut updated, &intents)?;
             if accepted == 0 {
                 return Ok(0);
@@ -3319,6 +3326,8 @@ impl LockFreeHnswIndex {
                 )
                 .is_ok();
             if cas_success {
+                // SAFETY: `current` was produced by `Arc::into_raw` in this CAS loop and
+                // this branch owns the matching decrement after successful publication.
                 unsafe {
                     drop(Arc::from_raw(current));
                 }
@@ -3326,6 +3335,8 @@ impl LockFreeHnswIndex {
                 return Ok(accepted);
             }
             self.cas_retries.value.fetch_add(1, AtomicOrdering::Relaxed);
+            // SAFETY: `candidate` was created by `Arc::into_raw` for this failed CAS attempt;
+            // converting back exactly once restores ownership for proper drop.
             unsafe {
                 drop(Arc::from_raw(candidate));
             }

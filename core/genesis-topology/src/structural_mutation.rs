@@ -170,7 +170,7 @@ impl StructuralMutationKernel {
         if accepted == 0 && !intents.is_empty() {
             self.consecutive_stable_sweeps = self.consecutive_stable_sweeps.saturating_add(1);
             if self.consecutive_stable_sweeps > 3 {
-                let decay = 0.5_f64.powi((self.consecutive_stable_sweeps - 3) as i32);
+                let decay = 0.5_f64.powi((self.consecutive_stable_sweeps - 3).cast_signed());
                 self.current_max_delta =
                     (self.initial_max_delta * decay).max(self.initial_max_delta * 0.01);
             }
@@ -193,7 +193,7 @@ impl StructuralMutationKernel {
     /// Returns convergence diagnostics `(sweep_count, current_max_delta)`.
     ///
     /// AX-ID: AXIOMA-013, H_estructura
-    pub fn convergence_stats(&self) -> (u64, f64) {
+    pub const fn convergence_stats(&self) -> (u64, f64) {
         (self.sweep_count, self.current_max_delta)
     }
 
