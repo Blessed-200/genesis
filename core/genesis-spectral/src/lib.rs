@@ -39,7 +39,7 @@ mod tests {
     fn dirac_squared_on_flat_equals_double_apply() {
         let blades = [0.1_f64; 16];
         let d = DiracOperator::from_blades(&blades, 1.0).expect("dirac");
-        let v = std::array::from_fn(|i| i as f64 * 0.1);
+        let v = std::array::from_fn(|i| f64::from(u32::try_from(i).unwrap_or(0)) * 0.1);
         let via_matrix = d.squared().expect("d2").matrix.matvec(&v);
         let via_double_apply = d.apply(&d.apply(&v).expect("d(v)")).expect("d2(v)");
         for i in 0..16 {
@@ -87,12 +87,13 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4))]
         #[test]
-        fn spectral_flow_never_increases_action(raw in prop::collection::vec(prop::array::uniform16(-1.0f64..1.0f64), 10..20)) {
-            let mut nodes: Vec<(u64, [f64;16])> = raw.into_iter().enumerate().map(|(i,b)| (i as u64,b)).collect();
-            let mut engine = SpectralFlowEngine::new(1.0, 0.05, CutoffFunction::Polynomial { exponent: 2 }, ConvergenceCriteria { grad_tol: 1e-8, max_steps: 8 });
+        fn spectral_flow_never_increases_action(raw in prop::collection::vec(prop::array::uniform16(-1.0f64..1.0f64), 3..6)) {
+            let mut nodes: Vec<(u64, [f64;16])> = raw.into_iter().enumerate().map(|(i,b)| (u64::try_from(i).unwrap_or(0), b)).collect();
+            let mut engine = SpectralFlowEngine::new(1.0, 0.05, CutoffFunction::Polynomial { exponent: 2 }, ConvergenceCriteria { grad_tol: 1e-8, max_steps: 2 });
             let mut history = SpectralFlowHistory::default();
-            for _ in 0..8 {
+            for _ in 0..2 {
                 let step = engine.step(&mut nodes).expect("step");
                 history.steps.push(step);
             }

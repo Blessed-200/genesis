@@ -91,7 +91,7 @@ fn guardrail_strict_mode() -> bool {
         Ok("1" | "true" | "TRUE" | "yes" | "YES")
     ) || matches!(
         std::env::var("CI").as_deref(),
-        Ok("1" | "true" | "TRUE" | "yes" | "YES") | Ok("")
+        Ok("1" | "true" | "TRUE" | "yes" | "YES" | "")
     )
 }
 
@@ -99,11 +99,10 @@ fn check_guardrail(metric: &str, observed_ns: f64, guardrail_ns: f64) {
     if observed_ns <= guardrail_ns {
         return;
     }
-    if guardrail_strict_mode() {
-        panic!(
-            "{metric} guardrail exceeded: {observed_ns:.0}ns > {guardrail_ns:.0}ns (strict mode)"
-        );
-    }
+    assert!(
+        !guardrail_strict_mode(),
+        "{metric} guardrail exceeded: {observed_ns:.0}ns > {guardrail_ns:.0}ns (strict mode)"
+    );
     eprintln!(
         "warning: {metric} guardrail exceeded: {observed_ns:.0}ns > {guardrail_ns:.0}ns (non-fatal; set GENESIS_BENCH_GUARDRAIL_STRICT=1 to fail)"
     );

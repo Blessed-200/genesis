@@ -268,9 +268,9 @@ mod tests {
     fn canonical_fenwick_struct_field_matches_precomputed() {
         // Verifies the struct field built by build_g13(), not the LUT.
         // Required for DAX round-trip integrity: fenwick_parity_tree is serialized.
-        for i in 0..=TOTAL_BLADES {
+        for (i, &expected) in FENWICK_TABLE.iter().enumerate().take(TOTAL_BLADES + 1) {
             assert_eq!(
-                CANONICAL_G13.fenwick_parity_tree[i], FENWICK_TABLE[i],
+                CANONICAL_G13.fenwick_parity_tree[i], expected,
                 "fenwick_parity_tree[{i}] mismatch"
             );
         }
@@ -318,10 +318,10 @@ mod tests {
 
     #[test]
     fn signature_consistent_with_cayley_table_all_16() {
-        for blade in 0..TOTAL_BLADES {
+        for (blade, row) in CAYLEY_SIGN.iter().enumerate().take(TOTAL_BLADES) {
             assert_eq!(
                 CANONICAL_G13.blade_square(blade),
-                CAYLEY_SIGN[blade][blade],
+                row[blade],
                 "blade {blade:#06b}: signature vs cayley mismatch"
             );
         }

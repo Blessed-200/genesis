@@ -3630,7 +3630,7 @@ mod tests {
         }
         let tuned = graph.base_approx_precision_threshold();
         assert!(tuned < 0.05);
-        assert!(THRESHOLD_DECREASE_BETA > THRESHOLD_INCREASE_ALPHA);
+        const { assert!(THRESHOLD_DECREASE_BETA > THRESHOLD_INCREASE_ALPHA) };
     }
 
     #[test]
@@ -3946,7 +3946,7 @@ mod tests {
 
         let remover_index = Arc::clone(&index);
         let remover_gate = Arc::clone(&gate);
-        let remover = std::thread::spawn(move || {
+        let delete_thread = std::thread::spawn(move || {
             remover_gate.wait();
             remover_index.remove(removed)
         });
@@ -3962,7 +3962,7 @@ mod tests {
             }
         });
 
-        remover
+        delete_thread
             .join()
             .expect("remove thread join")
             .expect("remove ok");
@@ -5466,9 +5466,8 @@ mod scaling_tests {
         }
 
         let id = NodeId::try_new(0).unwrap();
-        let collected: Vec<_> = g.neighbors(id).collect();
         assert!(
-            !collected.is_empty(),
+            g.neighbors(id).next().is_some(),
             "neighbor iterator should yield at least one neighbor"
         );
     }

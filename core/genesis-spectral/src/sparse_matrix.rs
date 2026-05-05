@@ -63,7 +63,10 @@ mod tests {
             row[i] = 1.0;
         }
         let m = SparseMatrix16::from_dense(&id);
-        let v = std::array::from_fn(|i| i as f64 * 0.5);
-        assert_eq!(m.matvec(&v), v);
+        let v = std::array::from_fn(|i| f64::from(u32::try_from(i).unwrap_or(0)) * 0.5);
+        let out = m.matvec(&v);
+        for i in 0..16 {
+            assert!((out[i] - v[i]).abs() < 1e-12);
+        }
     }
 }
