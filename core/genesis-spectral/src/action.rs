@@ -10,8 +10,6 @@ pub enum CutoffFunction {
 }
 impl CutoffFunction {
     #[must_use]
-    /// # Errors
-    /// Returns `GenesisError` when input is empty or Dirac construction fails.
     pub fn evaluate(self, x: f64) -> f64 {
         match self {
             Self::Gaussian => (-x).exp(),
@@ -134,5 +132,27 @@ impl SpectralActionEngine {
             out.push((id, grad));
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CutoffFunction, SpectralActionEngine};
+
+    #[test]
+    fn cutoff_sharp_and_polynomial_derivative_cover_boundary_branches() {
+        assert!((CutoffFunction::Sharp.evaluate(1.0) - 1.0).abs() < 1e-12);
+        assert!((CutoffFunction::Sharp.evaluate(1.000_001) - 0.0).abs() < 1e-12);
+        assert!((CutoffFunction::Sharp.derivative(0.5) - 0.0).abs() < 1e-12);
+
+        let poly = CutoffFunction::Polynomial { exponent: u32::MAX };
+        assert!(poly.evaluate(0.25).is_finite());
+        assert!(poly.derivative(0.25).is_finite());
+    }
+
+    #[test]
+    fn gradient_only_empty_nodes_reports_insufficient_nodes() {
+        let engine = SpectralActionEngine::new(CutoffFunction::Gaussian, 1.0);
+        assert!(engine.gradient_only(&[]).is_err());
     }
 }

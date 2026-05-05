@@ -5472,3 +5472,93 @@ mod scaling_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod structural_edge_tests {
+    use super::*;
+
+    fn local_vec(seed: u64) -> SparseCliffordVector {
+        let coeff = f64::from(u32::try_from(seed).unwrap_or(0)).mul_add(0.03, 0.1);
+        SparseCliffordVector::from_iter((0..4).map(|blade| {
+            (
+                blade,
+                coeff * f64::from(u32::try_from(blade + 1).unwrap_or(1)),
+            )
+        }))
+        .expect("finite vector")
+    }
+
+    fn local_id(raw: u64) -> NodeId {
+        NodeId::try_new(raw).expect("valid id")
+    }
+
+    #[test]
+    fn idx_finds_compact_and_wide_ids_before_and_after_compaction() {
+        let mut graph = HnswGraph::new(16);
+        let compact = local_id(7);
+        let wide = local_id(u64::from(u32::MAX) + 9);
+        graph
+            .insert(compact, &local_vec(1))
+            .expect("insert compact");
+        graph.insert(wide, &local_vec(2)).expect("insert wide");
+
+        assert!(graph.idx(compact).is_some());
+        assert!(graph.idx(wide).is_some());
+        graph.compact_index();
+        assert!(graph.idx(compact).is_some());
+        assert!(graph.idx(wide).is_some());
+    }
+
+    #[test]
+    fn local_edge_helpers_cover_add_remove_and_rewire_guards() {
+        let mut graph = HnswGraph::new(16);
+        for raw in 0..4_u64 {
+            graph
+                .insert(local_id(raw), &local_vec(raw))
+                .expect("insert");
+        }
+        let a = local_id(0);
+        let b = local_id(1);
+        let c = local_id(2);
+        let d = local_id(3);
+
+        let h_self = graph
+            .local_edge_hamiltonian(a, a)
+            .expect("self edge hamiltonian");
+        assert!(h_self.is_infinite());
+
+        let ia = graph.idx(a).expect("idx a");
+        let ib = graph.idx(b).expect("idx b");
+        graph.remove_edge_bidirectional(ia, 0, ib);
+        let add = graph.try_add_edge(a, b).expect("add edge");
+        assert!(add.is_some());
+        assert!(graph.try_add_edge(a, b).expect("idempotent add").is_none());
+
+        let ic = graph.idx(c).expect("idx c");
+        graph.remove_edge_bidirectional(ia, 0, ic);
+        let rejected = graph
+            .try_rewire(a, b, c, f64::NEG_INFINITY)
+            .expect("rewire reject");
+        assert!(rejected.is_none());
+
+        let id = graph.idx(d).expect("idx d");
+        graph.remove_edge_bidirectional(ia, 0, id);
+        let remove_guard = graph.try_remove_edge(a, d).expect("remove guard");
+        assert!(remove_guard.is_none());
+    }
+
+    #[test]
+    fn lockfree_structural_sweep_returns_stable_result() {
+        let index = LockFreeHnswIndex::new(16);
+        for raw in 0..8_u64 {
+            index
+                .insert(local_id(raw), &local_vec(raw))
+                .expect("insert");
+        }
+        let mut kernel = StructuralMutationKernel::new(0.0);
+        let accepted = index
+            .structural_mutation_sweep(&mut kernel)
+            .expect("structural sweep");
+        assert!(accepted <= index.live_node_count());
+    }
+}

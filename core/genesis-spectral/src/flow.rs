@@ -30,6 +30,17 @@ pub struct SpectralFlowHistory {
     pub steps: Vec<SpectralFlowStep>,
 }
 
+fn spectral_divergence(last_delta: f64) -> GenesisError {
+    GenesisError::SpectralDivergence {
+        iteration: 0,
+        delta: if last_delta.is_finite() {
+            last_delta
+        } else {
+            f64::MAX
+        },
+    }
+}
+
 impl SpectralFlowEngine {
     #[must_use]
     #[allow(clippy::missing_const_for_fn)]
@@ -86,13 +97,40 @@ impl SpectralFlowEngine {
             }
             trial_tau *= 0.5;
         }
-        Err(GenesisError::SpectralDivergence {
-            iteration: 0,
-            delta: if last_delta.is_finite() {
-                last_delta
-            } else {
-                f64::MAX
+        Err(spectral_divergence(last_delta))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ConvergenceCriteria, SpectralFlowEngine};
+    use crate::action::CutoffFunction;
+    use genesis_types::GenesisError;
+
+    #[test]
+    fn divergence_error_clamps_non_finite_delta() {
+        assert!(matches!(
+            super::spectral_divergence(f64::NAN),
+            GenesisError::SpectralDivergence { delta, .. } if (delta - f64::MAX).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn step_propagates_invalid_lambda_before_mutation() {
+        let mut nodes = [(1_u64, [0.0_f64; 16])];
+        let mut engine = SpectralFlowEngine::new(
+            f64::NAN,
+            0.1,
+            CutoffFunction::Gaussian,
+            ConvergenceCriteria {
+                grad_tol: 1e-8,
+                max_steps: 1,
             },
-        })
+        );
+        assert!(matches!(
+            engine.step(&mut nodes),
+            Err(GenesisError::SpectralLambdaUnderflow { .. })
+        ));
+        assert!(nodes[0].1.iter().all(|value| value.abs() < 1e-12));
     }
 }

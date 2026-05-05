@@ -31,3 +31,19 @@ impl ZetaRegularizer {
         2.0 * lambda_eff.ln().abs()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ZetaRegularizer;
+    use genesis_types::constants::SPECTRAL_LAMBDA_MIN;
+
+    #[test]
+    fn zeta_regularizer_clamps_and_estimates_dimension() {
+        let zeta = ZetaRegularizer::new(2.0);
+        assert!((ZetaRegularizer::regularize(0.0) - SPECTRAL_LAMBDA_MIN).abs() < 1e-20);
+        let value = zeta.evaluate_from_trace(16.0);
+        assert!((value - 1.0).abs() < 1e-12);
+        assert!(zeta.spectral_dimension(16.0).abs() < 1e-12);
+        assert!(zeta.evaluate_from_trace(0.0).is_finite());
+    }
+}

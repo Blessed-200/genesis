@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+
 #[derive(Clone, Debug)]
 pub struct SparseMatrix16 {
     entries: Vec<(u8, u8, f64)>,
@@ -68,5 +69,15 @@ mod tests {
         for i in 0..16 {
             assert!((out[i] - v[i]).abs() < 1e-12);
         }
+    }
+
+    #[test]
+    fn sparse_matrix_frobenius_ignores_structural_zeros() {
+        let mut dense = [[0.0; 16]; 16];
+        dense[0][0] = 3.0;
+        dense[1][2] = 4.0;
+        dense[2][1] = 1.0e-15;
+        let matrix = SparseMatrix16::from_dense(&dense);
+        assert!((matrix.frobenius_norm_sq() - 25.0).abs() < 1e-12);
     }
 }

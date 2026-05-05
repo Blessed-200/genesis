@@ -54,6 +54,7 @@ impl DiracOperator {
         if !lambda.is_finite() || lambda < SPECTRAL_LAMBDA_MIN {
             return Err(GenesisError::SpectralLambdaUnderflow { lambda });
         }
+        let _validated_center = SparseCliffordVector::from_dense(blades)?;
         let gamma_table = std::array::from_fn(|mu| {
             std::array::from_fn(|grade| {
                 Some(GammaAction {
@@ -160,4 +161,52 @@ impl DiracOperator {
 pub struct DiracSquared {
     pub(crate) matrix: SparseMatrix16,
     pub ricci_scalar: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DiracOperator, LorentzIndex};
+    use genesis_types::GenesisError;
+
+    #[test]
+    fn lorentz_metric_signatures_match_minkowski_contract() {
+        assert!((LorentzIndex::Time.metric_signature() - 1.0).abs() < 1e-12);
+        assert!((LorentzIndex::X.metric_signature() + 1.0).abs() < 1e-12);
+        assert!((LorentzIndex::Y.metric_signature() + 1.0).abs() < 1e-12);
+        assert!((LorentzIndex::Z.metric_signature() + 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn from_blades_rejects_non_finite_coefficients_at_construction() {
+        let mut blades = [0.0_f64; 16];
+        blades[3] = f64::NAN;
+        assert!(matches!(
+            DiracOperator::from_blades(&blades, 1.0),
+            Err(GenesisError::SignatureViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn from_blades_rejects_non_finite_lambda() {
+        assert!(matches!(
+            DiracOperator::from_blades(&[0.0; 16], f64::INFINITY),
+            Err(GenesisError::SpectralLambdaUnderflow { .. })
+        ));
+    }
+
+    #[test]
+    fn apply_zero_center_covers_thermal_silence_path() {
+        let dirac = DiracOperator::from_blades(&[0.0; 16], 1.0).expect("dirac");
+        let out = dirac.apply(&[1.0; 16]).expect("apply");
+        assert!(out.iter().all(|value| value.abs() < 1e-12));
+    }
+
+    #[test]
+    fn commutator_norm_rejects_wrong_dimension() {
+        let dirac = DiracOperator::from_blades(&[1.0; 16], 1.0).expect("dirac");
+        assert!(matches!(
+            dirac.commutator_norm(&[1.0; 4]),
+            Err(GenesisError::DimensionMismatch { lhs: 16, rhs: 4 })
+        ));
+    }
 }

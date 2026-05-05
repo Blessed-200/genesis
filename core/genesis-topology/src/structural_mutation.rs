@@ -300,3 +300,40 @@ impl StructuralMutationKernel {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::StructuralMutationKernel;
+    use genesis_types::NodeId;
+
+    #[test]
+    fn accepted_witness_serializes_targets_and_delta() {
+        let source = NodeId::try_new(1).expect("id");
+        let old_target = NodeId::try_new(2).expect("id");
+        let new_target = NodeId::try_new(3).expect("id");
+        let witness = StructuralMutationKernel::accepted_witness(
+            source,
+            Some(old_target),
+            Some(new_target),
+            -0.25,
+        );
+
+        assert_eq!(witness.source, source);
+        assert_eq!(witness.old_target, Some(old_target));
+        assert_eq!(witness.new_target, Some(new_target));
+        assert!((witness.delta_h_structural + 0.25).abs() < 1e-12);
+        assert_ne!(witness.proof.hash, [0_u8; 32]);
+    }
+
+    #[test]
+    fn failed_intents_are_suppressed_after_repeated_rejection() {
+        let mut kernel = StructuralMutationKernel::new(0.1);
+        let edge_hash = 0xCAFE_BABE_u64;
+        assert!(!kernel.should_suppress(edge_hash));
+        kernel.record_failed_intent(edge_hash);
+        kernel.record_failed_intent(edge_hash);
+        kernel.record_failed_intent(edge_hash);
+        assert!(kernel.should_suppress(edge_hash));
+        assert_eq!(kernel.convergence_stats(), (0, 0.1));
+    }
+}
