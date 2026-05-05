@@ -152,9 +152,10 @@ impl StructuralMutationKernel {
             {
                 accepted += 1;
                 if let Some(slot) = graph.slot_of_id(src) {
-                    self.swap_buffer[slot] =
-                        graph.smk_local_energy_signature(src, self.equilibrium_signature_tolerance)?;
-                    self.pending_signatures.push((src.get(), self.swap_buffer[slot]));
+                    self.swap_buffer[slot] = graph
+                        .smk_local_energy_signature(src, self.equilibrium_signature_tolerance)?;
+                    self.pending_signatures
+                        .push((src.get(), self.swap_buffer[slot]));
                 }
                 if let Some(slot) = graph.slot_of_id(old_b) {
                     self.swap_buffer[slot] = 0;
@@ -162,8 +163,7 @@ impl StructuralMutationKernel {
                 if let Some(slot) = graph.slot_of_id(new_b) {
                     self.swap_buffer[slot] = 0;
                 }
-            }
-            else {
+            } else {
                 self.record_failed_intent(edge_hash);
             }
         }
@@ -171,7 +171,8 @@ impl StructuralMutationKernel {
             self.consecutive_stable_sweeps = self.consecutive_stable_sweeps.saturating_add(1);
             if self.consecutive_stable_sweeps > 3 {
                 let decay = 0.5_f64.powi((self.consecutive_stable_sweeps - 3) as i32);
-                self.current_max_delta = (self.initial_max_delta * decay).max(self.initial_max_delta * 0.01);
+                self.current_max_delta =
+                    (self.initial_max_delta * decay).max(self.initial_max_delta * 0.01);
             }
         } else {
             self.consecutive_stable_sweeps = 0;
@@ -184,7 +185,8 @@ impl StructuralMutationKernel {
     /// AX-ID: AXIOMA-013, H_estructura
     pub fn commit_signatures(&mut self) {
         self.previous_signatures_by_id = self.pending_signatures.clone();
-        self.previous_signatures_by_id.sort_unstable_by_key(|(id, _)| *id);
+        self.previous_signatures_by_id
+            .sort_unstable_by_key(|(id, _)| *id);
         self.previous_signatures_by_id.dedup_by_key(|(id, _)| *id);
     }
 
@@ -276,7 +278,11 @@ impl StructuralMutationKernel {
         witness.extend_from_slice(&old_target.unwrap_or(NodeId::INVALID).get().to_le_bytes());
         witness.extend_from_slice(&new_target.unwrap_or(NodeId::INVALID).get().to_le_bytes());
         witness.extend_from_slice(&delta_h_structural.to_le_bytes());
-        Proof::new(AxiomSet::from_slice(genesis_types::proof::AxiomID::STRUCTURAL_REQUIRED), witness, 0)
+        Proof::new(
+            AxiomSet::from_slice(genesis_types::proof::AxiomID::STRUCTURAL_REQUIRED),
+            witness,
+            0,
+        )
     }
 
     pub(crate) fn accepted_witness(

@@ -106,7 +106,6 @@ pub const METRIC_WEIGHTS: [f64; CLIFFORD_BASIS_SIZE] = [
 // SPECTRAL REGULARIZATION CONSTANTS
 // ============================================================================
 
-
 /// Minimum spectral eigenvalue allowed by zeta regularization.
 ///
 /// AX-ID: AXIOMA-015, H_compresión

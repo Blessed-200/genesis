@@ -61,14 +61,14 @@ pub mod lsh;
 ///
 /// AX-ID: AXIOMA-007, AXIOMA-013
 pub mod manifold;
-/// Structural Mutation Kernel (SMK) for deterministic local HNSW edge updates.
-///
-/// AX-ID: AXIOMA-013, H_estructura
-pub mod structural_mutation;
 /// Vietoris-Rips complex construction up to dimension 2.
 ///
 /// AX-ID: AXIOMA-007
 pub mod rips;
+/// Structural Mutation Kernel (SMK) for deterministic local HNSW edge updates.
+///
+/// AX-ID: AXIOMA-013, H_estructura
+pub mod structural_mutation;
 /// Topological intuition engine for read-only structural hypotheses.
 ///
 /// AX-ID: AXIOMA-007, AXIOMA-013

@@ -234,7 +234,9 @@ pub enum GenesisError {
     // CRATE-004: genesis-evolution — Ricci / Fisher / Heat errors
     // ------------------------------------------------------------------
     /// D² has a negative eigenvalue at scalar grade; Lorentzian signature violation.
-    #[error("Spectral error: D² signature violation at node {node_id} with eigenvalue {eigenvalue}")]
+    #[error(
+        "Spectral error: D² signature violation at node {node_id} with eigenvalue {eigenvalue}"
+    )]
     SpectralSignatureViolation {
         /// Node identifier where the signature violation was observed.
         node_id: u64,

@@ -7,7 +7,10 @@ pub struct ZetaRegularizer {
 
 impl ZetaRegularizer {
     pub fn new(s: f64) -> Self {
-        Self { s, lambda_min: SPECTRAL_LAMBDA_MIN }
+        Self {
+            s,
+            lambda_min: SPECTRAL_LAMBDA_MIN,
+        }
     }
 
     pub fn regularize(lambda: f64) -> f64 {
