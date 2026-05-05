@@ -826,7 +826,10 @@ mod tests {
 
         let at_limit = NodeId::try_new(1_000_000).expect("1_000_000 is a valid NodeId");
         vfe.add_node(at_limit, [0.25, -0.5, 0.75, -1.0]);
-        assert!(vfe.lookup(at_limit).is_some(), "NodeId >= 1_000_000 must be accepted");
+        assert!(
+            vfe.lookup(at_limit).is_some(),
+            "NodeId >= 1_000_000 must be accepted"
+        );
         assert_eq!(
             vfe.compute_vfe(at_limit, Some(&[0.25, -0.5, 0.75, -1.0])),
             0.0
@@ -838,7 +841,10 @@ mod tests {
             vfe.lookup(beyond_limit).is_some(),
             "NodeId >= 1_000_000 must be accepted"
         );
-        assert_eq!(vfe.compute_vfe(beyond_limit, Some(&[1.0, 0.0, 0.0, 0.0])), 0.0);
+        assert_eq!(
+            vfe.compute_vfe(beyond_limit, Some(&[1.0, 0.0, 0.0, 0.0])),
+            0.0
+        );
     }
 
     #[test]
