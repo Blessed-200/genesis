@@ -3,6 +3,13 @@ use genesis_types::{constants::SPECTRAL_LAMBDA_MIN, AxiomID, GenesisError, Witne
 
 use crate::sparse_matrix::SparseMatrix16;
 
+/// Baseline algebraic contribution of Tr(D²)/4 in G(1,3) with Minkowski signature (+,-,-,-).
+///
+/// Derived from Σ_μ η^μμ = +1-1-1-1 over the 16-blade Clifford basis.
+/// Subtracted in `squared()` so `ricci_scalar` measures relative curvature
+/// with respect to the canonical flat manifold.
+const FLAT_DIRAC_TRACE_BASELINE: f64 = -8.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum LorentzIndex {
@@ -34,6 +41,7 @@ pub struct DiracOperator {
     pub center_blades: [f64; 16],
     gamma_table: [[Option<GammaAction>; 5]; 4],
     pub lambda_scale: f64,
+    flat_trace_baseline: f64,
     pub construction_proof: [u8; 32],
 }
 
@@ -64,6 +72,7 @@ impl DiracOperator {
             center_blades: *blades,
             gamma_table,
             lambda_scale: lambda,
+            flat_trace_baseline: FLAT_DIRAC_TRACE_BASELINE,
             construction_proof: proof.hash,
         })
     }
@@ -109,7 +118,7 @@ impl DiracOperator {
             }
         }
         let matrix = SparseMatrix16::from_dense(&dense);
-        let ricci_scalar = 4.0 * matrix.trace() / 16.0;
+        let ricci_scalar = 4.0 * matrix.trace() / 16.0 - self.flat_trace_baseline;
         Ok(DiracSquared {
             matrix,
             ricci_scalar,

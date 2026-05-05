@@ -46,6 +46,11 @@ pub struct SpectralActionEngine {
     lambda: f64,
 }
 impl SpectralActionEngine {
+    fn lambda_sq_floor(lambda: f64) -> f64 {
+        use genesis_types::constants::SPECTRAL_LAMBDA_MIN;
+        (lambda * lambda).max(SPECTRAL_LAMBDA_MIN * SPECTRAL_LAMBDA_MIN)
+    }
+
     pub fn new(cutoff: CutoffFunction, lambda: f64) -> Self {
         Self { cutoff, lambda }
     }
@@ -66,7 +71,7 @@ impl SpectralActionEngine {
         for (id, blades) in node_blades {
             let d = DiracOperator::from_blades(blades, self.lambda)?;
             let sq = d.squared()?;
-            let e = sq.matrix.trace() / (self.lambda * self.lambda).max(1e-12);
+            let e = sq.matrix.trace() / Self::lambda_sq_floor(self.lambda);
             total_action += self.cutoff.evaluate(e);
             a2 += sq.ricci_scalar / 6.0;
             let _ = id;
@@ -102,7 +107,7 @@ impl SpectralActionEngine {
             let sq_base = d_base.squared()?;
             let e_base = self
                 .cutoff
-                .evaluate(sq_base.matrix.trace() / (self.lambda * self.lambda).max(1e-30));
+                .evaluate(sq_base.matrix.trace() / Self::lambda_sq_floor(self.lambda));
             let mut grad = [0.0_f64; 16];
             for j in 0..16 {
                 let mut perturbed = blades;
@@ -111,7 +116,7 @@ impl SpectralActionEngine {
                 let sq_p = d_p.squared()?;
                 let e_p = self
                     .cutoff
-                    .evaluate(sq_p.matrix.trace() / (self.lambda * self.lambda).max(1e-30));
+                    .evaluate(sq_p.matrix.trace() / Self::lambda_sq_floor(self.lambda));
                 grad[j] = (e_p - e_base) / EPS;
             }
             out.push((id, grad));
