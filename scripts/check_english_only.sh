@@ -19,11 +19,11 @@ files=()
 # Local/dev mode: prefer currently modified files for fast pre-commit feedback.
 if ! git diff --quiet -- 'core/**/*.rs' 'shared/**/*.rs'; then
   while IFS= read -r path; do
-    [[ -n "${path}" ]] && files+=("${path}")
+    [[ -n "${path}" && -f "${path}" ]] && files+=("${path}")
   done < <(git diff --name-only HEAD -- 'core/**/*.rs' 'shared/**/*.rs')
 elif [[ -n "${base_ref}" ]]; then
   while IFS= read -r path; do
-    [[ -n "${path}" ]] && files+=("${path}")
+    [[ -n "${path}" && -f "${path}" ]] && files+=("${path}")
   done < <(git diff --name-only "${base_ref}...HEAD" -- 'core/**/*.rs' 'shared/**/*.rs')
 fi
 
