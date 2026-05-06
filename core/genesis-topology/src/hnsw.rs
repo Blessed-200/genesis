@@ -35,9 +35,11 @@ const MAX_APPROX_PRECISION_THRESHOLD: f64 = 2.5e-1;
 const ESCAPE_RATE_TARGET: f64 = 0.99;
 const THRESHOLD_INCREASE_ALPHA: f64 = 2.5e-4;
 const THRESHOLD_DECREASE_BETA: f64 = 1.0e-3;
-const EMA_SMOOTHING_FACTOR: f64 = 0.01;
 const RECALL_DROP_SAFETY_FLOOR: f64 = 1.0e-6;
 const ESCAPE_AUDIT_STRIDE: u64 = 1024;
+// Equivalent smoothing for one controller sample representing ESCAPE_AUDIT_STRIDE
+// candidate observations: 1 - (1 - 0.01)^ESCAPE_AUDIT_STRIDE.
+const STRIDED_EMA_SMOOTHING_FACTOR: f64 = 0.999_966_081_294_598_1;
 const RECALL_AUDIT_REL_TOLERANCE: f64 = 0.02;
 const MAX_FIXED_HEAP_CAPACITY: usize = 512;
 const INITIAL_NODE_CAPACITY: usize = 1024;
@@ -1455,12 +1457,12 @@ impl HnswGraph {
     }
 
     #[inline]
-    fn update_ema(ema_bits: &AtomicU64, observation: f64) -> f64 {
+    fn update_ema_strided(ema_bits: &AtomicU64, observation: f64) -> f64 {
         let mut current_bits = ema_bits.load(AtomicOrdering::Relaxed);
         loop {
             let current = f64::from_bits(current_bits);
-            let updated =
-                (1.0 - EMA_SMOOTHING_FACTOR).mul_add(current, EMA_SMOOTHING_FACTOR * observation);
+            let updated = (1.0 - STRIDED_EMA_SMOOTHING_FACTOR)
+                .mul_add(current, STRIDED_EMA_SMOOTHING_FACTOR * observation);
             let updated_bits = updated.to_bits();
             match ema_bits.compare_exchange_weak(
                 current_bits,
@@ -1504,14 +1506,18 @@ impl HnswGraph {
     fn record_controller_observation(&self, escaped: bool, recall_drop: bool) {
         let escape_obs = if escaped { 1.0 } else { 0.0 };
         let recall_obs = if recall_drop { 1.0 } else { 0.0 };
-        let ema_escape = Self::update_ema(&self.ema_escape_rate_bits, escape_obs);
-        let ema_recall = Self::update_ema(&self.ema_recall_drop_bits, recall_obs);
+        let ema_escape = Self::update_ema_strided(&self.ema_escape_rate_bits, escape_obs);
+        let ema_recall = Self::update_ema_strided(&self.ema_recall_drop_bits, recall_obs);
         self.tune_escape_threshold_pd(ema_escape, ema_recall);
     }
 
     #[inline]
     fn record_escape_result(&self, escaped: bool, recall_drop: bool) {
-        self.escape_total_count
+        // HOT PATH: O(1) per layer-0 candidate distance evaluation. The audit
+        // counters remain exact, while the controller update is stride-gated to
+        // keep EMA CAS loops out of the candidate-scoring inner loop.
+        let previous_total = self
+            .escape_total_count
             .fetch_add(1, AtomicOrdering::Relaxed);
         if escaped && !recall_drop {
             self.escape_success_count
@@ -1520,7 +1526,12 @@ impl HnswGraph {
         if recall_drop {
             self.recall_drop_count.fetch_add(1, AtomicOrdering::Relaxed);
         }
-        self.record_controller_observation(escaped, recall_drop);
+        if previous_total
+            .wrapping_add(1)
+            .is_multiple_of(ESCAPE_AUDIT_STRIDE)
+        {
+            self.record_controller_observation(escaped, recall_drop);
+        }
     }
 
     fn prevalidate_internal_idx_u32(new_idx: usize) -> Result<u32, GenesisError> {
@@ -1808,8 +1819,10 @@ impl HnswGraph {
             for &(nb_idx, dist) in &neighbours {
                 self.add_edge(new_idx, lc, nb_idx, dist);
                 self.add_edge(nb_idx, lc, new_idx, dist);
-                // Prune nb if it exceeds m_max
-                self.prune_layer(nb_idx, lc, m_max, None);
+                // Prune nb if it exceeds m_max. The cached query is only valid
+                // for the node being pruned, so existing neighbours use their
+                // own layer-0 projection inside `prune_layer`.
+                self.prune_layer(nb_idx, lc, m_max, None, None);
             }
 
             if lc == 0 && connect_limit > m_max {
@@ -1824,7 +1837,7 @@ impl HnswGraph {
                         cache.push((nb_idx_u32, dist_sq));
                     }
                     let cache_ref = cache.as_slice();
-                    self.prune_layer(new_idx, lc, m_max, Some(cache_ref));
+                    self.prune_layer(new_idx, lc, m_max, Some(cache_ref), Some(&query_f32));
                 });
             }
 
@@ -1913,6 +1926,7 @@ impl HnswGraph {
         layer: usize,
         m_max: usize,
         precomputed_distances: Option<&[(u32, f32)]>,
+        cached_query_f32: Option<&[f32; SLAB_DIM]>,
     ) {
         if layer > self.nodes[idx].max_layer {
             return;
@@ -1925,7 +1939,18 @@ impl HnswGraph {
         // HOT PATH: O(d) score materialization + average O(d) partition.
         // Degree is bounded by HNSW neighbour caps (layer 0 <= M0; upper layers <= M).
         debug_assert!(degree <= M0);
-        let query_f32 = (layer == 0).then(|| Self::dense_to_query_f32(&self.nodes[idx].vec));
+        let owned_query_f32;
+        let query_f32 = if layer == 0 {
+            match cached_query_f32 {
+                Some(query) => Some(query),
+                None => {
+                    owned_query_f32 = Self::dense_to_query_f32(&self.nodes[idx].vec);
+                    Some(&owned_query_f32)
+                }
+            }
+        } else {
+            None
+        };
         let mut scored: SmallVec<[u128; M0]> = SmallVec::with_capacity(degree);
         if let Some(cached_distances) = precomputed_distances {
             for &(nb_idx_u32, dist_sq) in cached_distances {
@@ -1946,8 +1971,13 @@ impl HnswGraph {
             }
         }
 
-        // Deterministic full ordering over (distance_bits, node_idx).
-        scored.sort_unstable();
+        // HOT PATH: average O(d) partition. The packed key is a total ordering
+        // over (distance_bits, node_idx), and pruning only needs the split
+        // between retained and overflow neighbors, not a fully sorted prefix.
+        debug_assert!(m_max > 0);
+        if scored.len() > m_max {
+            scored.select_nth_unstable(m_max - 1);
+        }
 
         // Extract overflow IDs before mutating adjacency (requires &mut self).
         let drop: SmallVec<[u32; M0]> = scored[m_max..]
@@ -4492,7 +4522,7 @@ mod tests {
         );
 
         let (expected_keep, expected_drop) = expected_keep_and_drop(&g, idx, 0, m_max);
-        g.prune_layer(idx, 0, m_max, None);
+        g.prune_layer(idx, 0, m_max, None, None);
 
         let after: Vec<u32> = g.node_neighbors_iter(idx, 0).collect();
         assert_eq!(after.len(), m_max);
@@ -4507,6 +4537,29 @@ mod tests {
     }
 
     #[test]
+    fn prune_layer_cached_query_matches_internal_projection() {
+        let mut baseline = HnswGraph::new(64);
+        for i in 0..16_u64 {
+            baseline
+                .insert(make_id(i), &make_vec((i as f64).mul_add(0.05, 0.13)))
+                .expect("insert");
+        }
+
+        let idx = 0usize;
+        let m_max = 3usize;
+        assert!(baseline.node_neighbors_len(idx, 0) > m_max);
+
+        let mut cached = baseline.clone();
+        let query_f32 = HnswGraph::dense_to_query_f32(&cached.nodes[idx].vec);
+        baseline.prune_layer(idx, 0, m_max, None, None);
+        cached.prune_layer(idx, 0, m_max, None, Some(&query_f32));
+
+        let baseline_after: Vec<u32> = baseline.node_neighbors_iter(idx, 0).collect();
+        let cached_after: Vec<u32> = cached.node_neighbors_iter(idx, 0).collect();
+        assert_eq!(baseline_after, cached_after);
+    }
+
+    #[test]
     fn prune_layer_preserves_sorted_adjacency_after_removal() {
         let mut g = HnswGraph::new(64);
         for i in 0..24_u64 {
@@ -4517,7 +4570,7 @@ mod tests {
         let idx = 0usize;
         let m_max = 2usize;
         assert!(g.node_neighbors_len(idx, 0) > m_max);
-        g.prune_layer(idx, 0, m_max, None);
+        g.prune_layer(idx, 0, m_max, None, None);
 
         for (node_idx, adj) in g.layer_neighbors.iter().enumerate() {
             for window in adj.layer0.windows(2) {
@@ -4558,7 +4611,7 @@ mod tests {
         let idx = 0usize;
         let m_max = 3usize;
         let (_expected_keep, expected_drop) = expected_keep_and_drop(&g, idx, 0, m_max);
-        g.prune_layer(idx, 0, m_max, None);
+        g.prune_layer(idx, 0, m_max, None, None);
 
         let after: Vec<u32> = g.node_neighbors_iter(idx, 0).collect();
         for dropped in expected_drop {

@@ -10,7 +10,7 @@ pub use dirac::{DiracOperator, DiracSquared, GammaAction, LorentzIndex};
 pub use flow::{ConvergenceCriteria, SpectralFlowEngine, SpectralFlowHistory, SpectralFlowStep};
 pub use zeta::ZetaRegularizer;
 
-mod sparse_matrix;
+mod dense_matrix;
 
 #[cfg(test)]
 mod tests {

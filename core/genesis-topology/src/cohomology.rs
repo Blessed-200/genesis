@@ -12,12 +12,12 @@ use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
-// Política de mantenimiento para validación cohomológica crítica.
+// Maintenance policy for critical topology validation modules.
 //
-// - `#[inline(always)]` está prohibido salvo excepción documentada con
-//   benchmark reproducible, motivo arquitectónico y riesgo explícito.
-// - Cuando una optimización dependa de `cfg`, debe declarar rama complementaria
-//   `not(...)` para mantener cobertura de símbolos del codec entre perfiles.
+// - `#[inline(always)]` is prohibited except for documented exceptions with
+//   reproducible benchmark evidence, architectural rationale, and explicit risk evaluation.
+// - When an optimization is conditioned on `cfg`, it must declare a complementary
+//   `not(...)` branch to maintain codec symbol coverage across build profiles.
 //
 // AX-ID: AXIOMA-007, AXIOMA-009, H_restricción (LEY_FUNDACIONAL §5.6)
 
@@ -58,25 +58,20 @@ impl AlignedU64Buffer {
         Self { ptr, len }
     }
 
-    #[cfg(test)]
-    fn resize_zeroed(&mut self, new_len: usize) {
-        if new_len == self.len {
+    fn reset_zeroed(&mut self) {
+        if self.len == 0 {
             return;
         }
-        let mut replacement = Self::new_zeroed(new_len);
-        let copy_len = self.len.min(new_len);
-        if copy_len > 0 {
-            // SAFETY: both buffers are valid for `copy_len` contiguous u64 elements
-            // and do not overlap because they are distinct allocations.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    self.ptr.as_ptr(),
-                    replacement.ptr.as_ptr(),
-                    copy_len,
-                );
-            }
+        // SAFETY: `ptr` is valid for `len` contiguous u64 elements by construction.
+        unsafe { std::ptr::write_bytes(self.ptr.as_ptr(), 0, self.len) };
+    }
+
+    fn ensure_len_zeroed(&mut self, new_len: usize) {
+        if new_len == self.len {
+            self.reset_zeroed();
+            return;
         }
-        std::mem::swap(self, &mut replacement);
+        *self = Self::new_zeroed(new_len);
     }
 
     const fn as_slice(&self) -> &[u64] {
@@ -144,12 +139,21 @@ impl Z2Matrix {
     }
 
     fn new(rows: usize, cols: usize) -> Self {
+        Self::new_with_scratch(rows, cols, &mut None)
+    }
+
+    fn new_with_scratch(rows: usize, cols: usize, scratch: &mut Option<AlignedU64Buffer>) -> Self {
         let words_per_row = Self::padded_words_per_row(cols);
+        let data_len = rows * words_per_row;
+        let mut data = scratch
+            .take()
+            .unwrap_or_else(|| AlignedU64Buffer::new_zeroed(data_len));
+        data.ensure_len_zeroed(data_len);
         let matrix = Self {
             rows,
             cols,
             words_per_row,
-            data: AlignedU64Buffer::new_zeroed(rows * words_per_row),
+            data,
         };
 
         debug_assert_matrix_invariants(&matrix);
@@ -157,11 +161,15 @@ impl Z2Matrix {
         matrix
     }
 
+    fn into_scratch(self) -> AlignedU64Buffer {
+        self.data
+    }
+
     #[cfg(test)]
     fn set_cols(&mut self, cols: usize) {
         self.cols = cols;
         self.words_per_row = Self::padded_words_per_row(cols);
-        self.data.resize_zeroed(self.rows * self.words_per_row);
+        self.data.ensure_len_zeroed(self.rows * self.words_per_row);
         debug_assert_matrix_invariants(self);
     }
 
@@ -180,6 +188,13 @@ impl Z2Matrix {
     }
 
     fn rank_by_gaussian_elimination(&mut self) -> usize {
+        self.rank_by_gaussian_elimination_with_scratch(&mut None)
+    }
+
+    fn rank_by_gaussian_elimination_with_scratch(
+        &mut self,
+        pivot_scratch: &mut Option<AlignedU64Buffer>,
+    ) -> usize {
         debug_assert_matrix_invariants(self);
         if self.rows == 0 || self.cols == 0 {
             return 0;
@@ -188,7 +203,10 @@ impl Z2Matrix {
         let wpr = self.words_per_row;
         let mut rank = 0usize;
         let mut r = 0usize;
-        let mut pivot_row_buf = AlignedU64Buffer::new_zeroed(wpr);
+        let mut pivot_row_buf = pivot_scratch
+            .take()
+            .unwrap_or_else(|| AlignedU64Buffer::new_zeroed(wpr));
+        pivot_row_buf.ensure_len_zeroed(wpr);
         // HOT PATH: O(N) — no heap allocation, no trait-object dispatch, no recursion, no HashMap/BTreeMap.
         let xor_kernel = select_xor_kernel();
 
@@ -253,23 +271,31 @@ impl Z2Matrix {
         }
 
         debug_assert_matrix_invariants(self);
+        *pivot_scratch = Some(pivot_row_buf);
         rank
     }
 }
 
-#[inline]
+/// Returns the optimal Z₂ XOR kernel for the current CPU.
+///
+/// CPUID-based feature detection is invariant for the process lifetime, so the
+/// selected function pointer is cached after the first elimination call.
+///
+/// AX-ID: AXIOMA-007, AXIOMA-009
 fn select_xor_kernel() -> XorKernel {
-    // HOT PATH: O(N) kernel selection boundary — one-time runtime dispatch per elimination call.
-    #[cfg(target_arch = "x86_64")]
-    {
-        if std::arch::is_x86_feature_detected!("avx512f") {
-            return xor_row_avx512_entry;
+    static CACHED: std::sync::OnceLock<XorKernel> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("avx512f") {
+                return xor_row_avx512_entry;
+            }
+            if std::arch::is_x86_feature_detected!("avx2") {
+                return xor_row_avx2_entry;
+            }
         }
-        if std::arch::is_x86_feature_detected!("avx2") {
-            return xor_row_avx2_entry;
-        }
-    }
-    xor_row_scalar
+        xor_row_scalar
+    })
 }
 
 #[inline]
@@ -397,6 +423,10 @@ fn invalid_topology_state(message: &'static str) -> ! {
 struct HomologyWorkspace {
     id_to_vertex: Vec<usize>,
     edge_lookup: Vec<(u64, usize)>,
+    dense_edge_lookup: Vec<u32>,
+    d1_matrix_scratch: Option<AlignedU64Buffer>,
+    d2_matrix_scratch: Option<AlignedU64Buffer>,
+    pivot_row_scratch: Option<AlignedU64Buffer>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -561,13 +591,13 @@ fn prepare_vertex_index(complex: &RipsComplex, ws: &mut HomologyWorkspace) -> us
     n_v
 }
 
-fn build_d1(complex: &RipsComplex, ws: &HomologyWorkspace, n_v: usize) -> Z2Matrix {
+fn build_d1(complex: &RipsComplex, ws: &mut HomologyWorkspace, n_v: usize) -> Z2Matrix {
     let n_e = complex.simplices_of_dim(1).count();
     if n_v == 0 || n_e == 0 {
-        return Z2Matrix::new(0, 0);
+        return Z2Matrix::new_with_scratch(0, 0, &mut ws.d1_matrix_scratch);
     }
 
-    let mut m = Z2Matrix::new(n_v, n_e);
+    let mut m = Z2Matrix::new_with_scratch(n_v, n_e, &mut ws.d1_matrix_scratch);
     for (col, edge) in complex.simplices_of_dim(1).enumerate() {
         let u = ws.id_to_vertex[edge[0].get() as usize];
         let v = ws.id_to_vertex[edge[1].get() as usize];
@@ -585,7 +615,7 @@ fn build_d2(complex: &RipsComplex, ws: &mut HomologyWorkspace, n_v: usize) -> Z2
     let n_e = complex.simplices_of_dim(1).count();
     let n_t = complex.simplices_of_dim(2).count();
     if n_e == 0 || n_t == 0 {
-        return Z2Matrix::new(0, 0);
+        return Z2Matrix::new_with_scratch(0, 0, &mut ws.d2_matrix_scratch);
     }
 
     ws.edge_lookup.clear();
@@ -601,18 +631,23 @@ fn build_d2(complex: &RipsComplex, ws: &mut HomologyWorkspace, n_v: usize) -> Z2
     let dense_lookup = if dense_slots > 0
         && dense_slots <= DENSE_EDGE_MAP_BYTES_LIMIT / std::mem::size_of::<u32>()
     {
-        let mut table = vec![u32::MAX; dense_slots];
+        if ws.dense_edge_lookup.len() < dense_slots {
+            ws.dense_edge_lookup.resize(dense_slots, u32::MAX);
+        } else {
+            ws.dense_edge_lookup[..dense_slots].fill(u32::MAX);
+        }
+        let table = &mut ws.dense_edge_lookup[..dense_slots];
         for &(key, row) in &ws.edge_lookup {
             let a = (key >> 32) as usize;
             let b = (key & 0xFFFF_FFFF) as usize;
             table[a * n_v + b] = row as u32;
         }
-        Some(table)
+        Some(&table[..])
     } else {
         None
     };
 
-    let mut boundary_matrix = Z2Matrix::new(n_e, n_t);
+    let mut boundary_matrix = Z2Matrix::new_with_scratch(n_e, n_t, &mut ws.d2_matrix_scratch);
     for (col, tri) in complex.simplices_of_dim(2).enumerate() {
         let vertex_a = ws.id_to_vertex[tri[0].get() as usize];
         let vertex_b = ws.id_to_vertex[tri[1].get() as usize];
@@ -628,7 +663,7 @@ fn build_d2(complex: &RipsComplex, ws: &mut HomologyWorkspace, n_v: usize) -> Z2
             } else {
                 (edge_end, edge_start)
             };
-            if let Some(table) = dense_lookup.as_ref() {
+            if let Some(table) = dense_lookup {
                 let base = min_vertex * n_v;
                 let row = table[base + max_vertex];
                 if row != u32::MAX {
@@ -650,12 +685,15 @@ fn check_h1_full(complex: &RipsComplex, ws: &mut HomologyWorkspace, n_v: usize) 
 
     let n_edges = complex.simplices_of_dim(1).count();
     let mut d1 = build_d1(complex, ws, n_v);
-    let rank_d1 = d1.rank_by_gaussian_elimination();
+    let rank_d1 = d1.rank_by_gaussian_elimination_with_scratch(&mut ws.pivot_row_scratch);
     let rank_ker_d1 = n_edges.saturating_sub(rank_d1);
+    ws.d1_matrix_scratch = Some(d1.into_scratch());
 
     let rank_im_d2 = {
         let mut d2 = build_d2(complex, ws, n_v);
-        d2.rank_by_gaussian_elimination()
+        let rank = d2.rank_by_gaussian_elimination_with_scratch(&mut ws.pivot_row_scratch);
+        ws.d2_matrix_scratch = Some(d2.into_scratch());
+        rank
     };
 
     let h1_dim = rank_ker_d1.saturating_sub(rank_im_d2);
@@ -772,6 +810,7 @@ impl CohomologyValidator {
             let mut ws = ws_cell.borrow_mut();
             ws.id_to_vertex.clear();
             ws.edge_lookup.clear();
+            ws.dense_edge_lookup.clear();
         });
     }
 

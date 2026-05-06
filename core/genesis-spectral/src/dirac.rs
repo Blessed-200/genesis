@@ -1,7 +1,7 @@
 use genesis_math::{sparse_geometric_product, SparseCliffordVector};
 use genesis_types::{constants::SPECTRAL_LAMBDA_MIN, AxiomID, GenesisError, WitnessBuilder};
 
-use crate::sparse_matrix::SparseMatrix16;
+use crate::dense_matrix::DenseMatrix16;
 
 /// Baseline algebraic contribution of Tr(D²)/4 in G(1,3) with Minkowski signature (+,-,-,-).
 ///
@@ -115,17 +115,30 @@ impl DiracOperator {
     /// # Errors
     /// Returns `GenesisError` when intermediate Dirac applications fail.
     pub fn squared(&self) -> Result<DiracSquared, GenesisError> {
-        let mut dense = [[0.0_f64; 16]; 16];
+        let mut dense_dirac = [[0.0_f64; 16]; 16];
         for j in 0..16 {
             let mut basis = [0.0_f64; 16];
             basis[j] = 1.0;
             let first_apply = self.apply(&basis)?;
-            let second_apply = self.apply(&first_apply)?;
             for i in 0..16 {
-                dense[i][j] = second_apply[i];
+                dense_dirac[i][j] = first_apply[i];
             }
         }
-        let matrix = SparseMatrix16::from_dense(&dense);
+
+        let dirac_matrix = DenseMatrix16::from_dense(&dense_dirac);
+        let mut dense_squared = [[0.0_f64; 16]; 16];
+        for j in 0..16 {
+            let mut column = [0.0_f64; 16];
+            for i in 0..16 {
+                column[i] = dense_dirac[i][j];
+            }
+            let second_apply = dirac_matrix.matvec(&column);
+            for i in 0..16 {
+                dense_squared[i][j] = second_apply[i];
+            }
+        }
+
+        let matrix = DenseMatrix16::from_dense(&dense_squared);
         let ricci_scalar = 4.0 * matrix.trace() / 16.0 - self.flat_trace_baseline;
         Ok(DiracSquared {
             matrix,
@@ -159,8 +172,18 @@ impl DiracOperator {
 
 #[derive(Clone, Debug)]
 pub struct DiracSquared {
-    pub(crate) matrix: SparseMatrix16,
+    pub(crate) matrix: DenseMatrix16,
     pub ricci_scalar: f64,
+}
+
+impl DiracSquared {
+    /// Returns the squared Frobenius norm of `D²`.
+    ///
+    /// AX-ID: AXIOMA-014, H_estructura (LEY_FUNDACIONAL §3.1)
+    #[must_use]
+    pub fn frobenius_norm_sq(&self) -> f64 {
+        self.matrix.frobenius_norm_sq()
+    }
 }
 
 #[cfg(test)]
