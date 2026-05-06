@@ -1131,7 +1131,7 @@ pub struct HnswGraph {
     /// Current search generation for epoch-marked visited state.
     epoch_gen: AtomicU32,
     /// Directed edge count at layer 0 (stored as directed for O(1) updates).
-    edge_count_layer0_undirected: usize,
+    directed_edge_slots_layer0: usize,
     /// Cached directed edge count across all maintained layer-0 adjacency updates.
     ///
     /// BN-01: cached in O(1) at mutation points to avoid repeated graph scans.
@@ -1152,6 +1152,12 @@ pub struct HnswGraph {
     escape_success_count: AtomicU64,
     /// Number of escaped candidates that failed exact-audit tolerance.
     recall_drop_count: AtomicU64,
+    /// Total counter snapshot consumed by the last stride-gated controller update.
+    controller_last_total_count: AtomicU64,
+    /// Safe-escape counter snapshot consumed by the last stride-gated controller update.
+    controller_last_escape_success_count: AtomicU64,
+    /// Recall-drop counter snapshot consumed by the last stride-gated controller update.
+    controller_last_recall_drop_count: AtomicU64,
     /// EMA of escape-rate observations.
     ema_escape_rate_bits: AtomicU64,
     /// EMA of recall-drop observations.
@@ -1175,7 +1181,7 @@ impl Clone for HnswGraph {
             state: self.state,
             layer_neighbors: Arc::clone(&self.layer_neighbors),
             epoch_gen: AtomicU32::new(self.epoch_gen.load(AtomicOrdering::Relaxed)),
-            edge_count_layer0_undirected: self.edge_count_layer0_undirected,
+            directed_edge_slots_layer0: self.directed_edge_slots_layer0,
             total_edges: self.total_edges,
             total_edge_slots: self.total_edge_slots,
             live_nodes: self.live_nodes,
@@ -1195,6 +1201,18 @@ impl Clone for HnswGraph {
                 self.escape_success_count.load(AtomicOrdering::Relaxed),
             ),
             recall_drop_count: AtomicU64::new(self.recall_drop_count.load(AtomicOrdering::Relaxed)),
+            controller_last_total_count: AtomicU64::new(
+                self.controller_last_total_count
+                    .load(AtomicOrdering::Relaxed),
+            ),
+            controller_last_escape_success_count: AtomicU64::new(
+                self.controller_last_escape_success_count
+                    .load(AtomicOrdering::Relaxed),
+            ),
+            controller_last_recall_drop_count: AtomicU64::new(
+                self.controller_last_recall_drop_count
+                    .load(AtomicOrdering::Relaxed),
+            ),
             ema_escape_rate_bits: AtomicU64::new(
                 self.ema_escape_rate_bits.load(AtomicOrdering::Relaxed),
             ),
@@ -1276,7 +1294,7 @@ impl HnswGraph {
             state: GraphState::Online,
             layer_neighbors: Arc::new(Vec::with_capacity(INITIAL_NODE_CAPACITY)),
             epoch_gen: AtomicU32::new(0),
-            edge_count_layer0_undirected: 0,
+            directed_edge_slots_layer0: 0,
             total_edges: 0,
             total_edge_slots: 0,
             live_nodes: 0,
@@ -1289,6 +1307,9 @@ impl HnswGraph {
             escape_total_count: AtomicU64::new(0),
             escape_success_count: AtomicU64::new(0),
             recall_drop_count: AtomicU64::new(0),
+            controller_last_total_count: AtomicU64::new(0),
+            controller_last_escape_success_count: AtomicU64::new(0),
+            controller_last_recall_drop_count: AtomicU64::new(0),
             ema_escape_rate_bits: AtomicU64::new(0.0f64.to_bits()),
             ema_recall_drop_bits: AtomicU64::new(0.0f64.to_bits()),
             prev_escape_rate_bits: AtomicU64::new(0.0f64.to_bits()),
@@ -1337,7 +1358,7 @@ impl HnswGraph {
             state: self.state,
             layer_neighbors,
             epoch_gen: AtomicU32::new(self.epoch_gen.load(AtomicOrdering::Relaxed)),
-            edge_count_layer0_undirected: self.edge_count_layer0_undirected,
+            directed_edge_slots_layer0: self.directed_edge_slots_layer0,
             total_edges: self.total_edges,
             total_edge_slots: self.total_edge_slots,
             live_nodes: self.live_nodes,
@@ -1357,6 +1378,18 @@ impl HnswGraph {
                 self.escape_success_count.load(AtomicOrdering::Relaxed),
             ),
             recall_drop_count: AtomicU64::new(self.recall_drop_count.load(AtomicOrdering::Relaxed)),
+            controller_last_total_count: AtomicU64::new(
+                self.controller_last_total_count
+                    .load(AtomicOrdering::Relaxed),
+            ),
+            controller_last_escape_success_count: AtomicU64::new(
+                self.controller_last_escape_success_count
+                    .load(AtomicOrdering::Relaxed),
+            ),
+            controller_last_recall_drop_count: AtomicU64::new(
+                self.controller_last_recall_drop_count
+                    .load(AtomicOrdering::Relaxed),
+            ),
             ema_escape_rate_bits: AtomicU64::new(
                 self.ema_escape_rate_bits.load(AtomicOrdering::Relaxed),
             ),
@@ -1503,12 +1536,42 @@ impl HnswGraph {
     }
 
     #[inline]
-    fn record_controller_observation(&self, escaped: bool, recall_drop: bool) {
-        let escape_obs = if escaped { 1.0 } else { 0.0 };
-        let recall_obs = if recall_drop { 1.0 } else { 0.0 };
-        let ema_escape = Self::update_ema_strided(&self.ema_escape_rate_bits, escape_obs);
-        let ema_recall = Self::update_ema_strided(&self.ema_recall_drop_bits, recall_obs);
+    fn record_controller_observation_rates(&self, escape_rate: f64, recall_drop_rate: f64) {
+        debug_assert!((0.0..=1.0).contains(&escape_rate));
+        debug_assert!((0.0..=1.0).contains(&recall_drop_rate));
+        let ema_escape = Self::update_ema_strided(&self.ema_escape_rate_bits, escape_rate);
+        let ema_recall = Self::update_ema_strided(&self.ema_recall_drop_bits, recall_drop_rate);
         self.tune_escape_threshold_pd(ema_escape, ema_recall);
+    }
+
+    #[inline]
+    fn record_strided_controller_observation(&self) {
+        let total = self.escape_total_count.load(AtomicOrdering::Relaxed);
+        debug_assert!(total > 0);
+        let escape_successes = self.escape_success_count.load(AtomicOrdering::Relaxed);
+        let recall_drops = self.recall_drop_count.load(AtomicOrdering::Relaxed);
+
+        let previous_total = self
+            .controller_last_total_count
+            .swap(total, AtomicOrdering::Relaxed);
+        let previous_escape_successes = self
+            .controller_last_escape_success_count
+            .swap(escape_successes, AtomicOrdering::Relaxed);
+        let previous_recall_drops = self
+            .controller_last_recall_drop_count
+            .swap(recall_drops, AtomicOrdering::Relaxed);
+        let total_delta = total.saturating_sub(previous_total);
+        if total_delta == 0 {
+            return;
+        }
+
+        let escape_success_delta = escape_successes.saturating_sub(previous_escape_successes);
+        let recall_drop_delta = recall_drops.saturating_sub(previous_recall_drops);
+        let denominator = total_delta as f64;
+        self.record_controller_observation_rates(
+            escape_success_delta.min(total_delta) as f64 / denominator,
+            recall_drop_delta.min(total_delta) as f64 / denominator,
+        );
     }
 
     #[inline]
@@ -1526,11 +1589,9 @@ impl HnswGraph {
         if recall_drop {
             self.recall_drop_count.fetch_add(1, AtomicOrdering::Relaxed);
         }
-        if previous_total
-            .wrapping_add(1)
-            .is_multiple_of(ESCAPE_AUDIT_STRIDE)
-        {
-            self.record_controller_observation(escaped, recall_drop);
+        let total_after_increment = previous_total.wrapping_add(1);
+        if total_after_increment.is_multiple_of(ESCAPE_AUDIT_STRIDE) {
+            self.record_strided_controller_observation();
         }
     }
 
@@ -1875,10 +1936,10 @@ impl HnswGraph {
             max_neighbors,
         ) && layer == 0
         {
-            self.edge_count_layer0_undirected += 1;
+            self.directed_edge_slots_layer0 += 1;
             self.total_edges += 1;
             self.total_edge_slots += 1;
-            debug_assert_eq!(self.total_edges, self.edge_count_layer0_undirected);
+            debug_assert_eq!(self.total_edges, self.directed_edge_slots_layer0);
             debug_assert_eq!(self.total_edge_slots, self.total_edges);
         }
     }
@@ -1893,11 +1954,10 @@ impl HnswGraph {
             .remove_neighbor(layer, to_idx as u32)
         {
             if layer == 0 {
-                self.edge_count_layer0_undirected =
-                    self.edge_count_layer0_undirected.saturating_sub(1);
+                self.directed_edge_slots_layer0 = self.directed_edge_slots_layer0.saturating_sub(1);
                 self.total_edges = self.total_edges.saturating_sub(1);
                 self.total_edge_slots = self.total_edge_slots.saturating_sub(1);
-                debug_assert_eq!(self.total_edges, self.edge_count_layer0_undirected);
+                debug_assert_eq!(self.total_edges, self.directed_edge_slots_layer0);
                 debug_assert_eq!(self.total_edge_slots, self.total_edges);
             }
             return true;
@@ -1941,12 +2001,11 @@ impl HnswGraph {
         debug_assert!(degree <= M0);
         let owned_query_f32;
         let query_f32 = if layer == 0 {
-            match cached_query_f32 {
-                Some(query) => Some(query),
-                None => {
-                    owned_query_f32 = Self::dense_to_query_f32(&self.nodes[idx].vec);
-                    Some(&owned_query_f32)
-                }
+            if let Some(query) = cached_query_f32 {
+                Some(query)
+            } else {
+                owned_query_f32 = Self::dense_to_query_f32(&self.nodes[idx].vec);
+                Some(&owned_query_f32)
             }
         } else {
             None
@@ -2547,8 +2606,11 @@ impl HnswGraph {
     }
 
     /// Total number of undirected edges at layer 0 (base connectivity).
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura
     pub const fn edge_count(&self) -> usize {
-        self.total_edge_slots / 2
+        debug_assert!(self.total_edge_slots == self.directed_edge_count_layer0());
+        self.undirected_edge_pairs_layer0()
     }
 
     /// Build a contiguous layer-0 SoA snapshot for read-heavy numeric pipelines.
@@ -2558,8 +2620,8 @@ impl HnswGraph {
         let mut node_ids = Vec::with_capacity(self.live_nodes);
         let mut node_to_slab = Vec::with_capacity(self.live_nodes);
         let mut neighbor_offsets = Vec::with_capacity(self.live_nodes);
-        let mut neighbor_ids = Vec::with_capacity(self.edge_count_layer0_undirected);
-        let mut neighbor_distances = Vec::with_capacity(self.edge_count_layer0_undirected);
+        let mut neighbor_ids = Vec::with_capacity(self.directed_edge_slots_layer0);
+        let mut neighbor_distances = Vec::with_capacity(self.directed_edge_slots_layer0);
 
         for (node_idx, node) in self.nodes.iter().enumerate() {
             if node.id == NodeId::INVALID {
@@ -2646,12 +2708,12 @@ impl HnswGraph {
         for layer in 0..=self.nodes[idx].max_layer {
             Self::cow_vec_mut(&mut self.layer_neighbors)[idx].clear_layer(layer);
         }
-        self.edge_count_layer0_undirected = self
-            .edge_count_layer0_undirected
+        self.directed_edge_slots_layer0 = self
+            .directed_edge_slots_layer0
             .saturating_sub(outgoing_layer0);
         self.total_edges = self.total_edges.saturating_sub(outgoing_layer0);
         self.total_edge_slots = self.total_edge_slots.saturating_sub(outgoing_layer0);
-        debug_assert_eq!(self.total_edges, self.edge_count_layer0_undirected);
+        debug_assert_eq!(self.total_edges, self.directed_edge_slots_layer0);
         debug_assert_eq!(self.total_edge_slots, self.total_edges);
 
         // Step 3: Invalidate direct_index entry.
@@ -2785,12 +2847,28 @@ impl HnswGraph {
         }
     }
 
+    /// Returns the number of directed edge slots allocated in layer 0.
+    ///
+    /// Internal storage model: each undirected pair `{A, B}` is stored as two
+    /// directed slots (`A → B` and `B → A`). This count reflects raw slots.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura
     pub(crate) const fn directed_edge_count_layer0(&self) -> usize {
-        self.edge_count_layer0_undirected
+        self.directed_edge_slots_layer0
     }
 
+    /// Returns the number of unique undirected edge pairs in layer 0.
+    ///
+    /// This value equals `directed_edge_count_layer0() / 2` by the symmetric
+    /// storage invariant.
+    ///
+    /// AX-ID: AXIOMA-013, H_estructura
     pub(crate) const fn undirected_edge_pairs_layer0(&self) -> usize {
-        self.edge_count_layer0_undirected / 2
+        debug_assert!(
+            self.directed_edge_slots_layer0.is_multiple_of(2),
+            "edge count parity invariant violated: directed slots must be even"
+        );
+        self.directed_edge_slots_layer0 / 2
     }
 
     /// Computes local structural Hamiltonian delta for candidate edge mutation.
@@ -3650,6 +3728,19 @@ mod tests {
         }
         let tuned = graph.base_approx_precision_threshold();
         assert!(tuned > start);
+    }
+
+    #[test]
+    fn escape_controller_aggregates_stride_instead_of_sampling_boundary_event() {
+        let graph = HnswGraph::new(16);
+        let start = graph.base_approx_precision_threshold();
+        for _ in 0..(ESCAPE_AUDIT_STRIDE - 1) {
+            graph.record_escape_result(true, false);
+        }
+        graph.record_escape_result(false, false);
+
+        assert!(graph.ema_escape_rate() > ESCAPE_RATE_TARGET);
+        assert!(graph.base_approx_precision_threshold() > start);
     }
 
     #[test]
@@ -5105,7 +5196,7 @@ mod tests {
 
         assert_eq!(g.total_edges, directed_sum);
         assert_eq!(g.total_edge_slots, directed_sum);
-        assert_eq!(g.total_edges, g.edge_count_layer0_undirected);
+        assert_eq!(g.total_edges, g.directed_edge_slots_layer0);
         assert_eq!(g.edge_count(), g.total_edges / 2);
     }
 
@@ -5127,7 +5218,7 @@ mod tests {
 
         assert_eq!(g.total_edges, directed_sum);
         assert_eq!(g.total_edge_slots, directed_sum);
-        assert_eq!(g.total_edges, g.edge_count_layer0_undirected);
+        assert_eq!(g.total_edges, g.directed_edge_slots_layer0);
     }
 
     #[test]
@@ -5438,7 +5529,7 @@ mod scaling_tests {
             0,
             "layer-0 directed edge count must be even in a bidirectional fixture"
         );
-        graph.edge_count_layer0_undirected = directed_layer0_edges;
+        graph.directed_edge_slots_layer0 = directed_layer0_edges;
 
         // Create a NeighborIter and exhaust it, tracking the maximum seen.len()
         let iter = NeighborIter {
