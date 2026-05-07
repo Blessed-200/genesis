@@ -58,6 +58,10 @@ impl AlignedU64Buffer {
         Self { ptr, len }
     }
 
+    #[expect(
+        clippy::missing_const_for_fn,
+        reason = "zeroing an allocation through a raw pointer is a runtime memory effect"
+    )]
     fn reset_zeroed(&mut self) {
         if self.len == 0 {
             return;
@@ -202,77 +206,104 @@ impl Z2Matrix {
 
         let wpr = self.words_per_row;
         let mut rank = 0usize;
-        let mut r = 0usize;
+        let mut pivot_target_row = 0usize;
         let mut pivot_row_buf = pivot_scratch
             .take()
             .unwrap_or_else(|| AlignedU64Buffer::new_zeroed(wpr));
         pivot_row_buf.ensure_len_zeroed(wpr);
-        // HOT PATH: O(N) — no heap allocation, no trait-object dispatch, no recursion, no HashMap/BTreeMap.
+        // HOT PATH: O(rows * cols * words_per_row), with persistent scratch and
+        // CPU-selected XOR kernels to avoid per-elimination allocation.
         let xor_kernel = select_xor_kernel();
 
         debug_assert_eq!(self.data.len(), self.rows * wpr);
 
-        for c in 0..self.cols {
-            if r >= self.rows {
+        for col in 0..self.cols {
+            if pivot_target_row >= self.rows {
                 break;
             }
 
-            let pivot_word = c / 64;
-            let pivot_bit = 1u64 << (c % 64);
+            let pivot_word = col / 64;
+            let pivot_bit = 1u64 << (col % 64);
+            let Some(pivot_row) = self.find_pivot_row(pivot_target_row, pivot_word, pivot_bit)
+            else {
+                continue;
+            };
 
-            let mut pivot = None;
-            let mut idx = r * wpr + pivot_word;
-            for row in r..self.rows {
-                if (self.data[idx] & pivot_bit) != 0 {
-                    pivot = Some(row);
-                    break;
-                }
-                idx += wpr;
-            }
+            self.swap_rows(pivot_row, pivot_target_row);
+            self.copy_row_to_buffer(pivot_target_row, &mut pivot_row_buf);
+            self.eliminate_pivot_column(
+                pivot_target_row,
+                pivot_word,
+                pivot_bit,
+                &pivot_row_buf,
+                xor_kernel,
+            );
 
-            if let Some(p) = pivot {
-                if p != r {
-                    let p_start = p * wpr;
-                    let r_start = r * wpr;
-                    if p_start < r_start {
-                        let (left, right) = self.data.split_at_mut(r_start);
-                        let p_row = &mut left[p_start..p_start + wpr];
-                        let r_row = &mut right[..wpr];
-                        p_row.swap_with_slice(r_row);
-                    } else {
-                        let (left, right) = self.data.split_at_mut(p_start);
-                        let r_row = &mut left[r_start..r_start + wpr];
-                        let p_row = &mut right[..wpr];
-                        r_row.swap_with_slice(p_row);
-                    }
-                }
-
-                let start = r * wpr;
-                let src = &self.data[start..][..wpr];
-                pivot_row_buf.copy_from_slice(src);
-
-                for row in 0..self.rows {
-                    if row == r {
-                        continue;
-                    }
-                    let row_pivot_idx = row * wpr + pivot_word;
-                    if (self.data[row_pivot_idx] & pivot_bit) != 0 {
-                        let base = row * wpr + pivot_word;
-                        let len = wpr - pivot_word;
-                        let row_tail = &mut self.data[base..base + len];
-                        let pivot_tail = &pivot_row_buf[pivot_word..pivot_word + len];
-                        xor_kernel(row_tail, pivot_tail);
-                    }
-                }
-
-                rank += 1;
-                r += 1;
-            }
+            rank += 1;
+            pivot_target_row += 1;
         }
 
         debug_assert_matrix_invariants(self);
         *pivot_scratch = Some(pivot_row_buf);
         rank
+    }
+
+    fn find_pivot_row(&self, start_row: usize, pivot_word: usize, pivot_bit: u64) -> Option<usize> {
+        let mut idx = start_row * self.words_per_row + pivot_word;
+        for row in start_row..self.rows {
+            if (self.data[idx] & pivot_bit) != 0 {
+                return Some(row);
+            }
+            idx += self.words_per_row;
+        }
+        None
+    }
+
+    fn swap_rows(&mut self, a: usize, b: usize) {
+        if a == b {
+            return;
+        }
+
+        let wpr = self.words_per_row;
+        let a_start = a * wpr;
+        let b_start = b * wpr;
+        if a_start < b_start {
+            let (left, right) = self.data.split_at_mut(b_start);
+            left[a_start..a_start + wpr].swap_with_slice(&mut right[..wpr]);
+        } else {
+            let (left, right) = self.data.split_at_mut(a_start);
+            left[b_start..b_start + wpr].swap_with_slice(&mut right[..wpr]);
+        }
+    }
+
+    fn copy_row_to_buffer(&self, row: usize, pivot_row_buf: &mut AlignedU64Buffer) {
+        let start = row * self.words_per_row;
+        pivot_row_buf.copy_from_slice(&self.data[start..start + self.words_per_row]);
+    }
+
+    fn eliminate_pivot_column(
+        &mut self,
+        pivot_row: usize,
+        pivot_word: usize,
+        pivot_bit: u64,
+        pivot_row_buf: &AlignedU64Buffer,
+        xor_kernel: XorKernel,
+    ) {
+        let wpr = self.words_per_row;
+        let len = wpr - pivot_word;
+        let pivot_tail = &pivot_row_buf[pivot_word..pivot_word + len];
+
+        for row in 0..self.rows {
+            if row == pivot_row {
+                continue;
+            }
+            let row_pivot_idx = row * wpr + pivot_word;
+            if (self.data[row_pivot_idx] & pivot_bit) == 0 {
+                continue;
+            }
+            let base = row * wpr + pivot_word;
+            xor_kernel(&mut self.data[base..base + len], pivot_tail);
+        }
     }
 }
 
@@ -811,6 +842,9 @@ impl CohomologyValidator {
             ws.id_to_vertex.clear();
             ws.edge_lookup.clear();
             ws.dense_edge_lookup.clear();
+            ws.d1_matrix_scratch = None;
+            ws.d2_matrix_scratch = None;
+            ws.pivot_row_scratch = None;
         });
     }
 
