@@ -141,6 +141,7 @@ thread_local! {
     static SEARCH_SCRATCH: RefCell<SearchScratch> = RefCell::new(SearchScratch::default());
     static VISITED_EPOCH: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
     static INSERT_DISTANCE_CACHE: RefCell<Vec<(u32, f32)>> = const { RefCell::new(Vec::new()) };
+    static INSERT_QUERY_F32: RefCell<[f32; SLAB_DIM]> = const { RefCell::new([0.0_f32; SLAB_DIM]) };
     static REMOVE_SCRATCH: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
     static BFS_QUEUE: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
     static BFS_QUEUE_BACK: RefCell<Vec<(usize, usize)>> = const { RefCell::new(Vec::new()) };
@@ -1850,10 +1851,18 @@ impl HnswGraph {
             return Ok(());
         };
 
+        // Pre-project query to f32 once for all distance calls in this insert.
+        // Avoids repeated 16x f64->f32 conversions in greedy upper-layer search.
+        INSERT_QUERY_F32.with(|cell| {
+            *cell.borrow_mut() = Self::dense_to_query_f32(vec);
+        });
+
         // Phase 1: greedy descent from entry_layer to target_layer+1
         let mut current = entry_idx;
         for lc in (target_layer + 1..=entry_layer).rev() {
-            current = self.greedy_search_layer(vec, current, lc);
+            INSERT_QUERY_F32.with(|cell| {
+                current = self.greedy_search_layer_with_f32(&cell.borrow(), current, lc);
+            });
         }
 
         // Phase 2: beam search and connect from target_layer down to 0
@@ -2174,6 +2183,48 @@ impl HnswGraph {
             if !improved {
                 break;
             }
+        }
+        current
+    }
+
+    fn greedy_search_layer_with_f32(
+        &self,
+        query_f32: &[f32; SLAB_DIM],
+        entry: usize,
+        layer: usize,
+    ) -> usize {
+        // BN-INSERT: query_f32 pre-computed once per insert call.
+        // Uses SoA slab path for all layer-0 distance evaluations.
+        // Upper layers still use this path because node_to_slab[idx]
+        // is valid for every node (write_node_to_slab runs at insert).
+        // f32 precision (7 decimal digits) is sufficient for greedy coarse search.
+        let mut current = entry;
+        loop {
+            let max_layer = self.nodes[current].max_layer;
+            if layer > max_layer {
+                break;
+            }
+            let layer_len = self.node_neighbors_len(current, layer);
+            if layer_len == 0 {
+                break;
+            }
+            let mut best = current;
+            let mut best_dist = self.distance_to_layer0_node_sq(query_f32, current);
+            for nb_u32 in self.node_neighbors_iter(current, layer) {
+                let nb = nb_u32 as usize;
+                if self.nodes[nb].id == NodeId::INVALID {
+                    continue;
+                }
+                let d = self.distance_to_layer0_node_sq(query_f32, nb);
+                if d < best_dist {
+                    best_dist = d;
+                    best = nb;
+                }
+            }
+            if best == current {
+                break;
+            }
+            current = best;
         }
         current
     }
