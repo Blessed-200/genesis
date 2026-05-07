@@ -43,25 +43,55 @@ pub struct GlobalSection {
 }
 
 impl GlobalSection {
-    pub fn compute(causal_order: &CausalOrder, node_ids: &[u64], root_spinor: DiracSpinor) -> Result<Self, GenesisError> {
+    pub fn compute(
+        causal_order: &CausalOrder,
+        node_ids: &[u64],
+        root_spinor: DiracSpinor,
+    ) -> Result<Self, GenesisError> {
         causal_order.verify_acyclic()?;
         let mut spinors: Vec<(u64, DiracSpinor)> = Vec::with_capacity(node_ids.len());
+
         for &id in node_ids {
-            let past = causal_order.past_lightcone(id);
-            let spinor = if past.is_empty() { root_spinor.clone() } else { root_spinor.clone() };
+            let incoming = causal_order.incoming_edges(id);
+            let spinor = if incoming.is_empty() {
+                root_spinor.clone()
+            } else {
+                let parent_edge = incoming
+                    .iter()
+                    .max_by(|a, b| {
+                        a.causal_strength
+                            .partial_cmp(&b.causal_strength)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .expect("incoming is non-empty");
+
+                let parent_spinor = spinors
+                    .iter()
+                    .find(|(pid, _)| *pid == parent_edge.cause_id)
+                    .map(|(_, s)| s)
+                    .unwrap_or(&root_spinor);
+
+                parent_spinor.parallel_transport(parent_edge)?
+            };
+
             spinors.push((id, spinor));
         }
 
+        let holonomy = compute_holonomy(&spinors, causal_order);
         let n = spinors.len() as f64;
         let coherence_order = if n > 0.0 {
             let sum_re: f64 = spinors.iter().map(|(_, s)| s.components[0]).sum();
             let sum_im: f64 = spinors.iter().map(|(_, s)| s.components[1]).sum();
-            ((sum_re / n).powi(2) + (sum_im / n).powi(2)).sqrt()
+            (sum_re / n).hypot(sum_im / n)
         } else {
             0.0
         };
 
-        Ok(Self { spinors, holonomy: 0.0, coherence_order })
+        Ok(Self {
+            spinors,
+            holonomy,
+            coherence_order,
+        })
     }
 
     #[must_use]
@@ -72,5 +102,25 @@ impl GlobalSection {
         let mean_re =
             self.spinors.iter().map(|(_, s)| s.components[0]).sum::<f64>() / self.spinors.len() as f64;
         mean_re * self.coherence_order
+    }
+}
+
+fn compute_holonomy(spinors: &[(u64, DiracSpinor)], causal_order: &CausalOrder) -> f64 {
+    let mut total_variance = 0.0_f64;
+    let mut count = 0_usize;
+
+    for (node_id, spinor) in spinors {
+        let in_degree = causal_order.incoming_edges(*node_id).len();
+        if in_degree > 1 {
+            let phase = spinor.components[1].atan2(spinor.components[0]);
+            total_variance += phase * phase;
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        0.0
+    } else {
+        (total_variance / count as f64).sqrt()
     }
 }
