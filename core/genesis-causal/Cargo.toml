@@ -10,6 +10,7 @@ genesis-math = { workspace = true }
 genesis-spectral = { workspace = true }
 smallvec = { workspace = true }
 thiserror = { workspace = true }
+fixedbitset = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

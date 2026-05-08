@@ -49,7 +49,9 @@ fn causal_benchmark(c: &mut Criterion) {
         })
     });
 
-    let root = DiracSpinor { components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] };
+    let root = DiracSpinor {
+        components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    };
     let ids: Vec<u64> = (0..1024).collect();
     c.bench_function("global_section_compute_1k", |b| {
         b.iter(|| {

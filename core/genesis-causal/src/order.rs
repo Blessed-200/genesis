@@ -3,6 +3,7 @@
 //! AX-ID: AXIOMA-002, H_estructura (LEY_FUNDACIONAL §3.1)
 
 use crate::separation::CausalSeparation;
+use fixedbitset::FixedBitSet;
 use genesis_types::{AxiomID, GenesisError, WitnessBuilder};
 use smallvec::SmallVec;
 use std::collections::VecDeque;
@@ -43,13 +44,18 @@ impl CausalEdge {
         effect_blades: &[f64; 16],
     ) -> Result<Self, GenesisError> {
         if cause_id == effect_id {
-            return Err(GenesisError::CausalViolation { cause_id, effect_id });
+            return Err(GenesisError::CausalViolation {
+                cause_id,
+                effect_id,
+            });
         }
-
         let separation = CausalSeparation::compute(cause_blades, effect_blades);
         let delta_t = effect_blades[1] - cause_blades[1];
         if !separation.is_causal() || delta_t <= 0.0 {
-            return Err(GenesisError::CausalViolation { cause_id, effect_id });
+            return Err(GenesisError::CausalViolation {
+                cause_id,
+                effect_id,
+            });
         }
 
         let causal_strength = match separation {
@@ -62,7 +68,13 @@ impl CausalEdge {
         wb.check(AxiomID::ProofGuard, || true)?;
         let proof = wb.build(0);
 
-        Ok(Self { cause_id, effect_id, separation, causal_strength, edge_proof: proof.hash })
+        Ok(Self {
+            cause_id,
+            effect_id,
+            separation,
+            causal_strength,
+            edge_proof: proof.hash,
+        })
     }
 }
 
@@ -73,6 +85,7 @@ pub struct CausalOrder {
     cold_edge_meta: Vec<ColdEdgeMeta>,
     out_adj: Vec<SmallVec<[u32; 8]>>,
     in_adj: Vec<SmallVec<[u32; 8]>>,
+    past_reachability: Vec<FixedBitSet>,
     causal_frontier: SmallVec<[u64; 16]>,
 }
 
@@ -86,6 +99,7 @@ impl CausalOrder {
             cold_edge_meta: Vec::new(),
             out_adj: Vec::new(),
             in_adj: Vec::new(),
+            past_reachability: Vec::new(),
             causal_frontier: SmallVec::new(),
         }
     }
@@ -93,85 +107,77 @@ impl CausalOrder {
     pub fn add_edge(&mut self, edge: CausalEdge) -> Result<(), GenesisError> {
         let cause_idx = self.get_or_insert_node(edge.cause_id)?;
         let effect_idx = self.get_or_insert_node(edge.effect_id)?;
-
         if cause_idx == effect_idx {
-            return Err(GenesisError::CausalViolation { cause_id: edge.cause_id, effect_id: edge.effect_id });
+            return Err(GenesisError::CausalViolation {
+                cause_id: edge.cause_id,
+                effect_id: edge.effect_id,
+            });
         }
 
-        if self.has_path(effect_idx, cause_idx) {
-            return Err(GenesisError::CausalCycle { cycle_nodes: vec![edge.cause_id, edge.effect_id] });
+        let cause_usize = cause_idx as usize;
+        let effect_usize = effect_idx as usize;
+
+        if self.out_adj[cause_usize].contains(&effect_idx) {
+            return Ok(());
         }
 
-        let cause_usize = usize::try_from(cause_idx).map_err(|_| GenesisError::InvalidInput("cause index overflow"))?;
-        let effect_usize = usize::try_from(effect_idx).map_err(|_| GenesisError::InvalidInput("effect index overflow"))?;
-
-        if !self.out_adj[cause_usize].contains(&effect_idx) {
-            self.out_adj[cause_usize].push(effect_idx);
-            self.in_adj[effect_usize].push(cause_idx);
-
-            self.hot_edges.push(HotEdge { cause_idx, effect_idx, causal_strength: edge.causal_strength });
-            self.cold_edge_meta.push(ColdEdgeMeta { edge_proof: edge.edge_proof, separation: edge.separation });
-            self.rebalance_topology(cause_idx, effect_idx)?;
-            self.update_frontier();
-        }
-
+        self.out_adj[cause_usize].push(effect_idx);
+        self.in_adj[effect_usize].push(cause_idx);
+        self.hot_edges.push(HotEdge {
+            cause_idx,
+            effect_idx,
+            causal_strength: edge.causal_strength,
+        });
+        self.cold_edge_meta.push(ColdEdgeMeta {
+            edge_proof: edge.edge_proof,
+            separation: edge.separation,
+        });
+        self.rebalance_topology(cause_idx, effect_idx);
+        self.incremental_update_reachability(cause_idx, effect_idx);
+        self.update_frontier();
         Ok(())
     }
 
     #[must_use]
-    pub fn edge_count(&self) -> usize { self.hot_edges.len() }
+    pub fn edge_count(&self) -> usize {
+        self.hot_edges.len()
+    }
 
     #[must_use]
     pub fn past_lightcone(&self, node_id: u64) -> SmallVec<[u64; 16]> {
-        let Some(start_idx) = self.node_idx(node_id) else { return SmallVec::new(); };
-        let n = self.nodes.len();
-        let mut visited = vec![false; n];
-        let mut queue = VecDeque::new();
-        let mut out: SmallVec<[u64; 16]> = SmallVec::new();
-
-        let start_usize = start_idx as usize;
-        visited[start_usize] = true;
-        queue.push_back(start_idx);
-
-        while let Some(current) = queue.pop_front() {
-            let current_usize = current as usize;
-            for &parent in &self.in_adj[current_usize] {
-                let parent_usize = parent as usize;
-                if !visited[parent_usize] {
-                    visited[parent_usize] = true;
-                    queue.push_back(parent);
-                    out.push(self.nodes[parent_usize].external_id);
-                }
-            }
+        let Some(start_idx) = self.node_idx(node_id) else {
+            return SmallVec::new();
+        };
+        let mut out = SmallVec::new();
+        for idx in self.past_reachability[start_idx as usize].ones() {
+            out.push(self.nodes[idx].external_id);
         }
-
         out
     }
 
     #[must_use]
     pub fn future_lightcone(&self, node_id: u64) -> SmallVec<[u64; 16]> {
-        let Some(start_idx) = self.node_idx(node_id) else { return SmallVec::new(); };
+        let Some(start_idx) = self.node_idx(node_id) else {
+            return SmallVec::new();
+        };
         let n = self.nodes.len();
         let mut visited = vec![false; n];
         let mut queue = VecDeque::new();
         let mut out: SmallVec<[u64; 16]> = SmallVec::new();
 
-        let start_usize = start_idx as usize;
-        visited[start_usize] = true;
+        visited[start_idx as usize] = true;
         queue.push_back(start_idx);
 
         while let Some(current) = queue.pop_front() {
-            let current_usize = current as usize;
-            for &child in &self.out_adj[current_usize] {
-                let child_usize = child as usize;
-                if !visited[child_usize] {
-                    visited[child_usize] = true;
+            for &child in &self.out_adj[current as usize] {
+                let child_u = child as usize;
+                if !visited[child_u] {
+                    visited[child_u] = true;
                     queue.push_back(child);
-                    out.push(self.nodes[child_usize].external_id);
+                    out.push(self.nodes[child_u].external_id);
                 }
             }
         }
-
         out
     }
 
@@ -179,66 +185,82 @@ impl CausalOrder {
         let n = self.nodes.len();
         let mut in_degree = vec![0usize; n];
         for edge in &self.hot_edges {
-            let idx = usize::try_from(edge.effect_idx).map_err(|_| GenesisError::InvalidInput("index overflow"))?;
-            in_degree[idx] += 1;
+            in_degree[edge.effect_idx as usize] += 1;
         }
-
         let mut queue = VecDeque::new();
         for (i, &d) in in_degree.iter().enumerate() {
-            if d == 0 { queue.push_back(i); }
+            if d == 0 {
+                queue.push_back(i);
+            }
         }
-
         let mut visited = 0usize;
         while let Some(node) = queue.pop_front() {
             visited += 1;
             for &child in &self.out_adj[node] {
-                let child_u = usize::try_from(child).map_err(|_| GenesisError::InvalidInput("index overflow"))?;
+                let child_u = child as usize;
                 in_degree[child_u] = in_degree[child_u].saturating_sub(1);
-                if in_degree[child_u] == 0 { queue.push_back(child_u); }
+                if in_degree[child_u] == 0 {
+                    queue.push_back(child_u);
+                }
             }
         }
-
-        if visited != n { Err(GenesisError::CausalCycle { cycle_nodes: Vec::new() }) } else { Ok(()) }
+        if visited != n {
+            Err(GenesisError::CausalCycle {
+                cycle_nodes: Vec::new(),
+            })
+        } else {
+            Ok(())
+        }
     }
 
     #[must_use]
     pub fn is_before(&self, a: u64, b: u64) -> bool {
         match (self.node_idx(a), self.node_idx(b)) {
-            (Some(a_idx), Some(b_idx)) => self.has_path(a_idx, b_idx),
+            (Some(a_idx), Some(b_idx)) => {
+                self.past_reachability[b_idx as usize].contains(a_idx as usize)
+            }
             _ => false,
         }
     }
 
     #[must_use]
-    pub fn ancestors_of(&self, node_id: u64) -> SmallVec<[u64; 16]> { self.past_lightcone(node_id) }
-
+    pub fn ancestors_of(&self, node_id: u64) -> SmallVec<[u64; 16]> {
+        self.past_lightcone(node_id)
+    }
     #[must_use]
-    pub fn descendants_of(&self, node_id: u64) -> SmallVec<[u64; 16]> { self.future_lightcone(node_id) }
+    pub fn descendants_of(&self, node_id: u64) -> SmallVec<[u64; 16]> {
+        self.future_lightcone(node_id)
+    }
 
     #[must_use]
     pub fn cone_overlap(&self, a: u64, b: u64) -> SmallVec<[u64; 16]> {
-        let pa = self.past_lightcone(a);
-        let pb = self.past_lightcone(b);
-        let mut overlap = SmallVec::new();
-        for id in pa {
-            if pb.contains(&id) { overlap.push(id); }
-        }
-        overlap
+        let (Some(a_idx), Some(b_idx)) = (self.node_idx(a), self.node_idx(b)) else {
+            return SmallVec::new();
+        };
+        let mut overlap_set = self.past_reachability[a_idx as usize].clone();
+        overlap_set.intersect_with(&self.past_reachability[b_idx as usize]);
+        overlap_set
+            .ones()
+            .map(|idx| self.nodes[idx].external_id)
+            .collect()
     }
 
     pub(crate) fn incoming_hot_edges(&self, node_id: u64) -> SmallVec<[CausalEdge; 8]> {
         let mut out = SmallVec::new();
-        let Some(idx) = self.node_idx(node_id) else { return out; };
-        let idx_u = idx as usize;
-
-        for &parent in &self.in_adj[idx_u] {
-            if let Some((edge_idx, hot)) = self.hot_edges.iter().enumerate().find(|(_, e)| e.cause_idx == parent && e.effect_idx == idx) {
-                let cause_u = hot.cause_idx as usize;
-                let effect_u = hot.effect_idx as usize;
+        let Some(idx) = self.node_idx(node_id) else {
+            return out;
+        };
+        for &parent in &self.in_adj[idx as usize] {
+            if let Some((edge_idx, hot)) = self
+                .hot_edges
+                .iter()
+                .enumerate()
+                .find(|(_, e)| e.cause_idx == parent && e.effect_idx == idx)
+            {
                 let meta = &self.cold_edge_meta[edge_idx];
                 out.push(CausalEdge {
-                    cause_id: self.nodes[cause_u].external_id,
-                    effect_id: self.nodes[effect_u].external_id,
+                    cause_id: self.nodes[hot.cause_idx as usize].external_id,
+                    effect_id: self.nodes[hot.effect_idx as usize].external_id,
                     separation: meta.separation,
                     causal_strength: hot.causal_strength,
                     edge_proof: meta.edge_proof,
@@ -256,53 +278,63 @@ impl CausalOrder {
     }
 
     fn get_or_insert_node(&mut self, external_id: u64) -> Result<u32, GenesisError> {
-        match self.id_to_idx.binary_search_by_key(&external_id, |(id, _)| *id) {
+        match self
+            .id_to_idx
+            .binary_search_by_key(&external_id, |(id, _)| *id)
+        {
             Ok(pos) => Ok(self.id_to_idx[pos].1),
             Err(pos) => {
-                let idx_u32 = u32::try_from(self.nodes.len()).map_err(|_| GenesisError::InvalidInput("too many nodes for u32 indexing"))?;
-                self.nodes.push(NodeEntry { external_id, topo_rank: idx_u32 });
+                let idx_u32 = u32::try_from(self.nodes.len())
+                    .map_err(|_| GenesisError::InvalidInput("too many nodes for u32 indexing"))?;
+                self.nodes.push(NodeEntry {
+                    external_id,
+                    topo_rank: idx_u32,
+                });
                 self.out_adj.push(SmallVec::new());
                 self.in_adj.push(SmallVec::new());
-                self.id_to_idx.insert(pos, (external_id, idx_u32));
+
+                for bitset in &mut self.past_reachability {
+                    bitset.grow(self.nodes.len());
+                }
+                let mut new_row = FixedBitSet::with_capacity(self.nodes.len());
+                new_row.grow(self.nodes.len());
+                self.past_reachability.push(new_row);
+
+                if pos == self.id_to_idx.len() {
+                    self.id_to_idx.push((external_id, idx_u32));
+                } else {
+                    self.id_to_idx.insert(pos, (external_id, idx_u32));
+                }
                 Ok(idx_u32)
             }
         }
     }
 
-    fn has_path(&self, from: u32, to: u32) -> bool {
-        if from == to { return true; }
-        let n = self.nodes.len();
-        let mut visited = vec![false; n];
-        let mut queue = VecDeque::new();
-        let from_u = from as usize;
-        visited[from_u] = true;
-        queue.push_back(from);
-
-        while let Some(current) = queue.pop_front() {
-            let curr_u = current as usize;
-            for &child in &self.out_adj[curr_u] {
-                if child == to { return true; }
-                let child_u = child as usize;
-                if !visited[child_u] {
-                    visited[child_u] = true;
-                    queue.push_back(child);
-                }
-            }
+    fn rebalance_topology(&mut self, cause_idx: u32, effect_idx: u32) {
+        let cause_rank = self.nodes[cause_idx as usize].topo_rank;
+        let effect_rank = self.nodes[effect_idx as usize].topo_rank;
+        if cause_rank >= effect_rank {
+            self.nodes[effect_idx as usize].topo_rank = cause_rank.saturating_add(1);
         }
-        false
     }
 
-    fn rebalance_topology(&mut self, cause_idx: u32, effect_idx: u32) -> Result<(), GenesisError> {
-        let cause_u = usize::try_from(cause_idx).map_err(|_| GenesisError::InvalidInput("index overflow"))?;
-        let effect_u = usize::try_from(effect_idx).map_err(|_| GenesisError::InvalidInput("index overflow"))?;
+    fn incremental_update_reachability(&mut self, cause_idx: u32, effect_idx: u32) {
+        let cause_u = cause_idx as usize;
+        let effect_u = effect_idx as usize;
 
-        if self.nodes[cause_u].topo_rank < self.nodes[effect_u].topo_rank {
-            return Ok(());
+        let mut ancestors = self.past_reachability[cause_u].clone();
+        ancestors.set(cause_u, true);
+
+        let mut affected = Vec::new();
+        for node in 0..self.nodes.len() {
+            if node == effect_u || self.past_reachability[node].contains(effect_u) {
+                affected.push(node);
+            }
         }
 
-        let new_rank = self.nodes[cause_u].topo_rank.saturating_add(1);
-        self.nodes[effect_u].topo_rank = new_rank;
-        Ok(())
+        for node in affected {
+            self.past_reachability[node].union_with(&ancestors);
+        }
     }
 
     fn update_frontier(&mut self) {
@@ -316,5 +348,7 @@ impl CausalOrder {
 }
 
 impl Default for CausalOrder {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

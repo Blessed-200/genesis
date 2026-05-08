@@ -30,9 +30,13 @@ impl CausalSeparation {
         if s_sq.abs() < LIGHTLIKE_TOL {
             Self::Lightlike
         } else if s_sq > 0.0 {
-            Self::Timelike { separation_sq: s_sq }
+            Self::Timelike {
+                separation_sq: s_sq,
+            }
         } else {
-            Self::Spacelike { separation_sq: s_sq }
+            Self::Spacelike {
+                separation_sq: s_sq,
+            }
         }
     }
 

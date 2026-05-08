@@ -354,6 +354,7 @@ name = "genesis-causal"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "fixedbitset",
  "genesis-math",
  "genesis-spectral",
  "genesis-types",

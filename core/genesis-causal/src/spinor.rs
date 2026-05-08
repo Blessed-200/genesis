@@ -14,12 +14,16 @@ pub struct DiracSpinor {
 
 impl DiracSpinor {
     #[must_use]
-    pub fn norm(&self) -> f64 { self.components.iter().map(|x| x * x).sum::<f64>().sqrt() }
+    pub fn norm(&self) -> f64 {
+        self.components.iter().map(|x| x * x).sum::<f64>().sqrt()
+    }
 
     pub fn normalize(&mut self) {
         let n = self.norm();
         if n > 1e-12 {
-            for c in &mut self.components { *c /= n; }
+            for c in &mut self.components {
+                *c /= n;
+            }
         }
     }
 
@@ -49,7 +53,11 @@ pub struct GlobalSection {
 }
 
 impl GlobalSection {
-    pub fn compute(causal_order: &CausalOrder, node_ids: &[u64], root_spinor: DiracSpinor) -> Result<Self, GenesisError> {
+    pub fn compute(
+        causal_order: &CausalOrder,
+        node_ids: &[u64],
+        root_spinor: DiracSpinor,
+    ) -> Result<Self, GenesisError> {
         causal_order.verify_acyclic()?;
 
         let mut ordered_ids = node_ids.to_vec();
@@ -65,16 +73,27 @@ impl GlobalSection {
                 let mut accum = [0.0_f64; 8];
                 let mut total_w = 0.0_f64;
                 for edge in &incoming {
-                    let parent_spinor = spinors.iter().find(|(pid, _)| *pid == edge.cause_id).map(|(_, s)| s).unwrap_or(&root_spinor);
+                    let parent_spinor = spinors
+                        .iter()
+                        .find(|(pid, _)| *pid == edge.cause_id)
+                        .map(|(_, s)| s)
+                        .unwrap_or(&root_spinor);
                     let transported = parent_spinor.parallel_transport(edge)?;
                     let w = edge.causal_strength.max(1e-12);
                     total_w += w;
-                    for (dst, src) in accum.iter_mut().zip(transported.components.iter()) { *dst += src * w; }
+                    for (dst, src) in accum.iter_mut().zip(transported.components.iter()) {
+                        *dst += src * w;
+                    }
                 }
                 if total_w <= 0.0 {
-                    return Err(GenesisError::CausalViolation { cause_id: id, effect_id: id });
+                    return Err(GenesisError::CausalViolation {
+                        cause_id: id,
+                        effect_id: id,
+                    });
                 }
-                for coeff in &mut accum { *coeff /= total_w; }
+                for coeff in &mut accum {
+                    *coeff /= total_w;
+                }
                 let mut combined = DiracSpinor { components: accum };
                 combined.normalize();
                 combined
@@ -88,34 +107,92 @@ impl GlobalSection {
             let sum_re: f64 = spinors.iter().map(|(_, s)| s.components[0]).sum();
             let sum_im: f64 = spinors.iter().map(|(_, s)| s.components[1]).sum();
             (sum_re / n).hypot(sum_im / n)
-        } else { 0.0 };
+        } else {
+            0.0
+        };
 
-        Ok(Self { spinors, holonomy, coherence_order })
+        Ok(Self {
+            spinors,
+            holonomy,
+            coherence_order,
+        })
     }
 
     #[must_use]
     pub fn decision_signal(&self) -> f64 {
-        if self.spinors.is_empty() { return 0.0; }
-        let mean_re = self.spinors.iter().map(|(_, s)| s.components[0]).sum::<f64>() / self.spinors.len() as f64;
+        if self.spinors.is_empty() {
+            return 0.0;
+        }
+        let mean_re = self
+            .spinors
+            .iter()
+            .map(|(_, s)| s.components[0])
+            .sum::<f64>()
+            / self.spinors.len() as f64;
         mean_re * self.coherence_order
     }
 }
 
-fn compute_holonomy(spinors: &[(u64, DiracSpinor)], causal_order: &CausalOrder) -> Result<f64, GenesisError> {
-    let mut total = 0.0_f64;
-    let mut count = 0usize;
-    for (node_id, spinor) in spinors {
+fn compute_holonomy(
+    spinors: &[(u64, DiracSpinor)],
+    causal_order: &CausalOrder,
+) -> Result<f64, GenesisError> {
+    let mut total_sq = 0.0_f64;
+    let mut pairs = 0usize;
+
+    for (node_id, _) in spinors {
         let incoming = causal_order.incoming_hot_edges(*node_id);
-        if incoming.len() > 1 {
-            let phase = spinor.components[1].atan2(spinor.components[0]);
-            total += phase * phase;
-            count += 1;
+        if incoming.len() <= 1 {
+            continue;
+        }
+
+        let mut transported_states: Vec<DiracSpinor> = Vec::with_capacity(incoming.len());
+        for edge in &incoming {
+            let parent_spinor = spinors
+                .iter()
+                .find(|(pid, _)| *pid == edge.cause_id)
+                .map(|(_, s)| s)
+                .ok_or(GenesisError::CausalViolation {
+                    cause_id: edge.cause_id,
+                    effect_id: edge.effect_id,
+                })?;
+            transported_states.push(parent_spinor.parallel_transport(edge)?);
+        }
+
+        for i in 0..transported_states.len() {
+            for j in (i + 1)..transported_states.len() {
+                let pi =
+                    transported_states[i].components[1].atan2(transported_states[i].components[0]);
+                let pj =
+                    transported_states[j].components[1].atan2(transported_states[j].components[0]);
+                let d = wrap_phase(pi - pj);
+                total_sq += d * d;
+                pairs += 1;
+            }
         }
     }
 
-    let holonomy = if count == 0 { 0.0 } else { (total / count as f64).sqrt() };
+    let holonomy = if pairs == 0 {
+        0.0
+    } else {
+        (total_sq / pairs as f64).sqrt()
+    };
     if holonomy > HOLO_MAX {
-        return Err(GenesisError::HolonomyExcessive { holonomy, threshold: HOLO_MAX });
+        return Err(GenesisError::HolonomyExcessive {
+            holonomy,
+            threshold: HOLO_MAX,
+        });
     }
     Ok(holonomy)
+}
+
+fn wrap_phase(phi: f64) -> f64 {
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let mut x = phi % two_pi;
+    if x > std::f64::consts::PI {
+        x -= two_pi;
+    } else if x < -std::f64::consts::PI {
+        x += two_pi;
+    }
+    x
 }

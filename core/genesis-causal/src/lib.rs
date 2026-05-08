@@ -35,8 +35,12 @@ mod tests {
         let mut order = CausalOrder::new();
         let ab = CausalEdge::compute(1, &a, 2, &b).expect("A->B edge should build");
         order.add_edge(ab).expect("A->B should be inserted");
-        let err = CausalEdge::compute(2, &b, 1, &a).expect_err("B->A should be rejected as non-forward-causal");
-        assert!(matches!(err, genesis_types::GenesisError::CausalViolation { .. }));
+        let err = CausalEdge::compute(2, &b, 1, &a)
+            .expect_err("B->A should be rejected as non-forward-causal");
+        assert!(matches!(
+            err,
+            genesis_types::GenesisError::CausalViolation { .. }
+        ));
     }
 
     #[test]
@@ -45,23 +49,35 @@ mod tests {
         let b = blades_txyz(1.0, 0.0, 0.0, 0.0);
         let c = blades_txyz(2.0, 0.0, 0.0, 0.0);
         let mut order = CausalOrder::new();
-        order.add_edge(CausalEdge::compute(1, &a, 2, &b).expect("A->B edge should build")).expect("A->B should insert");
-        order.add_edge(CausalEdge::compute(2, &b, 3, &c).expect("B->C edge should build")).expect("B->C should insert");
+        order
+            .add_edge(CausalEdge::compute(1, &a, 2, &b).expect("A->B edge should build"))
+            .expect("A->B should insert");
+        order
+            .add_edge(CausalEdge::compute(2, &b, 3, &c).expect("B->C edge should build"))
+            .expect("B->C should insert");
 
         let filter = LightconeFilter::new(&order);
         let inputs = filter.causal_inputs(1, &[2, 3]);
         assert!(inputs.is_empty());
 
-        let bad = CausalInference { premise_ids: vec![2], conclusion_id: 1, inferential_strength: 0.5 };
+        let bad = CausalInference {
+            premise_ids: vec![2],
+            conclusion_id: 1,
+            inferential_strength: 0.5,
+        };
         assert!(filter.validate_inference(&bad).is_err());
     }
 
     #[test]
     fn global_section_coherence_order_is_normalized() {
         let order = CausalOrder::new();
-        let root = DiracSpinor { components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] };
-        let section = GlobalSection::compute(&order, &[30, 10, 20], root.clone()).expect("section should compute");
-        let section_sorted = GlobalSection::compute(&order, &[10, 20, 30], root).expect("section should compute sorted");
+        let root = DiracSpinor {
+            components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        };
+        let section = GlobalSection::compute(&order, &[30, 10, 20], root.clone())
+            .expect("section should compute");
+        let section_sorted = GlobalSection::compute(&order, &[10, 20, 30], root)
+            .expect("section should compute sorted");
         assert!((0.0..=1.0).contains(&section.coherence_order));
         assert!((section.coherence_order - section_sorted.coherence_order).abs() < 1e-12);
     }
@@ -71,7 +87,10 @@ mod tests {
         let a = blades_txyz(0.0, 0.0, 0.0, 0.0);
         let b = blades_txyz(0.1, 1.0, 0.0, 0.0);
         let err = CausalEdge::compute(1, &a, 2, &b).expect_err("spacelike should be rejected");
-        assert!(matches!(err, genesis_types::GenesisError::CausalViolation { .. }));
+        assert!(matches!(
+            err,
+            genesis_types::GenesisError::CausalViolation { .. }
+        ));
     }
 
     #[test]
@@ -80,9 +99,15 @@ mod tests {
         let b = blades_txyz(1.0, 0.0, 0.0, 0.0);
         let c = blades_txyz(2.0, 0.0, 0.0, 0.0);
         let mut order = CausalOrder::new();
-        order.add_edge(CausalEdge::compute(1, &a, 2, &b).expect("A->B edge should build")).expect("A->B should insert");
-        order.add_edge(CausalEdge::compute(2, &b, 3, &c).expect("B->C edge should build")).expect("B->C should insert");
-        order.verify_acyclic().expect("valid DAG should remain acyclic");
+        order
+            .add_edge(CausalEdge::compute(1, &a, 2, &b).expect("A->B edge should build"))
+            .expect("A->B should insert");
+        order
+            .add_edge(CausalEdge::compute(2, &b, 3, &c).expect("B->C edge should build"))
+            .expect("B->C should insert");
+        order
+            .verify_acyclic()
+            .expect("valid DAG should remain acyclic");
     }
 
     #[test]
@@ -100,8 +125,12 @@ mod tests {
         let b = blades_txyz(1.0, 0.0, 0.0, 0.0);
         let c = blades_txyz(2.0, 0.0, 0.0, 0.0);
         let mut order = CausalOrder::new();
-        order.add_edge(CausalEdge::compute(1, &a, 2, &b).expect("A->B edge")).expect("insert A->B");
-        order.add_edge(CausalEdge::compute(2, &b, 3, &c).expect("B->C edge")).expect("insert B->C");
+        order
+            .add_edge(CausalEdge::compute(1, &a, 2, &b).expect("A->B edge"))
+            .expect("insert A->B");
+        order
+            .add_edge(CausalEdge::compute(2, &b, 3, &c).expect("B->C edge"))
+            .expect("insert B->C");
         let past_c = order.past_lightcone(3);
         assert!(past_c.contains(&1), "A should be in past of C");
         assert!(past_c.contains(&2), "B should be in past of C");
@@ -117,9 +146,15 @@ mod tests {
             })
             .collect();
         let mut order = CausalOrder::new();
-        order.add_edge(CausalEdge::compute(0, &nodes[0], 1, &nodes[1]).expect("0->1")).expect("insert 0->1");
-        order.add_edge(CausalEdge::compute(1, &nodes[1], 2, &nodes[2]).expect("1->2")).expect("insert 1->2");
-        order.add_edge(CausalEdge::compute(2, &nodes[2], 3, &nodes[3]).expect("2->3")).expect("insert 2->3");
+        order
+            .add_edge(CausalEdge::compute(0, &nodes[0], 1, &nodes[1]).expect("0->1"))
+            .expect("insert 0->1");
+        order
+            .add_edge(CausalEdge::compute(1, &nodes[1], 2, &nodes[2]).expect("1->2"))
+            .expect("insert 1->2");
+        order
+            .add_edge(CausalEdge::compute(2, &nodes[2], 3, &nodes[3]).expect("2->3"))
+            .expect("insert 2->3");
 
         if let Ok(edge) = CausalEdge::compute(3, &nodes[3], 0, &nodes[0]) {
             assert!(order.add_edge(edge).is_err(), "long cycle must be rejected");
@@ -132,21 +167,32 @@ mod tests {
         let b = blades_txyz(1.0, 0.0, 0.0, 0.0);
         let c = blades_txyz(2.0, 0.0, 0.0, 0.0);
         let mut order = CausalOrder::new();
-        order.add_edge(CausalEdge::compute(1, &a, 2, &b).expect("A->B edge")).expect("insert A->B");
-        order.add_edge(CausalEdge::compute(2, &b, 3, &c).expect("B->C edge")).expect("insert B->C");
+        order
+            .add_edge(CausalEdge::compute(1, &a, 2, &b).expect("A->B edge"))
+            .expect("insert A->B");
+        order
+            .add_edge(CausalEdge::compute(2, &b, 3, &c).expect("B->C edge"))
+            .expect("insert B->C");
 
-        let root = DiracSpinor { components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] };
+        let root = DiracSpinor {
+            components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        };
         let section = GlobalSection::compute(&order, &[1, 2, 3], root).expect("compute section");
-        assert!(section.holonomy < 1e-10, "holonomy must be zero on linear chain");
+        assert!(
+            section.holonomy < 1e-10,
+            "holonomy must be zero on linear chain"
+        );
     }
-
 
     #[test]
     fn spacelike_edge_rejected_explicitly() {
         let a = blades_txyz(0.0, 0.0, 0.0, 0.0);
         let b = blades_txyz(0.1, 1.0, 0.0, 0.0);
         let err = CausalEdge::compute(1, &a, 2, &b).expect_err("spacelike must be rejected");
-        assert!(matches!(err, genesis_types::GenesisError::CausalViolation { .. }));
+        assert!(matches!(
+            err,
+            genesis_types::GenesisError::CausalViolation { .. }
+        ));
     }
 
     #[test]
@@ -155,12 +201,17 @@ mod tests {
         let b = blades_txyz(1.0, 0.0, 0.0, 0.0);
         let c = blades_txyz(2.0, 0.0, 0.0, 0.0);
         let mut order = CausalOrder::new();
-        order.add_edge(CausalEdge::compute(1, &a, 2, &b).expect("A->B edge")).expect("insert A->B");
-        order.add_edge(CausalEdge::compute(2, &b, 3, &c).expect("B->C edge")).expect("insert B->C");
-        let root = DiracSpinor { components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] };
+        order
+            .add_edge(CausalEdge::compute(1, &a, 2, &b).expect("A->B edge"))
+            .expect("insert A->B");
+        order
+            .add_edge(CausalEdge::compute(2, &b, 3, &c).expect("B->C edge"))
+            .expect("insert B->C");
+        let root = DiracSpinor {
+            components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        };
         let s1 = GlobalSection::compute(&order, &[1, 2, 3], root.clone()).expect("compute one");
         let s2 = GlobalSection::compute(&order, &[3, 2, 1], root).expect("compute two");
         assert!((s1.coherence_order - s2.coherence_order).abs() < 1e-12);
     }
-
 }
