@@ -6,12 +6,15 @@ members = [
     "core/genesis-topology",
     "core/genesis-dynamics",
     "core/genesis-spectral",
+    "core/genesis-causal",
 ]
 
 [workspace.dependencies]
 genesis-types     = { path = "shared/genesis-types" }
 genesis-math      = { path = "core/genesis-math" }
 genesis-topology  = { path = "core/genesis-topology" }
+genesis-spectral  = { path = "core/genesis-spectral" }
+genesis-causal    = { path = "core/genesis-causal" }
 thiserror         = "1.0"
 bytemuck          = { version = "1.14", features = ["derive"] }
 rayon             = "1.10"
@@ -22,6 +25,7 @@ tempfile          = "=3.13.0"
 criterion         = { version = "0.5", features = ["html_reports"] }
 num-complex        = "0.4"
 smallvec          = { version = "1.13", features = ["const_generics"] }
+fixedbitset      = "0.5"
 arrayvec          = "0.7"
 memoffset     = "0.9"
 iai-callgrind   = "0.14"

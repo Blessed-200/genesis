@@ -308,6 +308,43 @@ pub enum GenesisError {
     },
 
     // ------------------------------------------------------------------
+    // CRATE-005: genesis-causal — Causal order / lightcone errors
+    // ------------------------------------------------------------------
+    /// A cycle was detected in the causal DAG.
+    #[error("Causal error: cycle involving nodes {cycle_nodes:?}")]
+    CausalCycle {
+        /// Nodes observed in the detected causal cycle.
+        cycle_nodes: Vec<u64>,
+    },
+
+    /// An edge attempted to encode self-causation.
+    #[error("Causal error: self-causation node_id={cause_id}={effect_id}")]
+    CausalViolation {
+        /// Proposed cause node identifier.
+        cause_id: u64,
+        /// Proposed effect node identifier.
+        effect_id: u64,
+    },
+
+    /// Holonomy exceeded the accepted consistency threshold for a global section.
+    #[error("Causal error: holonomy {holonomy:.4} exceeds threshold {threshold:.4}")]
+    HolonomyExcessive {
+        /// Measured holonomy value.
+        holonomy: f64,
+        /// Maximum admissible holonomy.
+        threshold: f64,
+    },
+
+    /// An inference used a premise outside the conclusion's past lightcone.
+    #[error("Causal error: acausal inference premise={premise_id} conclusion={conclusion_id}")]
+    AcausalInference {
+        /// Premise node outside the past lightcone.
+        premise_id: u64,
+        /// Conclusion node that the premise tried to support.
+        conclusion_id: u64,
+    },
+
+    // ------------------------------------------------------------------
     // CRATE-005: genesis-io — Projection / Pipeline errors
     // ------------------------------------------------------------------
     /// The sensory projector Π produced a vector whose topological distance
@@ -562,6 +599,10 @@ impl GenesisError {
             | Self::SpectralInsufficientNodes { .. }
             | Self::SinkhornNotConverged { .. }
             | Self::RicciMetricDegenerate { .. }
+            | Self::CausalCycle { .. }
+            | Self::CausalViolation { .. }
+            | Self::HolonomyExcessive { .. }
+            | Self::AcausalInference { .. }
             | Self::ProjectionHomeomorphismViolated { .. }
             | Self::FirewallBlocked
             | Self::GlobalClockForbidden
