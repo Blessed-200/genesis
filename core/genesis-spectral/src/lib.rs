@@ -3,11 +3,13 @@
 pub mod action;
 pub mod dirac;
 pub mod flow;
+pub mod spinor;
 pub mod zeta;
 
 pub use action::{CutoffFunction, SpectralActionEngine, SpectralActionResult};
 pub use dirac::{DiracOperator, DiracSquared, GammaAction, LorentzIndex};
 pub use flow::{ConvergenceCriteria, SpectralFlowEngine, SpectralFlowHistory, SpectralFlowStep};
+pub use spinor::{Spinor, SpinorPredictor};
 pub use zeta::ZetaRegularizer;
 
 mod dense_matrix;
