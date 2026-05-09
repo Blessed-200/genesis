@@ -110,11 +110,7 @@ impl Spinor {
         // Simplified spectral action: sum of squared Weyl coefficients
         // weighted by the lambda scale. This captures the predictive
         // information without full Dirac construction overhead.
-        let sum_sq: f64 = self
-            .weyl_coefficients
-            .iter()
-            .map(|&x| x * x)
-            .sum();
+        let sum_sq: f64 = self.weyl_coefficients.iter().map(|&x| x * x).sum();
 
         // Action is proportional to inverse lambda scale (larger lambda → lower curvature)
         (1.0 / self.lambda_scale) * sum_sq
@@ -300,11 +296,7 @@ mod tests {
         blades[8] = 1.0;
 
         let spinor = Spinor::from_manifold_state(&blades, 1.0).expect("valid spinor");
-        let norm_sq: f64 = spinor
-            .weyl_coefficients
-            .iter()
-            .map(|&x| x * x)
-            .sum();
+        let norm_sq: f64 = spinor.weyl_coefficients.iter().map(|&x| x * x).sum();
         assert!((norm_sq - 1.0).abs() < 1e-12);
     }
 
