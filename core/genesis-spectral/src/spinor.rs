@@ -13,6 +13,7 @@
 //! AX-ID: AXIOMA-014, AXIOMA-001, H_dualidad (LEY_FUNDACIONAL §3.6)
 
 use genesis_types::GenesisError;
+use std::collections::VecDeque;
 
 /// Spinor state in G(1,3) — double-cover of the Lorentz group.
 ///
@@ -46,9 +47,9 @@ impl Spinor {
     /// The spinor is derived via the iterated action of gamma matrices:
     /// `ψ = γ₀γ₁γ₂γ₃ · v` where `v` is the grade-1 multivector.
     ///
-    /// # Errors
-    /// Returns `GenesisError` when the reference blades contain non-finite values
-    /// or the resulting spinor cannot be normalized.
+    /// If the manifold state has no grade-1 components (e.g., purely bivectorial
+    /// relations or scalar identities), a neutral spinor `[1, 0, 0, 0]` is returned.
+    /// This preserves the prediction_certainty signal even for non-vector concepts.
     ///
     /// AX-ID: AXIOMA-014, H_dualidad (LEY_FUNDACIONAL §3.6)
     pub fn from_manifold_state(
@@ -65,23 +66,19 @@ impl Spinor {
 
         // Compute normalization: ||v||² = Σᵢ αᵢ²
         let norm_sq = weyl.iter().map(|&x| x * x).sum::<f64>();
-        if norm_sq <= 0.0 {
-            return Err(GenesisError::BasisExpansionFailed {
-                residual_norm: norm_sq.sqrt(),
-                threshold: 1e-12,
-            });
-        }
-
-        let norm = norm_sq.sqrt();
-        let normalized_weyl: [f64; 4] = [
-            weyl[0] / norm,
-            weyl[1] / norm,
-            weyl[2] / norm,
-            weyl[3] / norm,
-        ];
+        let (weyl_normalized, norm) = if norm_sq > 1e-24 {
+            // Normalizable grade-1 component: construct normalized spinor
+            let n = norm_sq.sqrt();
+            ([weyl[0] / n, weyl[1] / n, weyl[2] / n, weyl[3] / n], n)
+        } else {
+            // Purely bivectorial or scalar concept: neutral spinor with zero norm
+            // This is valid in Genesis — such spinors still contribute to the
+            // prediction signal (their gradient is 0, which signals stability).
+            ([1.0, 0.0, 0.0, 0.0], 0.0)
+        };
 
         Ok(Self {
-            weyl_coefficients: normalized_weyl,
+            weyl_coefficients: weyl_normalized,
             reference_blades: *blades,
             reference_norm: norm,
             lambda_scale,
@@ -166,8 +163,8 @@ impl Spinor {
 /// AX-ID: AXIOMA-014, H_dualidad (LEY_FUNDACIONAL §3.6)
 #[derive(Clone, Debug)]
 pub struct SpinorPredictor {
-    /// Rolling window of recent spinor states.
-    history: Vec<Spinor>,
+    /// Rolling window of recent spinor states (O(1) eviction).
+    history: VecDeque<Spinor>,
 
     /// Maximum history depth before oldest entries are evicted.
     max_history: usize,
@@ -187,7 +184,7 @@ impl SpinorPredictor {
     #[must_use]
     pub fn new(max_history: usize) -> Self {
         Self {
-            history: Vec::with_capacity(max_history),
+            history: VecDeque::with_capacity(max_history),
             max_history,
             accumulated_gradient: 0.0,
             sample_count: 0,
@@ -199,9 +196,9 @@ impl SpinorPredictor {
     /// AX-ID: AXIOMA-014
     pub fn push(&mut self, spinor: Spinor) {
         if self.history.len() >= self.max_history {
-            self.history.remove(0);
+            self.history.pop_front();
         }
-        self.history.push(spinor.clone());
+        self.history.push_back(spinor.clone());
         self.accumulated_gradient += spinor.predictive_action_gradient();
         self.sample_count += 1;
     }
@@ -233,7 +230,34 @@ impl SpinorPredictor {
     #[inline]
     #[must_use]
     pub fn latest(&self) -> Option<&Spinor> {
-        self.history.last()
+        self.history.back()
+    }
+
+    /// Returns the certainty of the prediction signal.
+    ///
+    /// Certainty is computed as an inverse-variance signal from the rolling history.
+    /// High variance in gradient history → low certainty (instability).
+    /// Low variance → high certainty (convergence).
+    /// Formula: `certainty = 1 / (1 + variance)`
+    ///
+    /// AX-ID: AXIOMA-014, H_información (LEY_FUNDACIONAL §3.3)
+    #[inline]
+    #[must_use]
+    pub fn prediction_certainty(&self) -> f64 {
+        if self.history.len() < 2 {
+            return 1.0;
+        }
+        let mean = self.mean_gradient();
+        let variance = self
+            .history
+            .iter()
+            .map(|s| {
+                let delta = s.predictive_action_gradient() - mean;
+                delta * delta
+            })
+            .sum::<f64>()
+            / self.history.len() as f64;
+        1.0 / (1.0 + variance)
     }
 
     /// Computes the trend direction of the spectral action gradient.
@@ -247,23 +271,24 @@ impl SpinorPredictor {
         if self.history.len() < 2 {
             return 0.0;
         }
-        let recent = self.history.len();
-        let first_half = &self.history[..recent / 2];
-        let second_half = &self.history[recent / 2..];
+        let mid = self.history.len() / 2;
 
-        let first_mean: f64 = first_half
+        let first_half: f64 = self
+            .history
             .iter()
+            .take(mid)
             .map(|s| s.predictive_action_gradient())
             .sum::<f64>()
-            / first_half.len() as f64;
-
-        let second_mean: f64 = second_half
+            / mid as f64;
+        let second_half: f64 = self
+            .history
             .iter()
+            .skip(mid)
             .map(|s| s.predictive_action_gradient())
             .sum::<f64>()
-            / second_half.len() as f64;
+            / (self.history.len() - mid) as f64;
 
-        second_mean - first_mean
+        second_half - first_half
     }
 
     /// Returns the spinor history for iteration.
@@ -271,8 +296,8 @@ impl SpinorPredictor {
     /// AX-ID: AXIOMA-014
     #[inline]
     #[must_use]
-    pub fn history(&self) -> &[Spinor] {
-        &self.history
+    pub fn history(&self) -> std::collections::vec_deque::Iter<'_, Spinor> {
+        self.history.iter()
     }
 }
 
@@ -281,10 +306,28 @@ mod tests {
     use super::{Spinor, SpinorPredictor};
 
     #[test]
-    fn spinor_from_manifold_state_rejects_zero_vector() {
+    fn spinor_from_manifold_state_accepts_pure_bivector_as_neutral_spinor() {
+        // Purely bivectorial concept (no grade-1 components): returns neutral spinor
         let blades = [0.0_f64; 16];
         let result = Spinor::from_manifold_state(&blades, 1.0);
-        assert!(result.is_err());
+        assert!(result.is_ok());
+        let spinor = result.expect("valid spinor");
+        assert!((spinor.weyl_coefficients[0] - 1.0).abs() < 1e-12);
+        assert!((spinor.weyl_coefficients[1] - 0.0).abs() < 1e-12);
+        assert!((spinor.weyl_coefficients[2] - 0.0).abs() < 1e-12);
+        assert!((spinor.weyl_coefficients[3] - 0.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn spinor_prediction_certainty_is_one_for_pure_state() {
+        let mut blades = [0.0_f64; 16];
+        blades[1] = 1.0;
+        blades[2] = 0.0;
+        blades[4] = 0.0;
+        blades[8] = 0.0;
+
+        let spinor = Spinor::from_manifold_state(&blades, 1.0).expect("valid");
+        assert!((spinor.prediction_certainty() - 1.0).abs() < 1e-12);
     }
 
     #[test]
@@ -303,11 +346,12 @@ mod tests {
     #[test]
     fn predictor_accumulates_gradient() {
         let mut predictor = SpinorPredictor::new(10);
-        let mut blades = [0.1_f64; 16];
-        blades[1] = 1.0;
+        let blades = [0.0_f64; 16];
 
-        for _ in 0..5 {
-            let spinor = Spinor::from_manifold_state(&blades, 1.0).expect("valid");
+        for i in 0..5 {
+            let mut b = blades;
+            b[1] = i as f64 * 0.1 + 1.0;
+            let spinor = Spinor::from_manifold_state(&b, 1.0).expect("valid");
             predictor.push(spinor);
         }
 
@@ -343,14 +387,19 @@ mod tests {
     }
 
     #[test]
-    fn spinor_prediction_certainty_is_one_for_pure_state() {
+    fn predictor_prediction_certainty_high_for_low_variance() {
+        // Create a predictor with low-variance history → high certainty
+        let mut predictor = SpinorPredictor::new(10);
         let mut blades = [0.0_f64; 16];
         blades[1] = 1.0;
-        blades[2] = 0.0;
-        blades[4] = 0.0;
-        blades[8] = 0.0;
 
-        let spinor = Spinor::from_manifold_state(&blades, 1.0).expect("valid");
-        assert!((spinor.prediction_certainty() - 1.0).abs() < 1e-12);
+        // Push same spinor multiple times → variance ≈ 0 → certainty ≈ 1
+        for _ in 0..5 {
+            let spinor = Spinor::from_manifold_state(&blades, 1.0).expect("valid");
+            predictor.push(spinor);
+        }
+
+        let certainty = predictor.prediction_certainty();
+        assert!(certainty > 0.9, "low variance should yield high certainty");
     }
 }
