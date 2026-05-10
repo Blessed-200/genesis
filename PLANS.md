@@ -1,32 +1,31 @@
 # PLANS
 
-## 1.29 CRATE-006 integrated objective J_t aggregation (2026-05-10)
+## 1.30 CRATE-008 Clifford Engram pattern-completion module (2026-05-10)
 
 ### Root cause
 
-- The workspace lacks a canonical integration module that composes VFE, causal validation penalty, transport output cost, and spectral instability into a single traceable objective `J_t`.
-- Regression coverage does not currently verify per-term sensitivity of an integrated objective nor compatibility with existing base crate APIs.
+- The requested innovation (Dirac-based pattern completion memory) is absent from the workspace and cannot be represented by the prior `J_t` transport integration patch.
+- No crate-level home currently exists for a causal memory unit and engram store API.
 
 ### File-level actions
 
-1. `PLANS.md`
-   - Record this implementation plan before code changes (per repository ExecPlans policy).
-2. `core/genesis-transport/Cargo.toml`
-   - Add workspace dependencies on `genesis-dynamics` and `genesis-spectral` so integration can consume `VFEMinimizer` output semantics and spectral metrics types.
-3. `core/genesis-transport/src/integration.rs` (new)
-   - Define `JtTerms` and `JtBreakdown` with explicit fields: `vfe_t`, `causal_penalty_t`, `transport_cost_t`, `spectral_instability_t`, plus deterministic `j_t` aggregation.
-   - Provide traceability helpers exposing per-term contributions and weighted sum reconstruction checks.
-   - Keep API backward-safe (additive only) and documented with AX-ID anchors.
-4. `core/genesis-transport/src/lib.rs`
-   - Export the new integration module and public types/functions.
-5. `core/genesis-transport/tests/jt_regression.rs` (new)
-   - Add regression tests for: (a) traceability/reconstruction of `J_t`, (b) sensitivity isolation per term, (c) no-compat-break smoke usage with existing crates (`VFEMinimizer`, `JKOStep`-style transport scalar, and spectral step metric-shaped input).
+1. `core/genesis-core/Cargo.toml` (new)
+   - Create `genesis-core` crate with dependencies on `genesis-types` and `genesis-spectral`.
+2. `core/genesis-core/src/lib.rs` (new)
+   - Export `engram` module and public API types.
+3. `core/genesis-core/src/engram.rs` (new)
+   - Implement `CliffordEngram` and `EngramStore` with sorted-Vec storage, decay/strength, Dirac-based `pattern_complete`, and pruning.
+   - Add required regression tests for resonance retrieval, VFE-based survival, retrieval reinforcement, and lambda decay sensitivity.
+4. `Cargo.toml`
+   - Add `core/genesis-core` to workspace members and workspace dependency map.
+5. `PLANS.md`
+   - Record this plan before implementation.
 
 ### Validation
 
-- `cargo check --workspace`
+- `cargo fmt --all`
+- `cargo clippy --workspace -- -D warnings`
 - `cargo test --workspace`
-- `cargo check --workspace 2>&1 | grep "^warning:"`
 
 ## 1.28 CRATE-002 HNSW delta correctness/concurrency hardening follow-up (2026-04-09)
 

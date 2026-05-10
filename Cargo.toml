@@ -5,6 +5,7 @@ members = [
     "core/genesis-math",
     "core/genesis-topology",
     "core/genesis-dynamics",
+    "core/genesis-core",
     "core/genesis-spectral",
     "core/genesis-causal",
     "core/genesis-transport",
@@ -15,6 +16,7 @@ genesis-types     = { path = "shared/genesis-types" }
 genesis-math      = { path = "core/genesis-math" }
 genesis-topology  = { path = "core/genesis-topology" }
 genesis-dynamics  = { path = "core/genesis-dynamics" }
+genesis-core      = { path = "core/genesis-core" }
 genesis-spectral  = { path = "core/genesis-spectral" }
 genesis-causal    = { path = "core/genesis-causal" }
 genesis-transport = { path = "core/genesis-transport" }

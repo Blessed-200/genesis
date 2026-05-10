@@ -1,0 +1,11 @@
+[package]
+name = "genesis-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+genesis-types = { workspace = true }
+genesis-spectral = { workspace = true }
+
+[lints]
+workspace = true
