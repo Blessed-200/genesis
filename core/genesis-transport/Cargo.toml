@@ -9,6 +9,7 @@ genesis-types    = { workspace = true }
 genesis-math     = { workspace = true }
 genesis-dynamics = { workspace = true }
 genesis-causal   = { workspace = true }
+genesis-spectral = { workspace = true }
 smallvec         = { workspace = true }
 thiserror        = { workspace = true }
 

@@ -1,5 +1,33 @@
 # PLANS
 
+## 1.29 CRATE-006 integrated objective J_t aggregation (2026-05-10)
+
+### Root cause
+
+- The workspace lacks a canonical integration module that composes VFE, causal validation penalty, transport output cost, and spectral instability into a single traceable objective `J_t`.
+- Regression coverage does not currently verify per-term sensitivity of an integrated objective nor compatibility with existing base crate APIs.
+
+### File-level actions
+
+1. `PLANS.md`
+   - Record this implementation plan before code changes (per repository ExecPlans policy).
+2. `core/genesis-transport/Cargo.toml`
+   - Add workspace dependencies on `genesis-dynamics` and `genesis-spectral` so integration can consume `VFEMinimizer` output semantics and spectral metrics types.
+3. `core/genesis-transport/src/integration.rs` (new)
+   - Define `JtTerms` and `JtBreakdown` with explicit fields: `vfe_t`, `causal_penalty_t`, `transport_cost_t`, `spectral_instability_t`, plus deterministic `j_t` aggregation.
+   - Provide traceability helpers exposing per-term contributions and weighted sum reconstruction checks.
+   - Keep API backward-safe (additive only) and documented with AX-ID anchors.
+4. `core/genesis-transport/src/lib.rs`
+   - Export the new integration module and public types/functions.
+5. `core/genesis-transport/tests/jt_regression.rs` (new)
+   - Add regression tests for: (a) traceability/reconstruction of `J_t`, (b) sensitivity isolation per term, (c) no-compat-break smoke usage with existing crates (`VFEMinimizer`, `JKOStep`-style transport scalar, and spectral step metric-shaped input).
+
+### Validation
+
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `cargo check --workspace 2>&1 | grep "^warning:"`
+
 ## 1.28 CRATE-002 HNSW delta correctness/concurrency hardening follow-up (2026-04-09)
 
 ### Root cause

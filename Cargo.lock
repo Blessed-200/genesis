@@ -424,6 +424,7 @@ dependencies = [
  "genesis-causal",
  "genesis-dynamics",
  "genesis-math",
+ "genesis-spectral",
  "genesis-types",
  "proptest",
  "smallvec",

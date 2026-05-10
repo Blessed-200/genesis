@@ -12,6 +12,8 @@ pub mod belief;
 pub mod boundary;
 /// Lorentzian cost matrix primitives.
 pub mod cost;
+/// Integration objective J_t over dynamics, causal, transport, and spectral terms.
+pub mod integration;
 /// Implicit JKO descent scheme.
 pub mod jko;
 /// Causally constrained Sinkhorn solver.
@@ -22,3 +24,5 @@ pub use boundary::{SensoryEvent, SensoryProjector};
 pub use cost::CostMatrix16;
 pub use jko::{JKOScheme, JKOStep};
 pub use sinkhorn::CausalSinkhorn;
+
+pub use integration::{vfe_t, JtBreakdown, JtTerms};
