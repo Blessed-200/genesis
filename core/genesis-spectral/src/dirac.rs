@@ -179,7 +179,7 @@ pub struct DiracSquared {
 impl DiracSquared {
     /// Returns the squared Frobenius norm of `D²`.
     ///
-    /// AX-ID: AXIOMA-014, H_estructura (LEY_FUNDACIONAL §3.1)
+    /// AX-ID: AXIOMA-014, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
     #[must_use]
     pub fn frobenius_norm_sq(&self) -> f64 {
         self.matrix.frobenius_norm_sq()
