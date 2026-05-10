@@ -25,27 +25,38 @@ impl CostMatrix16 {
                 values[i * 16 + j] = s_sq.abs() * METRIC_WEIGHTS[i] * METRIC_WEIGHTS[j];
             }
         }
-        for i in 0..16 { values[i * 16 + i] = 0.0; }
+        for i in 0..16 {
+            values[i * 16 + i] = 0.0;
+        }
         Self { values }
     }
 
     /// Returns c(i,j).
     #[inline]
     #[must_use]
-    pub fn get(&self, i: usize, j: usize) -> f64 { self.values[i * 16 + j] }
+    pub fn get(&self, i: usize, j: usize) -> f64 {
+        self.values[i * 16 + j]
+    }
 
     /// Lower bound of weighted outgoing transport cost.
     ///
     /// AX-ID: H_compresión
     #[must_use]
     pub fn min_cost_lower_bound(&self, source: &BeliefDistribution) -> f64 {
-        source.weights.iter().enumerate().map(|(i, w)| {
-            let mut min_cost = f64::INFINITY;
-            for j in 0..16 {
-                if j != i { min_cost = min_cost.min(self.values[i * 16 + j]); }
-            }
-            w * min_cost
-        }).sum()
+        source
+            .weights
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                let mut min_cost = f64::INFINITY;
+                for j in 0..16 {
+                    if j != i {
+                        min_cost = min_cost.min(self.values[i * 16 + j]);
+                    }
+                }
+                w * min_cost
+            })
+            .sum()
     }
 }
 
@@ -56,12 +67,18 @@ mod tests {
     #[test]
     fn cost_matrix_diagonal_is_zero() {
         let c = CostMatrix16::from_lorentzian_metric();
-        for i in 0..16 { assert!(c.get(i, i).abs() < 1e-12); }
+        for i in 0..16 {
+            assert!(c.get(i, i).abs() < 1e-12);
+        }
     }
 
     #[test]
     fn cost_matrix_is_symmetric() {
         let c = CostMatrix16::from_lorentzian_metric();
-        for i in 0..16 { for j in 0..16 { assert!((c.get(i, j) - c.get(j, i)).abs() < 1e-12); } }
+        for i in 0..16 {
+            for j in 0..16 {
+                assert!((c.get(i, j) - c.get(j, i)).abs() < 1e-12);
+            }
+        }
     }
 }

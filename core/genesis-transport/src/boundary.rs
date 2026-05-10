@@ -27,11 +27,19 @@ pub struct SensoryEvent {
 
 impl SensoryProjector {
     /// Creates a sensory projector.
-    pub fn new(detection_threshold: f64) -> Self { Self { detection_threshold } }
+    pub fn new(detection_threshold: f64) -> Self {
+        Self {
+            detection_threshold,
+        }
+    }
 
     /// Projects an event into a 16-blade belief distribution.
     pub fn project(&self, event: &SensoryEvent) -> Result<BeliefDistribution, GenesisError> {
-        if event.amplitude < self.detection_threshold { return Err(GenesisError::InvalidInput("event below detection threshold")); }
+        if event.amplitude < self.detection_threshold {
+            return Err(GenesisError::InvalidInput(
+                "event below detection threshold",
+            ));
+        }
         let [t, x, y, z] = event.spacetime_coords;
         let mut weights = [0.0; 16];
         weights[0] = event.amplitude.powi(2) * METRIC_WEIGHTS[0];
@@ -49,14 +57,24 @@ impl SensoryProjector {
         let x = belief.weights[2].sqrt() / METRIC_WEIGHTS[2].sqrt();
         let y = belief.weights[4].sqrt() / METRIC_WEIGHTS[4].sqrt();
         let z = belief.weights[8].sqrt() / METRIC_WEIGHTS[8].sqrt();
-        SensoryEvent { spacetime_coords: [t, x, y, z], amplitude: belief.weighted_mean().sqrt(), system_timestamp: 0 }
+        SensoryEvent {
+            spacetime_coords: [t, x, y, z],
+            amplitude: belief.weighted_mean().sqrt(),
+            system_timestamp: 0,
+        }
     }
 
     /// Computes roundtrip error `||Π*(Π(event)) - event||`.
     pub fn roundtrip_error(&self, event: &SensoryEvent) -> Result<f64, GenesisError> {
         let belief = self.project(event)?;
         let reconstructed = self.project_adjoint(&belief);
-        Ok(event.spacetime_coords.iter().zip(reconstructed.spacetime_coords.iter()).map(|(a,b)| (a-b).powi(2)).sum::<f64>().sqrt())
+        Ok(event
+            .spacetime_coords
+            .iter()
+            .zip(reconstructed.spacetime_coords.iter())
+            .map(|(a, b)| (a - b).powi(2))
+            .sum::<f64>()
+            .sqrt())
     }
 }
 
@@ -67,7 +85,11 @@ mod tests {
     #[test]
     fn sensory_projector_roundtrip_bounded() {
         let p = SensoryProjector::new(0.01);
-        let event = SensoryEvent { spacetime_coords: [1.0, 0.2, 0.3, 0.4], amplitude: 1.2, system_timestamp: 7 };
+        let event = SensoryEvent {
+            spacetime_coords: [1.0, 0.2, 0.3, 0.4],
+            amplitude: 1.2,
+            system_timestamp: 7,
+        };
         let err = p.roundtrip_error(&event).expect("roundtrip");
         assert!(err < ROUNDTRIP_TOL);
     }

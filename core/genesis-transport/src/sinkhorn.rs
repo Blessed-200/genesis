@@ -16,7 +16,11 @@ pub struct CausalSinkhorn {
 impl CausalSinkhorn {
     /// Creates a causal Sinkhorn solver.
     pub fn new(epsilon: f64, cost_matrix: CostMatrix16) -> Result<Self, GenesisError> {
-        if epsilon <= 0.0 { return Err(GenesisError::InvalidInput("sinkhorn epsilon must be positive")); }
+        if epsilon <= 0.0 {
+            return Err(GenesisError::InvalidInput(
+                "sinkhorn epsilon must be positive",
+            ));
+        }
         let mut causal_mask = [false; 256];
         for i in 0..16 {
             for j in 0..16 {
@@ -30,23 +34,51 @@ impl CausalSinkhorn {
         if causal_mask.iter().filter(|allowed| **allowed).count() < 128 {
             causal_mask = [true; 256];
         }
-        Ok(Self { epsilon, max_iter: 1000, tol: 1e-8, causal_mask, cost_matrix })
+        Ok(Self {
+            epsilon,
+            max_iter: 1000,
+            tol: 1e-8,
+            causal_mask,
+            cost_matrix,
+        })
     }
 
     /// Computes causal W2 squared.
-    pub fn distance_sq(&self, mu: &BeliefDistribution, nu: &BeliefDistribution) -> Result<f64, GenesisError> {
-        if mu.weights.iter().zip(nu.weights.iter()).all(|(a, b)| (*a - *b).abs() < 1e-12) {
+    pub fn distance_sq(
+        &self,
+        mu: &BeliefDistribution,
+        nu: &BeliefDistribution,
+    ) -> Result<f64, GenesisError> {
+        if mu
+            .weights
+            .iter()
+            .zip(nu.weights.iter())
+            .all(|(a, b)| (*a - *b).abs() < 1e-12)
+        {
             return Ok(0.0);
         }
         self.transport_plan(mu, nu).map(|(_, d)| d)
     }
 
     /// Computes transport plan and causal W2 squared.
-    pub fn transport_plan(&self, mu: &BeliefDistribution, nu: &BeliefDistribution) -> Result<([f64; 256], f64), GenesisError> {
+    pub fn transport_plan(
+        &self,
+        mu: &BeliefDistribution,
+        nu: &BeliefDistribution,
+    ) -> Result<([f64; 256], f64), GenesisError> {
         let mut kernel = [0.0; 256];
-        for i in 0..16 { for j in 0..16 {
-            if self.causal_mask[i * 16 + j] { kernel[i * 16 + j] = (-self.cost_matrix.get(i, j) / self.epsilon).exp(); }
-        }}
+        for i in 0..16 {
+            for j in 0..16 {
+                let is_causal = self.causal_mask[i * 16 + j];
+                let base_cost = self.cost_matrix.get(i, j);
+                let effective_cost = if is_causal {
+                    base_cost
+                } else {
+                    base_cost + 10_000.0
+                };
+                kernel[i * 16 + j] = (-effective_cost / self.epsilon).exp();
+            }
+        }
         let mut u = [1.0; 16];
         let mut v = [1.0; 16];
         let mut residual = f64::INFINITY;
@@ -54,27 +86,42 @@ impl CausalSinkhorn {
             let prev_u = u;
             for j in 0..16 {
                 let mut ku = 0.0;
-                for i in 0..16 { ku += kernel[i * 16 + j] * u[i]; }
+                for i in 0..16 {
+                    ku += kernel[i * 16 + j] * u[i];
+                }
                 v[j] = nu.weights[j] / ku.max(1e-30);
             }
             for i in 0..16 {
                 let mut kv = 0.0;
-                for j in 0..16 { kv += kernel[i * 16 + j] * v[j]; }
+                for j in 0..16 {
+                    kv += kernel[i * 16 + j] * v[j];
+                }
                 u[i] = mu.weights[i] / kv.max(1e-30);
             }
             residual = 0.0;
-            for i in 0..16 { residual = residual.max((u[i] - prev_u[i]).abs()); }
-            if residual < self.tol { break; }
+            for i in 0..16 {
+                residual = residual.max((u[i] - prev_u[i]).abs());
+            }
+            if residual < self.tol {
+                break;
+            }
         }
-        if residual >= self.tol { return Err(GenesisError::SinkhornNotConverged { iterations: self.max_iter as usize, residual }); }
+        if residual >= self.tol {
+            return Err(GenesisError::SinkhornNotConverged {
+                iterations: self.max_iter as usize,
+                residual,
+            });
+        }
 
         let mut plan = [0.0; 256];
         let mut w2_sq = 0.0;
-        for i in 0..16 { for j in 0..16 {
-            let pij = u[i] * kernel[i * 16 + j] * v[j];
-            plan[i * 16 + j] = pij;
-            w2_sq += pij * self.cost_matrix.get(i, j);
-        }}
+        for i in 0..16 {
+            for j in 0..16 {
+                let pij = u[i] * kernel[i * 16 + j] * v[j];
+                plan[i * 16 + j] = pij;
+                w2_sq += pij * self.cost_matrix.get(i, j);
+            }
+        }
         Ok((plan, w2_sq))
     }
 }
