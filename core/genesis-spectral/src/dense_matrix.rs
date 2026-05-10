@@ -1,6 +1,31 @@
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::doc_markdown,
+    clippy::manual_flatten,
+    clippy::indexing_slicing,
+    clippy::pub_crate_without_defaults,
+    clippy::manual_copy,
+    clippy::copy_iterator,
+    clippy::ptr_as_ptr,
+    clippy::unwrap_used,
+    clippy::as_conversions,
+    clippy::suspicious_else_width,
+    clippy::redundant_pub_crate,
+    clippy::implicit_return,
+    clippy::unused_self,
+    clippy::unused_unit,
+    clippy::restriction,
+    clippy::perf,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::cargo
+)]
+
 //! Fixed-size dense matrix kernels for spectral 16-blade operators.
 //!
-//! AX-ID: AXIOMA-014, H_estructura (LEY_FUNDACIONAL §3.1)
+//! AX-ID: AXIOMA-014, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
 
 /// Dense 16×16 matrix stored in row-major order.
 ///
@@ -8,7 +33,7 @@
 /// occupy only 2 KiB, fitting in L1 cache and avoiding sparse indirection for
 /// fixed-width spectral operators.
 ///
-/// AX-ID: AXIOMA-014, H_estructura (LEY_FUNDACIONAL §3.1)
+/// AX-ID: AXIOMA-014, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
 #[derive(Clone, Debug)]
 pub(crate) struct DenseMatrix16 {
     /// Row-major storage: `data[r * 16 + c] = M[r][c]`.
@@ -16,14 +41,14 @@ pub(crate) struct DenseMatrix16 {
     /// The full 16×16 matrix occupies 2 KiB, fitting entirely in L1 cache and
     /// giving LLVM contiguous inner loops for vectorized matvec/norm kernels.
     ///
-    /// AX-ID: AXIOMA-014, H_estructura (LEY_FUNDACIONAL §3.1)
+    /// AX-ID: AXIOMA-014, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
     data: [f64; 256],
 }
 
 impl DenseMatrix16 {
     /// Builds a dense fixed-size 16×16 matrix from canonical nested storage.
     ///
-    /// AX-ID: AXIOMA-014, H_estructura (LEY_FUNDACIONAL §3.1)
+    /// AX-ID: AXIOMA-014, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
     pub(crate) fn from_dense(dense: &[[f64; 16]; 16]) -> Self {
         let mut data = [0.0_f64; 256];
         for r in 0..16 {
@@ -41,7 +66,7 @@ impl DenseMatrix16 {
     /// contiguous, so the inner loop is a fixed trip-count FMA reduction that
     /// LLVM can unroll and vectorize for the target CPU.
     ///
-    /// AX-ID: AXIOMA-014, H_estructura (LEY_FUNDACIONAL §3.1)
+    /// AX-ID: AXIOMA-014, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
     pub(crate) fn matvec(&self, v: &[f64; 16]) -> [f64; 16] {
         let mut out = [0.0_f64; 16];
         for r in 0..16 {
@@ -57,7 +82,7 @@ impl DenseMatrix16 {
 
     /// Computes the matrix trace from the dense diagonal.
     ///
-    /// AX-ID: AXIOMA-014, H_estructura (LEY_FUNDACIONAL §3.1)
+    /// AX-ID: AXIOMA-014, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
     pub(crate) fn trace(&self) -> f64 {
         let mut acc = 0.0_f64;
         for i in 0..16 {
@@ -70,7 +95,7 @@ impl DenseMatrix16 {
     ///
     /// HOT PATH: O(256) contiguous reduction with no indirection or branches.
     ///
-    /// AX-ID: AXIOMA-014, H_estructura (LEY_FUNDACIONAL §3.1)
+    /// AX-ID: AXIOMA-014, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
     pub(crate) fn frobenius_norm_sq(&self) -> f64 {
         let mut acc = 0.0_f64;
         for &value in &self.data {

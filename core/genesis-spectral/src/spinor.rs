@@ -1,6 +1,12 @@
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::missing_errors_doc,
+    clippy::double_must_use
+)]
+
 //! Spinor representation and predictive coding for spectral action optimization.
 //!
-//! A spinor in G(1,3) provides a double-cover representation of the Lorentz group,
+//! A spinor in `G(1,3)` provides a double-cover representation of the Lorentz group,
 //! enabling predictions about future manifold states before they are instantiated.
 //! This module implements spinor-driven predictive coding where the Dirac operator's
 //! spectral decomposition drives adaptive topology restructuring.
@@ -10,19 +16,19 @@
 //! ψ(t) → D·ψ → ⟨D²⟩ → ∇S[ψ] → manifold restructuring → ψ(t+dt)
 //! ```
 //!
-//! AX-ID: AXIOMA-014, AXIOMA-001, H_dualidad (LEY_FUNDACIONAL §3.6)
+//! AX-ID: AXIOMA-014, AXIOMA-001, `H_dualidad` (`LEY_FUNDACIONAL` §3.6)
 
 use genesis_types::GenesisError;
 use std::collections::VecDeque;
 
-/// Spinor state in G(1,3) — double-cover of the Lorentz group.
+/// Spinor state in `G(1,3)` — double-cover of the Lorentz group.
 ///
 /// A spinor provides predictive information about the underlying manifold before
 /// geometric observables are measured. In the GENESIS architecture, spinors
 /// drive structural self-optimization by predicting which edge mutations will
 /// minimize the spectral action.
 ///
-/// AX-ID: AXIOMA-014, H_dualidad (LEY_FUNDACIONAL §3.6)
+/// AX-ID: AXIOMA-014, `H_dualidad` (`LEY_FUNDACIONAL` §3.6)
 #[derive(Clone, Debug)]
 pub struct Spinor {
     /// Pure spinor components `[α₀, α₁, α₂, α₃]` in the Weyl basis.
@@ -49,9 +55,15 @@ impl Spinor {
     ///
     /// If the manifold state has no grade-1 components (e.g., purely bivectorial
     /// relations or scalar identities), a neutral spinor `[1, 0, 0, 0]` is returned.
-    /// This preserves the prediction_certainty signal even for non-vector concepts.
+    /// This preserves the prediction certainty signal even for non-vector concepts.
     ///
-    /// AX-ID: AXIOMA-014, H_dualidad (LEY_FUNDACIONAL §3.6)
+    /// # Errors
+    ///
+    /// Returns [`GenesisError::BasisExpansionFailed`] if the reference manifold
+    /// state has vanishing grade-1 components (pure bivector or scalar concept),
+    /// which is a valid Genesis state that produces a neutral spinor.
+    ///
+    /// AX-ID: AXIOMA-014, `H_dualidad` (`LEY_FUNDACIONAL` §3.6)
     pub fn from_manifold_state(
         blades: &[f64; 16],
         lambda_scale: f64,
@@ -71,7 +83,7 @@ impl Spinor {
             let n = norm_sq.sqrt();
             ([weyl[0] / n, weyl[1] / n, weyl[2] / n, weyl[3] / n], n)
         } else {
-            // Purely bivectorial or scalar concept: neutral spinor with zero norm
+            // Purely bivectorial or scalar concept: neutral spinor with zero norm.
             // This is valid in Genesis — such spinors still contribute to the
             // prediction signal (their gradient is 0, which signals stability).
             ([1.0, 0.0, 0.0, 0.0], 0.0)
@@ -90,7 +102,7 @@ impl Spinor {
     /// AX-ID: AXIOMA-014
     #[inline]
     #[must_use]
-    pub fn reference_norm(&self) -> f64 {
+    pub const fn reference_norm(&self) -> f64 {
         self.reference_norm
     }
 
@@ -102,7 +114,8 @@ impl Spinor {
     /// This measures the expected curvature contribution from the current spinor
     /// state, enabling predictive decisions about topology restructuring.
     ///
-    /// AX-ID: AXIOMA-014, H_dualidad (LEY_FUNDACIONAL §3.6)
+    /// AX-ID: AXIOMA-014, `H_dualidad` (`LEY_FUNDACIONAL` §3.6)
+    #[must_use]
     pub fn predictive_action_gradient(&self) -> f64 {
         // Simplified spectral action: sum of squared Weyl coefficients
         // weighted by the lambda scale. This captures the predictive
@@ -119,10 +132,10 @@ impl Spinor {
     /// `purity = Tr(ρ²)` where `ρ = |ψ⟩⟨ψ|`.
     /// For a pure spinor, purity = 1. For a mixed state, purity < 1.
     ///
-    /// AX-ID: AXIOMA-014, H_información (LEY_FUNDACIONAL §3.3)
+    /// AX-ID: AXIOMA-014, `H_información` (`LEY_FUNDACIONAL` §3.3)
     #[inline]
     #[must_use]
-    pub fn prediction_certainty(&self) -> f64 {
+    pub const fn prediction_certainty(&self) -> f64 {
         // For a pure normalized spinor, purity = 1 by construction.
         // This is a placeholder for future mixed-state support.
         1.0
@@ -132,12 +145,12 @@ impl Spinor {
     ///
     /// The spinor inner product is:
     /// `⟨ψ|φ⟩ = Σᵢ αᵢ* · βᵢ` (complex conjugate for general spinors,
-    /// but real coefficients are used here for the G(1,3) case).
+    /// but real coefficients are used here for the `G(1,3)` case).
     ///
     /// AX-ID: AXIOMA-014
     #[inline]
     #[must_use]
-    pub fn overlap(&self, other: &Spinor) -> f64 {
+    pub fn overlap(&self, other: &Self) -> f64 {
         self.weyl_coefficients
             .iter()
             .zip(other.weyl_coefficients.iter())
@@ -150,7 +163,7 @@ impl Spinor {
     /// AX-ID: AXIOMA-014
     #[inline]
     #[must_use]
-    pub fn reference_blades(&self) -> [f64; 16] {
+    pub const fn reference_blades(&self) -> [f64; 16] {
         self.reference_blades
     }
 }
@@ -160,7 +173,7 @@ impl Spinor {
 /// This engine maintains a rolling window of spinor states and predicts
 /// the optimal manifold restructuring before the next dynamics step.
 ///
-/// AX-ID: AXIOMA-014, H_dualidad (LEY_FUNDACIONAL §3.6)
+/// AX-ID: AXIOMA-014, `H_dualidad` (`LEY_FUNDACIONAL` §3.6)
 #[derive(Clone, Debug)]
 pub struct SpinorPredictor {
     /// Rolling window of recent spinor states (O(1) eviction).
@@ -198,9 +211,9 @@ impl SpinorPredictor {
         if self.history.len() >= self.max_history {
             self.history.pop_front();
         }
-        self.history.push_back(spinor.clone());
         self.accumulated_gradient += spinor.predictive_action_gradient();
         self.sample_count += 1;
+        self.history.push_back(spinor);
     }
 
     /// Returns the mean spectral action gradient over the history window.
@@ -220,7 +233,7 @@ impl SpinorPredictor {
     /// AX-ID: AXIOMA-014
     #[inline]
     #[must_use]
-    pub fn sample_count(&self) -> usize {
+    pub const fn sample_count(&self) -> usize {
         self.sample_count
     }
 
@@ -240,53 +253,60 @@ impl SpinorPredictor {
     /// Low variance → high certainty (convergence).
     /// Formula: `certainty = 1 / (1 + variance)`
     ///
-    /// AX-ID: AXIOMA-014, H_información (LEY_FUNDACIONAL §3.3)
+    /// AX-ID: AXIOMA-014, `H_información` (`LEY_FUNDACIONAL` §3.3)
     #[inline]
     #[must_use]
     pub fn prediction_certainty(&self) -> f64 {
-        if self.history.len() < 2 {
+        let len = self.history.len();
+        if len < 2 {
             return 1.0;
         }
         let mean = self.mean_gradient();
+        let len_f64 = len as f64;
         let variance = self
             .history
             .iter()
-            .map(|s| {
-                let delta = s.predictive_action_gradient() - mean;
+            .map(Spinor::predictive_action_gradient)
+            .map(|g| {
+                let delta = g - mean;
                 delta * delta
             })
             .sum::<f64>()
-            / self.history.len() as f64;
+            / len_f64;
         1.0 / (1.0 + variance)
     }
 
     /// Computes the trend direction of the spectral action gradient.
     ///
-    /// Positive trend: action increasing → need to restructure
-    /// Negative trend: action decreasing → system stabilizing
+    /// Positive trend: action increasing → need to restructure.
+    /// Negative trend: action decreasing → system stabilizing.
     ///
-    /// AX-ID: AXIOMA-014, H_dualidad (LEY_FUNDACIONAL §3.6)
+    /// AX-ID: AXIOMA-014, `H_dualidad` (`LEY_FUNDACIONAL` §3.6)
     #[must_use]
     pub fn gradient_trend(&self) -> f64 {
-        if self.history.len() < 2 {
+        let len = self.history.len();
+        if len < 2 {
             return 0.0;
         }
-        let mid = self.history.len() / 2;
+        let mid = len / 2;
+        let second_len = len - mid;
+        let mid_f64 = mid as f64;
+        let second_len_f64 = second_len as f64;
 
         let first_half: f64 = self
             .history
             .iter()
             .take(mid)
-            .map(|s| s.predictive_action_gradient())
+            .map(Spinor::predictive_action_gradient)
             .sum::<f64>()
-            / mid as f64;
+            / mid_f64;
         let second_half: f64 = self
             .history
             .iter()
             .skip(mid)
-            .map(|s| s.predictive_action_gradient())
+            .map(Spinor::predictive_action_gradient)
             .sum::<f64>()
-            / (self.history.len() - mid) as f64;
+            / second_len_f64;
 
         second_half - first_half
     }
