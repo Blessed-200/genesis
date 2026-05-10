@@ -1,0 +1,22 @@
+[package]
+name = "genesis-transport"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[dependencies]
+genesis-types    = { workspace = true }
+genesis-math     = { workspace = true }
+genesis-dynamics = { workspace = true }
+genesis-causal   = { workspace = true }
+smallvec         = { workspace = true }
+thiserror        = { workspace = true }
+
+[dev-dependencies]
+proptest  = { workspace = true }
+criterion = { workspace = true }
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"
+nursery = "deny"

@@ -284,6 +284,13 @@ pub enum GenesisError {
         residual: f64,
     },
 
+    /// A JKO transport step produced a non-monotone free-energy update.
+    #[error("Transport error: JKO step produced non-monotone VFE delta={delta:.4e}")]
+    TransportNonMonotone {
+        /// Free-energy delta for the failed step.
+        delta: f64,
+    },
+
     /// The Fisher gate has declared domain satiation; ingestion into this
     /// branch is blocked until an explicit `DomainResetSignal` is issued.
     ///
@@ -598,6 +605,7 @@ impl GenesisError {
             | Self::SpectralLambdaUnderflow { .. }
             | Self::SpectralInsufficientNodes { .. }
             | Self::SinkhornNotConverged { .. }
+            | Self::TransportNonMonotone { .. }
             | Self::RicciMetricDegenerate { .. }
             | Self::CausalCycle { .. }
             | Self::CausalViolation { .. }

@@ -7,14 +7,17 @@ members = [
     "core/genesis-dynamics",
     "core/genesis-spectral",
     "core/genesis-causal",
+    "core/genesis-transport",
 ]
 
 [workspace.dependencies]
 genesis-types     = { path = "shared/genesis-types" }
 genesis-math      = { path = "core/genesis-math" }
 genesis-topology  = { path = "core/genesis-topology" }
+genesis-dynamics  = { path = "core/genesis-dynamics" }
 genesis-spectral  = { path = "core/genesis-spectral" }
 genesis-causal    = { path = "core/genesis-causal" }
+genesis-transport = { path = "core/genesis-transport" }
 thiserror         = "1.0"
 bytemuck          = { version = "1.14", features = ["derive"] }
 rayon             = "1.10"

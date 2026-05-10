@@ -417,6 +417,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "genesis-transport"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "genesis-causal",
+ "genesis-dynamics",
+ "genesis-math",
+ "genesis-types",
+ "proptest",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
 name = "genesis-types"
 version = "0.1.0"
 dependencies = [
