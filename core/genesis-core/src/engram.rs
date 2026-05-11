@@ -52,6 +52,7 @@ pub struct CorticalStore {
     pub spectral_states_flat: Vec<f64>,
     pub decays: Vec<f64>,
     pub strengths: Vec<f64>,
+    pub vfe_weights: Vec<f64>,
     pub causal_ids: Vec<u64>,
 }
 
@@ -63,6 +64,7 @@ impl CorticalStore {
             spectral_states_flat: Vec::with_capacity(capacity * 16),
             decays: Vec::with_capacity(capacity),
             strengths: Vec::with_capacity(capacity),
+            vfe_weights: Vec::with_capacity(capacity),
             causal_ids: Vec::with_capacity(capacity),
         }
     }
@@ -83,10 +85,12 @@ impl CorticalStore {
         blades: [f64; 16],
         spectral: [f64; 16],
         strength: f64,
+        vfe_weight: f64,
         decay: f64,
     ) {
         self.causal_ids.push(causal_id);
         self.strengths.push(strength);
+        self.vfe_weights.push(vfe_weight);
         self.decays.push(decay);
         self.blades_flat.extend_from_slice(&blades);
         self.spectral_states_flat.extend_from_slice(&spectral);
@@ -220,7 +224,7 @@ impl EngramStore {
             return Ok(Some(CliffordEngram::new(
                 blades,
                 self.cortical_store.causal_ids[idx],
-                self.cortical_store.strengths[idx],
+                self.cortical_store.vfe_weights[idx],
                 current_cycle,
                 spectral,
             )));
@@ -282,11 +286,13 @@ impl EngramStore {
             let mut blades = [0.0; 16];
             let mut spectral = [0.0; 16];
             let mut total_strength = 0.0;
+            let mut peak_vfe = 0.0_f64;
             let mut causal_id = u64::MAX;
             for &idx in &cluster {
                 let e = &self.episodic_buffer[idx];
                 let s = e.strength();
                 total_strength += s;
+                peak_vfe = peak_vfe.max(e.vfe_weight);
                 causal_id = causal_id.min(e.causal_id);
                 for k in 0..16 {
                     blades[k] += e.blades[k] * s;
@@ -298,15 +304,15 @@ impl EngramStore {
                 continue;
             }
 
-            pending_cortical.push((causal_id, blades, spectral, total_strength, 1.0));
+            pending_cortical.push((causal_id, blades, spectral, total_strength, peak_vfe, 1.0));
             for &idx in &cluster {
                 consumed[idx] = true;
             }
         }
 
-        for (causal_id, blades, spectral, total_strength, decay) in pending_cortical {
+        for (causal_id, blades, spectral, total_strength, peak_vfe, decay) in pending_cortical {
             self.cortical_store
-                .push(causal_id, blades, spectral, total_strength, decay);
+                .push(causal_id, blades, spectral, total_strength, peak_vfe, decay);
         }
         self.episodic_buffer = self
             .episodic_buffer
@@ -396,6 +402,29 @@ impl EngramStore {
             }
             if similarity > 0.0 {
                 total_repulsion += similarity * engram.vfe_weight * decay;
+            }
+        }
+
+        // HOT PATH: O(N) contiguous cortical scan. The spectral state is stored as
+        // 16-lane SoA rows, so each traumatic abstraction uses one cache-friendly
+        // dot product without allocation or dynamic dispatch.
+        for idx in 0..self.cortical_store.len() {
+            let vfe_weight = self.cortical_store.vfe_weights[idx];
+            if vfe_weight < TRAUMA_VFE_THRESHOLD {
+                continue;
+            }
+            let decay = self.cortical_store.decays[idx];
+            if decay < 1e-6 {
+                continue;
+            }
+            let base = idx * 16;
+            let mut similarity = 0.0_f64;
+            for i in 0..16 {
+                similarity +=
+                    self.cortical_store.spectral_states_flat[base + i] * normalized_future[i];
+            }
+            if similarity > 0.0 {
+                total_repulsion += similarity * vfe_weight * decay;
             }
         }
         total_repulsion
@@ -646,6 +675,30 @@ mod tests {
         let scaled_repulsion = store.trauma_repulsion(&scaled, 1);
 
         assert!((unit_repulsion - scaled_repulsion).abs() < 1e-12);
+    }
+
+    #[test]
+    fn cortical_trauma_persists_after_consolidation() {
+        let mut store = EngramStore::new(16, 0.001);
+        let pattern = blades(1.0);
+        for causal_id in 0..3_u64 {
+            store
+                .encode(pattern, causal_id, 15.0, 0)
+                .expect("encode traumatic engram");
+        }
+        let proposed_future = store.episodic_buffer[0].spectral_state;
+        let episodic_repulsion = store.trauma_repulsion(&proposed_future, 1);
+        assert!(episodic_repulsion > 0.0);
+
+        store.dream_cycle(1);
+
+        assert!(store.episodic_buffer.is_empty());
+        assert_eq!(store.cortical_len(), 1);
+        let cortical_repulsion = store.trauma_repulsion(&proposed_future, 1);
+        assert!(cortical_repulsion > 0.0);
+        let relative_error =
+            ((cortical_repulsion * 3.0) - episodic_repulsion).abs() / episodic_repulsion.max(1e-12);
+        assert!(relative_error < 1e-3);
     }
 
     #[test]
