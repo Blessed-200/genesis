@@ -28,7 +28,7 @@ fn capacity_stress_keeps_strongest_engrams() {
     let mut store = EngramStore::new(5, 0.0);
     for i in 0..20_u64 {
         store
-            .encode(blades(i as f64), i, (i + 1) as f64, 0)
+            .encode(blades((i + 1) as f64), i, (i + 1) as f64, 0)
             .expect("encode");
     }
     store.dream_cycle(0);
