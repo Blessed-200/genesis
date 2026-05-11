@@ -1,5 +1,32 @@
 # PLANS
 
+## 1.30 CRATE-008 Clifford Engram pattern-completion module (2026-05-10)
+
+### Root cause
+
+- The requested innovation (Dirac-based pattern completion memory) is absent from the workspace and cannot be represented by the prior `J_t` transport integration patch.
+- No crate-level home currently exists for a causal memory unit and engram store API.
+
+### File-level actions
+
+1. `core/genesis-core/Cargo.toml` (new)
+   - Create `genesis-core` crate with dependencies on `genesis-types` and `genesis-spectral`.
+2. `core/genesis-core/src/lib.rs` (new)
+   - Export `engram` module and public API types.
+3. `core/genesis-core/src/engram.rs` (new)
+   - Implement `CliffordEngram` and `EngramStore` with sorted-Vec storage, decay/strength, Dirac-based `pattern_complete`, and pruning.
+   - Add required regression tests for resonance retrieval, VFE-based survival, retrieval reinforcement, and lambda decay sensitivity.
+4. `Cargo.toml`
+   - Add `core/genesis-core` to workspace members and workspace dependency map.
+5. `PLANS.md`
+   - Record this plan before implementation.
+
+### Validation
+
+- `cargo fmt --all`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo test --workspace`
+
 ## 1.28 CRATE-002 HNSW delta correctness/concurrency hardening follow-up (2026-04-09)
 
 ### Root cause
