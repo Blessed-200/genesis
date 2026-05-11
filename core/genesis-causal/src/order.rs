@@ -1,6 +1,6 @@
 //! Causal graph with dense internal indexing and hot-path adjacency traversal.
 //!
-//! AX-ID: AXIOMA-002, H_estructura (LEY_FUNDACIONAL §3.1)
+//! AX-ID: AXIOMA-002, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
 
 use crate::separation::CausalSeparation;
 use fixedbitset::FixedBitSet;
@@ -27,7 +27,7 @@ struct NodeEntry {
     topo_rank: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CausalEdge {
     pub cause_id: u64,
     pub effect_id: u64,
@@ -37,6 +37,10 @@ pub struct CausalEdge {
 }
 
 impl CausalEdge {
+    /// Computes the causal edge between two nodes.
+    ///
+    /// # Errors
+    /// Returns `GenesisError::CausalViolation` if the nodes are identical or the separation is not forward-causal.
     pub fn compute(
         cause_id: u64,
         cause_blades: &[f64; 16],
@@ -104,6 +108,11 @@ impl CausalOrder {
         }
     }
 
+    /// Adds a causal edge to the order.
+    ///
+    /// # Errors
+    /// Returns `GenesisError::CausalViolation` if the edge would create a self-loop.
+    /// Returns `GenesisError::InvalidInput` if the node limit is exceeded.
     pub fn add_edge(&mut self, edge: CausalEdge) -> Result<(), GenesisError> {
         let cause_idx = self.get_or_insert_node(edge.cause_id)?;
         let effect_idx = self.get_or_insert_node(edge.effect_id)?;
@@ -181,6 +190,10 @@ impl CausalOrder {
         out
     }
 
+    /// Verifies that the causal order remains a Directed Acyclic Graph (DAG).
+    ///
+    /// # Errors
+    /// Returns `GenesisError::CausalCycle` if a cycle is detected.
     pub fn verify_acyclic(&self) -> Result<(), GenesisError> {
         let n = self.nodes.len();
         let mut in_degree = vec![0usize; n];
@@ -204,14 +217,15 @@ impl CausalOrder {
                 }
             }
         }
-        if visited != n {
+        if visited == n {
+            Ok(())
+        } else {
             Err(GenesisError::CausalCycle {
                 cycle_nodes: Vec::new(),
             })
-        } else {
-            Ok(())
         }
     }
+
 
     #[must_use]
     pub fn is_before(&self, a: u64, b: u64) -> bool {

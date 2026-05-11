@@ -1,6 +1,6 @@
 //! Past-lightcone filtering utilities for causal inference.
 //!
-//! AX-ID: AXIOMA-002, H_información (LEY_FUNDACIONAL §3.3)
+//! AX-ID: AXIOMA-002, `H_información` (`LEY_FUNDACIONAL` §3.3)
 
 use crate::order::CausalOrder;
 use genesis_types::GenesisError;
@@ -12,7 +12,7 @@ pub struct LightconeFilter<'a> {
 
 impl<'a> LightconeFilter<'a> {
     #[must_use]
-    pub fn new(causal_order: &'a CausalOrder) -> Self {
+    pub const fn new(causal_order: &'a CausalOrder) -> Self {
         Self { causal_order }
     }
 
@@ -26,6 +26,10 @@ impl<'a> LightconeFilter<'a> {
             .collect()
     }
 
+    /// Validates that an inference is causally sound.
+    ///
+    /// # Errors
+    /// Returns `GenesisError::AcausalInference` if any premise is not in the causal past of the conclusion.
     pub fn validate_inference(&self, inference: &CausalInference) -> Result<(), GenesisError> {
         let past = self.causal_order.past_lightcone(inference.conclusion_id);
         for &premise in &inference.premise_ids {
@@ -39,6 +43,10 @@ impl<'a> LightconeFilter<'a> {
         Ok(())
     }
 
+    /// Explains why an inference failed causal validation.
+    ///
+    /// # Errors
+    /// Returns `GenesisError::AcausalInference` explaining the causal violation.
     pub fn explain_inference_failure(
         &self,
         inference: &CausalInference,

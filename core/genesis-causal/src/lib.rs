@@ -2,7 +2,7 @@
 //!
 //! Causal structure, lightcone filtering, and spinor coherence over G(1,3).
 //!
-//! AX-ID: AXIOMA-002, H_estructura (LEY_FUNDACIONAL §3.1)
+//! AX-ID: AXIOMA-002, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
 
 pub mod error;
 pub mod lightcone;
@@ -19,13 +19,13 @@ pub use spinor::{DiracSpinor, GlobalSection};
 mod tests {
     use super::*;
 
-    fn blades_txyz(t: f64, x: f64, y: f64, z: f64) -> [f64; 16] {
-        let mut b = [0.0; 16];
-        b[1] = t;
-        b[2] = x;
-        b[4] = y;
-        b[8] = z;
-        b
+    fn blades_txyz(time: f64, x_coord: f64, y_coord: f64, z_coord: f64) -> [f64; 16] {
+        let mut blades = [0.0; 16];
+        blades[1] = time;
+        blades[2] = x_coord;
+        blades[4] = y_coord;
+        blades[8] = z_coord;
+        blades
     }
 
     #[test]
@@ -74,9 +74,9 @@ mod tests {
         let root = DiracSpinor {
             components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         };
-        let section = GlobalSection::compute(&order, &[30, 10, 20], root.clone())
+        let section = GlobalSection::compute(&order, &[30, 10, 20], &root)
             .expect("section should compute");
-        let section_sorted = GlobalSection::compute(&order, &[10, 20, 30], root)
+        let section_sorted = GlobalSection::compute(&order, &[10, 20, 30], &root)
             .expect("section should compute sorted");
         assert!((0.0..=1.0).contains(&section.coherence_order));
         assert!((section.coherence_order - section_sorted.coherence_order).abs() < 1e-12);
@@ -140,9 +140,9 @@ mod tests {
     fn long_cycle_detected() {
         let nodes: Vec<_> = (0..4)
             .map(|i| {
-                let mut b = [0.0_f64; 16];
-                b[1] = i as f64;
-                b
+                let mut blades = [0.0_f64; 16];
+                blades[1] = f64::from(i);
+                blades
             })
             .collect();
         let mut order = CausalOrder::new();
@@ -177,7 +177,7 @@ mod tests {
         let root = DiracSpinor {
             components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         };
-        let section = GlobalSection::compute(&order, &[1, 2, 3], root).expect("compute section");
+        let section = GlobalSection::compute(&order, &[1, 2, 3], &root).expect("compute section");
         assert!(
             section.holonomy < 1e-10,
             "holonomy must be zero on linear chain"
@@ -210,8 +210,9 @@ mod tests {
         let root = DiracSpinor {
             components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         };
-        let s1 = GlobalSection::compute(&order, &[1, 2, 3], root.clone()).expect("compute one");
-        let s2 = GlobalSection::compute(&order, &[3, 2, 1], root).expect("compute two");
+        let s1 = GlobalSection::compute(&order, &[1, 2, 3], &root).expect("compute one");
+        let s2 = GlobalSection::compute(&order, &[3, 2, 1], &root).expect("compute two");
         assert!((s1.coherence_order - s2.coherence_order).abs() < 1e-12);
     }
 }
+
