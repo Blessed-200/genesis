@@ -21,17 +21,26 @@ pub struct CliffordEngram {
     pub retrieval_count: u32,
     /// Cycle at which this engram was encoded.
     pub encoded_at: u64,
+    /// Precomputed spectral projection used for fast resonance retrieval.
+    pub spectral_state: [f64; 16],
 }
 
 impl CliffordEngram {
     #[must_use]
-    pub fn new(blades: [f64; 16], causal_id: u64, vfe_weight: f64, cycle: u64) -> Self {
+    pub fn new(
+        blades: [f64; 16],
+        causal_id: u64,
+        vfe_weight: f64,
+        cycle: u64,
+        spectral_state: [f64; 16],
+    ) -> Self {
         Self {
             blades,
             causal_id,
             vfe_weight,
             retrieval_count: 0,
             encoded_at: cycle,
+            spectral_state,
         }
     }
 
@@ -58,6 +67,8 @@ pub struct EngramStore {
     decay_lambda: f64,
     /// Maximum engrams before pruning.
     capacity: usize,
+    /// Fixed lambda used for spectral precomputation.
+    spectral_lambda: f64,
 }
 
 impl EngramStore {
@@ -67,6 +78,7 @@ impl EngramStore {
             engrams: Vec::with_capacity(capacity),
             decay_lambda,
             capacity,
+            spectral_lambda: 1.0,
         }
     }
 
@@ -76,29 +88,33 @@ impl EngramStore {
         causal_id: u64,
         vfe_weight: f64,
         current_cycle: u64,
-    ) {
-        let engram = CliffordEngram::new(blades, causal_id, vfe_weight, current_cycle);
+    ) -> Result<(), GenesisError> {
+        let spectral_state =
+            DiracOperator::from_blades(&blades, self.spectral_lambda)?.apply(&blades)?;
+        let engram =
+            CliffordEngram::new(blades, causal_id, vfe_weight, current_cycle, spectral_state);
         let pos = self.engrams.partition_point(|e| e.causal_id < causal_id);
         self.engrams.insert(pos, engram);
         if self.engrams.len() > self.capacity {
             self.prune(current_cycle);
         }
+        Ok(())
     }
 
     pub fn pattern_complete(
         &mut self,
         partial_query: &[f64; 16],
-        lambda: f64,
+        _lambda: f64,
         current_cycle: u64,
     ) -> Result<Option<CliffordEngram>, GenesisError> {
         if self.engrams.is_empty() {
             return Ok(None);
         }
 
-        let query_dirac = DiracOperator::from_blades(partial_query, lambda)?;
+        let query_dirac = DiracOperator::from_blades(partial_query, self.spectral_lambda)?;
         let query_applied = query_dirac.apply(partial_query)?;
 
-        let mut best_score = f64::INFINITY;
+        let mut best_score = f64::NEG_INFINITY;
         let mut best_idx = None;
 
         for (idx, engram) in self.engrams.iter().enumerate() {
@@ -107,17 +123,21 @@ impl EngramStore {
                 continue;
             }
 
-            let engram_dirac = DiracOperator::from_blades(&engram.blades, lambda)?;
-            let engram_applied = engram_dirac.apply(&engram.blades)?;
-            let mut sq_sum = 0.0;
+            let mut dot = 0.0;
+            let mut query_norm_sq = 0.0;
+            let mut engram_norm_sq = 0.0;
             for i in 0..16 {
-                let d = query_applied[i] - engram_applied[i];
-                sq_sum += d * d;
+                let q = query_applied[i];
+                let e = engram.spectral_state[i];
+                dot += q * e;
+                query_norm_sq += q * q;
+                engram_norm_sq += e * e;
             }
-            let spectral_dist = sq_sum.sqrt();
-            let score = spectral_dist / (engram.strength() * decay).max(1e-12);
+            let denom = (query_norm_sq.sqrt() * engram_norm_sq.sqrt()).max(1e-12);
+            let constructive_interference = dot / denom;
+            let score = constructive_interference * (engram.strength() * decay);
 
-            if score < best_score {
+            if score > best_score {
                 best_score = score;
                 best_idx = Some(idx);
             }
@@ -156,6 +176,10 @@ impl EngramStore {
         self.engrams
             .retain(|e| e.decay(current_cycle, self.decay_lambda) * e.strength() > 1e-6);
         if self.engrams.len() > self.capacity {
+            if self.capacity == 0 {
+                self.engrams.clear();
+                return;
+            }
             self.engrams
                 .select_nth_unstable_by(self.capacity - 1, |a, b| {
                     let sa = a.strength() * a.decay(current_cycle, self.decay_lambda);
@@ -183,9 +207,9 @@ mod tests {
     #[test]
     fn pattern_complete_finds_most_resonant_engram() {
         let mut store = EngramStore::new(16, 0.01);
-        store.encode(blades(0.2), 1, 1.0, 0);
-        store.encode(blades(1.0), 2, 2.0, 0);
-        store.encode(blades(2.0), 3, 1.0, 0);
+        store.encode(blades(0.2), 1, 1.0, 0).expect("encode");
+        store.encode(blades(1.0), 2, 2.0, 0).expect("encode");
+        store.encode(blades(2.0), 3, 1.0, 0).expect("encode");
         let q = blades(1.02);
         let recovered = store
             .pattern_complete(&q, 1.0, 5)
@@ -197,8 +221,8 @@ mod tests {
     #[test]
     fn high_vfe_engrams_survive_dream_cycle() {
         let mut store = EngramStore::new(8, 0.1);
-        store.encode(blades(0.5), 1, 10.0, 0);
-        store.encode(blades(0.6), 2, 0.01, 0);
+        store.encode(blades(0.5), 1, 10.0, 0).expect("encode");
+        store.encode(blades(0.6), 2, 0.01, 0).expect("encode");
         store.dream_cycle(1000);
         assert!(store.engrams.iter().any(|e| e.causal_id == 1));
         assert!(!store.engrams.iter().any(|e| e.causal_id == 2));
@@ -207,7 +231,7 @@ mod tests {
     #[test]
     fn retrieval_reinforces_engram() {
         let mut store = EngramStore::new(8, 0.001);
-        store.encode(blades(1.0), 7, 5.0, 0);
+        store.encode(blades(1.0), 7, 5.0, 0).expect("encode");
         let q = blades(1.0);
         let before = store.engrams[0].strength();
         let _ = store.pattern_complete(&q, 1.0, 1).expect("completion");
@@ -221,8 +245,8 @@ mod tests {
     fn decay_lambda_controls_forgetting_rate() {
         let mut slow = EngramStore::new(4, 0.01);
         let mut fast = EngramStore::new(4, 1.0);
-        slow.encode(blades(0.9), 10, 1.0, 0);
-        fast.encode(blades(0.9), 10, 1.0, 0);
+        slow.encode(blades(0.9), 10, 1.0, 0).expect("encode");
+        fast.encode(blades(0.9), 10, 1.0, 0).expect("encode");
 
         let slow_decay = slow.engrams[0].decay(10, slow.decay_lambda);
         let fast_decay = fast.engrams[0].decay(10, fast.decay_lambda);
@@ -232,10 +256,10 @@ mod tests {
     #[test]
     fn prune_over_capacity_keeps_highest_weighted_engrams() {
         let mut store = EngramStore::new(3, 0.0);
-        store.encode(blades(0.0), 1, 1.0, 0);
-        store.encode(blades(0.0), 2, 5.0, 0);
-        store.encode(blades(0.0), 3, 3.0, 0);
-        store.encode(blades(0.0), 4, 7.0, 0);
+        store.encode(blades(0.0), 1, 1.0, 0).expect("encode");
+        store.encode(blades(0.0), 2, 5.0, 0).expect("encode");
+        store.encode(blades(0.0), 3, 3.0, 0).expect("encode");
+        store.encode(blades(0.0), 4, 7.0, 0).expect("encode");
         store.dream_cycle(0);
 
         let survivors = store.causal_ids();
@@ -245,9 +269,9 @@ mod tests {
     #[test]
     fn prune_preserves_causal_order_after_partition() {
         let mut store = EngramStore::new(2, 0.0);
-        store.encode(blades(0.0), 50, 2.0, 0);
-        store.encode(blades(0.0), 10, 9.0, 0);
-        store.encode(blades(0.0), 30, 8.0, 0);
+        store.encode(blades(0.0), 50, 2.0, 0).expect("encode");
+        store.encode(blades(0.0), 10, 9.0, 0).expect("encode");
+        store.encode(blades(0.0), 30, 8.0, 0).expect("encode");
         store.dream_cycle(0);
         assert_eq!(store.causal_ids(), vec![10, 30]);
     }
@@ -255,9 +279,16 @@ mod tests {
     #[test]
     fn prune_removes_sub_threshold_even_under_capacity() {
         let mut store = EngramStore::new(8, 1.0);
-        store.encode(blades(0.0), 1, 1e-6, 0);
-        store.encode(blades(0.0), 2, 5.0, 0);
+        store.encode(blades(0.0), 1, 1e-6, 0).expect("encode");
+        store.encode(blades(0.0), 2, 5.0, 0).expect("encode");
         store.dream_cycle(20);
         assert_eq!(store.causal_ids(), vec![2]);
+    }
+
+    #[test]
+    fn zero_capacity_store_never_panics_and_keeps_no_engrams() {
+        let mut store = EngramStore::new(0, 0.1);
+        store.encode(blades(1.0), 1, 1.0, 0).expect("encode");
+        assert!(store.causal_ids().is_empty());
     }
 }
