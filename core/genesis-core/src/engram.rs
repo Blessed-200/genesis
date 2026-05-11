@@ -26,7 +26,13 @@ pub struct CliffordEngram {
 impl CliffordEngram {
     #[must_use]
     pub fn new(blades: [f64; 16], causal_id: u64, vfe_weight: f64, cycle: u64) -> Self {
-        Self { blades, causal_id, vfe_weight, retrieval_count: 0, encoded_at: cycle }
+        Self {
+            blades,
+            causal_id,
+            vfe_weight,
+            retrieval_count: 0,
+            encoded_at: cycle,
+        }
     }
 
     #[must_use]
@@ -57,10 +63,20 @@ pub struct EngramStore {
 impl EngramStore {
     #[must_use]
     pub fn new(capacity: usize, decay_lambda: f64) -> Self {
-        Self { engrams: Vec::with_capacity(capacity), decay_lambda, capacity }
+        Self {
+            engrams: Vec::with_capacity(capacity),
+            decay_lambda,
+            capacity,
+        }
     }
 
-    pub fn encode(&mut self, blades: [f64; 16], causal_id: u64, vfe_weight: f64, current_cycle: u64) {
+    pub fn encode(
+        &mut self,
+        blades: [f64; 16],
+        causal_id: u64,
+        vfe_weight: f64,
+        current_cycle: u64,
+    ) {
         let engram = CliffordEngram::new(blades, causal_id, vfe_weight, current_cycle);
         let pos = self.engrams.partition_point(|e| e.causal_id < causal_id);
         self.engrams.insert(pos, engram);
@@ -118,14 +134,34 @@ impl EngramStore {
         self.prune(current_cycle);
     }
 
+    #[must_use]
+    pub fn causal_ids(&self) -> Vec<u64> {
+        self.engrams.iter().map(|engram| engram.causal_id).collect()
+    }
+
+    #[must_use]
+    pub fn weighted_strengths(&self, current_cycle: u64) -> Vec<(u64, f64)> {
+        self.engrams
+            .iter()
+            .map(|engram| {
+                (
+                    engram.causal_id,
+                    engram.strength() * engram.decay(current_cycle, self.decay_lambda),
+                )
+            })
+            .collect()
+    }
+
     fn prune(&mut self, current_cycle: u64) {
-        self.engrams.retain(|e| e.decay(current_cycle, self.decay_lambda) * e.strength() > 1e-6);
+        self.engrams
+            .retain(|e| e.decay(current_cycle, self.decay_lambda) * e.strength() > 1e-6);
         if self.engrams.len() > self.capacity {
-            self.engrams.sort_unstable_by(|a, b| {
-                let sa = a.strength() * a.decay(current_cycle, self.decay_lambda);
-                let sb = b.strength() * b.decay(current_cycle, self.decay_lambda);
-                sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
-            });
+            self.engrams
+                .select_nth_unstable_by(self.capacity - 1, |a, b| {
+                    let sa = a.strength() * a.decay(current_cycle, self.decay_lambda);
+                    let sb = b.strength() * b.decay(current_cycle, self.decay_lambda);
+                    sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+                });
             self.engrams.truncate(self.capacity);
             self.engrams.sort_unstable_by_key(|e| e.causal_id);
         }
@@ -151,7 +187,10 @@ mod tests {
         store.encode(blades(1.0), 2, 2.0, 0);
         store.encode(blades(2.0), 3, 1.0, 0);
         let q = blades(1.02);
-        let recovered = store.pattern_complete(&q, 1.0, 5).expect("completion").expect("engram");
+        let recovered = store
+            .pattern_complete(&q, 1.0, 5)
+            .expect("completion")
+            .expect("engram");
         assert_eq!(recovered.causal_id, 2);
     }
 
@@ -188,5 +227,37 @@ mod tests {
         let slow_decay = slow.engrams[0].decay(10, slow.decay_lambda);
         let fast_decay = fast.engrams[0].decay(10, fast.decay_lambda);
         assert!(fast_decay < slow_decay);
+    }
+
+    #[test]
+    fn prune_over_capacity_keeps_highest_weighted_engrams() {
+        let mut store = EngramStore::new(3, 0.0);
+        store.encode(blades(0.0), 1, 1.0, 0);
+        store.encode(blades(0.0), 2, 5.0, 0);
+        store.encode(blades(0.0), 3, 3.0, 0);
+        store.encode(blades(0.0), 4, 7.0, 0);
+        store.dream_cycle(0);
+
+        let survivors = store.causal_ids();
+        assert_eq!(survivors, vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn prune_preserves_causal_order_after_partition() {
+        let mut store = EngramStore::new(2, 0.0);
+        store.encode(blades(0.0), 50, 2.0, 0);
+        store.encode(blades(0.0), 10, 9.0, 0);
+        store.encode(blades(0.0), 30, 8.0, 0);
+        store.dream_cycle(0);
+        assert_eq!(store.causal_ids(), vec![10, 30]);
+    }
+
+    #[test]
+    fn prune_removes_sub_threshold_even_under_capacity() {
+        let mut store = EngramStore::new(8, 1.0);
+        store.encode(blades(0.0), 1, 1e-6, 0);
+        store.encode(blades(0.0), 2, 5.0, 0);
+        store.dream_cycle(20);
+        assert_eq!(store.causal_ids(), vec![2]);
     }
 }
