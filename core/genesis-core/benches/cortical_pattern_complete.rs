@@ -18,7 +18,7 @@ fn bench_pattern_complete(c: &mut Criterion) {
             .encode(rand_blades(i), i + 1, 1.0 + (i % 10) as f64, 0)
             .expect("encode");
     }
-    store.dream_cycle(1).expect("dream cycle");
+    store.dream_cycle(1);
     let query = rand_blades(42);
 
     c.bench_function("cortical_pattern_complete_100k", |b| {

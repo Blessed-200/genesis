@@ -18,7 +18,7 @@ pub struct CliffordEngram {
 
 impl CliffordEngram {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         blades: [f64; 16],
         causal_id: u64,
         vfe_weight: f64,
@@ -36,17 +36,19 @@ impl CliffordEngram {
     }
     #[must_use]
     pub fn strength(&self) -> f64 {
-        self.vfe_weight * (1.0 + 0.1 * f64::from(self.retrieval_count))
+        self.vfe_weight * 0.1_f64.mul_add(f64::from(self.retrieval_count), 1.0)
     }
     #[must_use]
+    #[allow(clippy::cast_precision_loss)]
     pub fn decay(&self, current_cycle: u64, lambda: f64) -> f64 {
         let delta = current_cycle.saturating_sub(self.encoded_at) as f64;
         (-lambda * delta / self.vfe_weight.max(1e-6)).exp()
     }
 }
 
-/// SoA cortical long-term memory optimized for contiguous SIMD-friendly scans.
+/// `SoA` cortical long-term memory optimized for contiguous SIMD-friendly scans.
 pub struct CorticalStore {
+    pub blades_flat: Vec<f64>,
     pub spectral_states_flat: Vec<f64>,
     pub decays: Vec<f64>,
     pub strengths: Vec<f64>,
@@ -57,6 +59,7 @@ impl CorticalStore {
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
+            blades_flat: Vec::with_capacity(capacity * 16),
             spectral_states_flat: Vec::with_capacity(capacity * 16),
             decays: Vec::with_capacity(capacity),
             strengths: Vec::with_capacity(capacity),
@@ -65,14 +68,27 @@ impl CorticalStore {
     }
 
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.causal_ids.len()
     }
 
-    pub fn push(&mut self, causal_id: u64, spectral: [f64; 16], strength: f64, decay: f64) {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.causal_ids.is_empty()
+    }
+
+    pub fn push(
+        &mut self,
+        causal_id: u64,
+        blades: [f64; 16],
+        spectral: [f64; 16],
+        strength: f64,
+        decay: f64,
+    ) {
         self.causal_ids.push(causal_id);
         self.strengths.push(strength);
         self.decays.push(decay);
+        self.blades_flat.extend_from_slice(&blades);
         self.spectral_states_flat.extend_from_slice(&spectral);
     }
 }
@@ -83,9 +99,9 @@ pub struct EngramStore {
     decay_lambda: f64,
     capacity: usize,
     spectral_lambda: f64,
-    // Last query blades and last normalized spectral query state.
-    // Invalidated by replacing the tuple whenever the query changes.
-    cached_query_dirac: Option<([f64; 16], [f64; 16])>,
+    // Last query blades, spectral-lambda bit pattern, and normalized spectral query state.
+    // Invalidated by replacing the tuple whenever the query or lambda changes.
+    cached_query_dirac: Option<([f64; 16], u64, [f64; 16])>,
 }
 
 impl EngramStore {
@@ -101,6 +117,12 @@ impl EngramStore {
         }
     }
 
+    /// Encodes an episodic engram with its own spectral representation.
+    ///
+    /// AX-ID: AXIOMA-003, `H_información` (`LEY_FUNDACIONAL` §3.3)
+    ///
+    /// # Errors
+    /// Returns `GenesisError` when Dirac construction, application, or normalization fails.
     pub fn encode(
         &mut self,
         blades: [f64; 16],
@@ -121,23 +143,34 @@ impl EngramStore {
         Ok(())
     }
 
+    /// Retrieves the most resonant episodic or cortical engram for a partial query.
+    ///
+    /// AX-ID: AXIOMA-003, `H_información` (`LEY_FUNDACIONAL` §3.3)
+    ///
+    /// # Errors
+    /// Returns `GenesisError` when query spectral construction or normalization fails.
+    #[allow(clippy::needless_range_loop)]
     pub fn pattern_complete(
         &mut self,
         partial_query: &[f64; 16],
         _lambda: f64,
         current_cycle: u64,
     ) -> Result<Option<CliffordEngram>, GenesisError> {
-        if self.episodic_buffer.is_empty() && self.cortical_store.len() == 0 {
+        if self.episodic_buffer.is_empty() && self.cortical_store.is_empty() {
             return Ok(None);
         }
-        let query = if let Some((cached_blades, cached_state)) = self.cached_query_dirac {
-            if cached_blades == *partial_query {
+        let lambda_bits = self.spectral_lambda.to_bits();
+        let query = if let Some((cached_blades, cached_lambda_bits, cached_state)) =
+            self.cached_query_dirac
+        {
+            if blades_equal_bits(&cached_blades, partial_query) && cached_lambda_bits == lambda_bits
+            {
                 cached_state
             } else {
-                self.compute_and_cache_query(partial_query)?
+                self.compute_and_cache_query(partial_query, lambda_bits)?
             }
         } else {
-            self.compute_and_cache_query(partial_query)?
+            self.compute_and_cache_query(partial_query, lambda_bits)?
         };
 
         let mut best_score = f64::NEG_INFINITY;
@@ -180,10 +213,12 @@ impl EngramStore {
         }
         if let Some(idx) = best_cortical {
             let base = idx * 16;
+            let mut blades = [0.0; 16];
             let mut spectral = [0.0; 16];
+            blades.copy_from_slice(&self.cortical_store.blades_flat[base..base + 16]);
             spectral.copy_from_slice(&self.cortical_store.spectral_states_flat[base..base + 16]);
             return Ok(Some(CliffordEngram::new(
-                [0.0; 16],
+                blades,
                 self.cortical_store.causal_ids[idx],
                 self.cortical_store.strengths[idx],
                 current_cycle,
@@ -193,9 +228,9 @@ impl EngramStore {
         Ok(None)
     }
 
-    pub fn dream_cycle(&mut self, current_cycle: u64) -> Result<(), GenesisError> {
+    pub fn dream_cycle(&mut self, current_cycle: u64) {
         self.prune(current_cycle);
-        self.consolidate_to_cortex(current_cycle)
+        self.consolidate_to_cortex(current_cycle);
     }
 
     fn prune(&mut self, current_cycle: u64) {
@@ -213,18 +248,18 @@ impl EngramStore {
         self.episodic_buffer.sort_unstable_by_key(|e| e.causal_id);
     }
 
-    fn consolidate_to_cortex(&mut self, _current_cycle: u64) -> Result<(), GenesisError> {
+    fn consolidate_to_cortex(&mut self, _current_cycle: u64) {
         if self.episodic_buffer.len() < 2 {
-            return Ok(());
+            return;
         }
         let mut consumed = vec![false; self.episodic_buffer.len()];
+        let mut pending_cortical = Vec::new();
         for i in 0..self.episodic_buffer.len() {
             if consumed[i] {
                 continue;
             }
             let mut cluster = vec![i];
-            consumed[i] = true;
-            for (j, flag) in consumed.iter_mut().enumerate().skip(i + 1) {
+            for (j, flag) in consumed.iter().enumerate().skip(i + 1) {
                 if *flag {
                     continue;
                 }
@@ -238,12 +273,13 @@ impl EngramStore {
                 if reson >= RESONANCE_COLLAPSE_THRESHOLD && causal_gap <= MAX_CAUSAL_GAP_FOR_FUSION
                 {
                     cluster.push(j);
-                    *flag = true;
                 }
             }
             if cluster.len() <= 1 {
                 continue;
             }
+
+            let mut blades = [0.0; 16];
             let mut spectral = [0.0; 16];
             let mut total_strength = 0.0;
             let mut causal_id = u64::MAX;
@@ -252,13 +288,25 @@ impl EngramStore {
                 let s = e.strength();
                 total_strength += s;
                 causal_id = causal_id.min(e.causal_id);
-                for (k, val) in spectral.iter_mut().enumerate() {
-                    *val += e.spectral_state[k] * s;
+                for k in 0..16 {
+                    blades[k] += e.blades[k] * s;
+                    spectral[k] += e.spectral_state[k] * s;
                 }
             }
-            normalize_unit(&mut spectral)?;
+
+            if normalize_unit(&mut blades).is_err() || normalize_unit(&mut spectral).is_err() {
+                continue;
+            }
+
+            pending_cortical.push((causal_id, blades, spectral, total_strength, 1.0));
+            for &idx in &cluster {
+                consumed[idx] = true;
+            }
+        }
+
+        for (causal_id, blades, spectral, total_strength, decay) in pending_cortical {
             self.cortical_store
-                .push(causal_id, spectral, total_strength, 1.0);
+                .push(causal_id, blades, spectral, total_strength, decay);
         }
         self.episodic_buffer = self
             .episodic_buffer
@@ -267,7 +315,6 @@ impl EngramStore {
             .filter(|(i, _)| !consumed[*i])
             .map(|(_, e)| e.clone())
             .collect();
-        Ok(())
     }
 
     /// Predicts the next cognitive state by applying the most resonant memory abstraction.
@@ -327,7 +374,13 @@ impl EngramStore {
     ///
     /// AX-ID: AXIOMA-003, `H_información` (`LEY_FUNDACIONAL` §3.3)
     #[must_use]
+    #[allow(clippy::needless_range_loop)]
     pub fn trauma_repulsion(&self, proposed_future: &[f64; 16], current_cycle: u64) -> f64 {
+        let mut normalized_future = *proposed_future;
+        if normalize_unit(&mut normalized_future).is_err() {
+            return 0.0;
+        }
+
         let mut total_repulsion = 0.0_f64;
         for engram in &self.episodic_buffer {
             if engram.vfe_weight < TRAUMA_VFE_THRESHOLD {
@@ -339,7 +392,7 @@ impl EngramStore {
             }
             let mut similarity = 0.0_f64;
             for i in 0..16 {
-                similarity += engram.spectral_state[i] * proposed_future[i];
+                similarity += engram.spectral_state[i] * normalized_future[i];
             }
             if similarity > 0.0 {
                 total_repulsion += similarity * engram.vfe_weight * decay;
@@ -351,6 +404,7 @@ impl EngramStore {
     fn compute_and_cache_query(
         &mut self,
         partial_query: &[f64; 16],
+        lambda_bits: u64,
     ) -> Result<[f64; 16], GenesisError> {
         // HOT PATH: O(1) per pattern-completion call. The query Dirac operator is
         // constructed once outside all memory scans and cached for repeated queries;
@@ -358,7 +412,7 @@ impl EngramStore {
         let mut query = DiracOperator::from_blades(partial_query, self.spectral_lambda)?
             .apply(partial_query)?;
         normalize_unit(&mut query)?;
-        self.cached_query_dirac = Some((*partial_query, query));
+        self.cached_query_dirac = Some((*partial_query, lambda_bits, query));
         Ok(query)
     }
 
@@ -398,9 +452,18 @@ impl EngramStore {
     }
 
     #[must_use]
-    pub fn cortical_len(&self) -> usize {
+    pub const fn cortical_len(&self) -> usize {
         self.cortical_store.len()
     }
+}
+
+fn blades_equal_bits(a: &[f64; 16], b: &[f64; 16]) -> bool {
+    for i in 0..16 {
+        if a[i].to_bits() != b[i].to_bits() {
+            return false;
+        }
+    }
+    true
 }
 
 fn cosine_dot(a: &[f64; 16], b: &[f64; 16]) -> f64 {
@@ -479,7 +542,7 @@ mod tests {
             b[8] += (i as f64) * 1e-6;
             store.encode(b, i + 1, 10.0, 0).expect("encode");
         }
-        store.dream_cycle(1).expect("dream cycle");
+        store.dream_cycle(1);
         assert!(store.cortical_len() >= 1);
         assert!(store.weighted_strengths(1).iter().any(|(_, w)| *w > 500.0));
     }
@@ -497,6 +560,32 @@ mod tests {
 
         let norm_sq: f64 = predicted.iter().map(|value| value * value).sum();
         assert!(norm_sq > 1e-12);
+    }
+
+    #[test]
+    fn cortical_completion_preserves_blades_for_prediction() {
+        let mut store = EngramStore::new(16, 0.001);
+        store.encode(blades(1.0), 1, 10.0, 0).expect("encode first");
+        store
+            .encode(blades(1.0001), 2, 10.0, 0)
+            .expect("encode second");
+
+        store.dream_cycle(1);
+        assert_eq!(store.cortical_len(), 1);
+
+        let recovered = store
+            .pattern_complete(&blades(1.0), 1.0, 2)
+            .expect("completion")
+            .expect("cortical engram");
+        let blade_norm_sq: f64 = recovered.blades.iter().map(|value| value * value).sum();
+        assert!(blade_norm_sq > 1e-12);
+
+        let predicted = store
+            .predict_next_state(&blades(1.0), 2)
+            .expect("prediction")
+            .expect("predicted state");
+        let predicted_norm_sq: f64 = predicted.iter().map(|value| value * value).sum();
+        assert!(predicted_norm_sq > 1e-12);
     }
 
     #[test]
@@ -547,6 +636,54 @@ mod tests {
     }
 
     #[test]
+    fn trauma_repulsion_is_scale_invariant_for_proposed_future() {
+        let mut store = EngramStore::new(16, 0.01);
+        store.encode(blades(1.0), 1, 10.0, 0).expect("encode");
+        let similar = store.episodic_buffer[0].spectral_state;
+        let scaled = similar.map(|value| value * 100.0);
+
+        let unit_repulsion = store.trauma_repulsion(&similar, 1);
+        let scaled_repulsion = store.trauma_repulsion(&scaled, 1);
+
+        assert!((unit_repulsion - scaled_repulsion).abs() < 1e-12);
+    }
+
+    #[test]
+    fn query_cache_invalidates_when_lambda_bits_change() {
+        let mut store = EngramStore::new(16, 0.01);
+        store.encode(blades(1.0), 1, 1.0, 0).expect("encode");
+
+        let query = blades(1.0);
+        store
+            .pattern_complete(&query, 1.0, 1)
+            .expect("first completion");
+        let (_, first_lambda_bits, _) = store.cached_query_dirac.expect("cached query");
+        assert_eq!(first_lambda_bits, 1.0_f64.to_bits());
+
+        store.spectral_lambda = 2.0;
+        store
+            .pattern_complete(&query, 1.0, 1)
+            .expect("second completion");
+        let (_, second_lambda_bits, _) = store.cached_query_dirac.expect("refreshed cache");
+        assert_eq!(second_lambda_bits, 2.0_f64.to_bits());
+    }
+
+    #[test]
+    fn degenerate_cortical_blades_do_not_drop_episodic_cluster() {
+        let mut store = EngramStore::new(16, 0.001);
+        store.encode(blades(1.0), 1, 1.0, 0).expect("encode first");
+        store
+            .encode(blades(-1.0), 2, 1.0, 0)
+            .expect("encode second");
+        store.episodic_buffer[1].spectral_state = store.episodic_buffer[0].spectral_state;
+
+        store.dream_cycle(1);
+
+        assert_eq!(store.cortical_len(), 0);
+        assert_eq!(store.causal_ids(), vec![1, 2]);
+    }
+
+    #[test]
     fn causal_gap_prevents_acausal_fusion() {
         let mut store = EngramStore::new(16, 0.001);
         let pattern = blades(1.0);
@@ -555,7 +692,7 @@ mod tests {
             .encode(pattern, 10_000, 10.0, 0)
             .expect("encode second");
 
-        store.dream_cycle(1).expect("dream cycle");
+        store.dream_cycle(1);
 
         assert_eq!(store.cortical_len(), 0);
     }
@@ -564,7 +701,7 @@ mod tests {
     fn zero_capacity_store_never_panics_and_keeps_no_episodic() {
         let mut store = EngramStore::new(0, 0.1);
         store.encode(blades(1.0), 1, 1.0, 0).expect("encode");
-        store.dream_cycle(0).expect("dream cycle");
+        store.dream_cycle(0);
         assert!(store.causal_ids().is_empty() || store.cortical_len() > 0);
     }
 }

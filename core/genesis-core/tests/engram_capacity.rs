@@ -16,7 +16,7 @@ fn hundred_similar_episodic_collapse_to_single_cortical_abstraction() {
         b[8] += (i as f64) * 1e-7;
         store.encode(b, i + 1, 5.0, 0).expect("encode");
     }
-    store.dream_cycle(1).expect("dream cycle");
+    store.dream_cycle(1);
 
     assert_eq!(store.cortical_len(), 1);
     let strengths = store.weighted_strengths(1);
@@ -31,7 +31,7 @@ fn capacity_stress_keeps_strongest_engrams() {
             .encode(blades((i + 1) as f64), i, (i + 1) as f64, 0)
             .expect("encode");
     }
-    store.dream_cycle(0).expect("dream cycle");
+    store.dream_cycle(0);
     let ids = store.causal_ids();
     assert!(!ids.is_empty());
 }
