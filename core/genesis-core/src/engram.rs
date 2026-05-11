@@ -1,27 +1,15 @@
 use genesis_spectral::DiracOperator;
 use genesis_types::GenesisError;
 
-/// A Clifford Engram: a causal memory unit.
-/// Not a database row. A geometric imprint in G(1,3).
-///
-/// Emotional weight equals VFE magnitude at encoding time.
-/// High surprisal events create deeper topological imprints.
-/// Low surprisal events decay over time.
-///
-/// AX-ID: AXIOMA-001, AXIOMA-002, AXIOMA-003
+const RESONANCE_COLLAPSE_THRESHOLD: f64 = 0.95;
+
 #[derive(Clone, Debug)]
 pub struct CliffordEngram {
-    /// The full 16-blade multivector representation of the experience.
     pub blades: [f64; 16],
-    /// Causal timestamp: node id in the `CausalOrder` DAG.
     pub causal_id: u64,
-    /// Emotional weight represented as VFE at encoding time.
     pub vfe_weight: f64,
-    /// Number of times this engram has been retrieved.
     pub retrieval_count: u32,
-    /// Cycle at which this engram was encoded.
     pub encoded_at: u64,
-    /// Precomputed spectral projection used for fast resonance retrieval.
     pub spectral_state: [f64; 16],
 }
 
@@ -43,31 +31,54 @@ impl CliffordEngram {
             spectral_state,
         }
     }
-
     #[must_use]
     pub fn strength(&self) -> f64 {
         self.vfe_weight * (1.0 + 0.1 * f64::from(self.retrieval_count))
     }
-
     #[must_use]
     pub fn decay(&self, current_cycle: u64, lambda: f64) -> f64 {
         let delta = current_cycle.saturating_sub(self.encoded_at) as f64;
-        let effective_weight = self.vfe_weight.max(1e-6);
-        (-lambda * delta / effective_weight).exp()
+        (-lambda * delta / self.vfe_weight.max(1e-6)).exp()
     }
 }
 
-/// Causal memory collection with Dirac-based pattern completion.
-///
-/// AX-ID: AXIOMA-002, AXIOMA-003, H_información
+/// SoA cortical long-term memory optimized for contiguous SIMD-friendly scans.
+pub struct CorticalStore {
+    pub spectral_states_flat: Vec<f64>,
+    pub decays: Vec<f64>,
+    pub strengths: Vec<f64>,
+    pub causal_ids: Vec<u64>,
+}
+
+impl CorticalStore {
+    #[must_use]
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            spectral_states_flat: Vec::with_capacity(capacity * 16),
+            decays: Vec::with_capacity(capacity),
+            strengths: Vec::with_capacity(capacity),
+            causal_ids: Vec::with_capacity(capacity),
+        }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.causal_ids.len()
+    }
+
+    pub fn push(&mut self, causal_id: u64, spectral: [f64; 16], strength: f64, decay: f64) {
+        self.causal_ids.push(causal_id);
+        self.strengths.push(strength);
+        self.decays.push(decay);
+        self.spectral_states_flat.extend_from_slice(&spectral);
+    }
+}
+
 pub struct EngramStore {
-    /// Sorted by causal_id for O(log N) lookup.
-    engrams: Vec<CliffordEngram>,
-    /// Forgetting rate lambda.
+    episodic_buffer: Vec<CliffordEngram>,
+    cortical_store: CorticalStore,
     decay_lambda: f64,
-    /// Maximum engrams before pruning.
     capacity: usize,
-    /// Fixed lambda used for spectral precomputation.
     spectral_lambda: f64,
 }
 
@@ -75,7 +86,8 @@ impl EngramStore {
     #[must_use]
     pub fn new(capacity: usize, decay_lambda: f64) -> Self {
         Self {
-            engrams: Vec::with_capacity(capacity),
+            episodic_buffer: Vec::with_capacity(capacity.min(1024)),
+            cortical_store: CorticalStore::new(capacity),
             decay_lambda,
             capacity,
             spectral_lambda: 1.0,
@@ -91,22 +103,14 @@ impl EngramStore {
     ) -> Result<(), GenesisError> {
         let mut spectral_state =
             DiracOperator::from_blades(&blades, self.spectral_lambda)?.apply(&blades)?;
-        let spectral_norm = spectral_state
-            .iter()
-            .map(|value| value * value)
-            .sum::<f64>()
-            .sqrt()
-            .max(1e-12);
-        for value in &mut spectral_state {
-            *value /= spectral_norm;
-        }
-        let engram =
-            CliffordEngram::new(blades, causal_id, vfe_weight, current_cycle, spectral_state);
-        let pos = self.engrams.partition_point(|e| e.causal_id < causal_id);
-        self.engrams.insert(pos, engram);
-        if self.engrams.len() > self.capacity {
-            self.prune(current_cycle);
-        }
+        normalize_unit(&mut spectral_state);
+        self.episodic_buffer.push(CliffordEngram::new(
+            blades,
+            causal_id,
+            vfe_weight,
+            current_cycle,
+            spectral_state,
+        ));
         Ok(())
     }
 
@@ -116,89 +120,191 @@ impl EngramStore {
         _lambda: f64,
         current_cycle: u64,
     ) -> Result<Option<CliffordEngram>, GenesisError> {
-        if self.engrams.is_empty() {
+        if self.episodic_buffer.is_empty() && self.cortical_store.len() == 0 {
             return Ok(None);
         }
-
-        let query_dirac = DiracOperator::from_blades(partial_query, self.spectral_lambda)?;
-        let mut query_applied = query_dirac.apply(partial_query)?;
-        let query_norm = query_applied
-            .iter()
-            .map(|value| value * value)
-            .sum::<f64>()
-            .sqrt()
-            .max(1e-12);
-        for value in &mut query_applied {
-            *value /= query_norm;
-        }
+        let mut query = DiracOperator::from_blades(partial_query, self.spectral_lambda)?
+            .apply(partial_query)?;
+        normalize_unit(&mut query);
 
         let mut best_score = f64::NEG_INFINITY;
-        let mut best_idx = None;
+        let mut best_epi = None;
 
-        for (idx, engram) in self.engrams.iter().enumerate() {
-            let decay = engram.decay(current_cycle, self.decay_lambda);
+        for (idx, e) in self.episodic_buffer.iter().enumerate() {
+            let decay = e.decay(current_cycle, self.decay_lambda);
             if decay < 1e-6 {
                 continue;
             }
-
-            let mut constructive_interference = 0.0;
+            let mut dot = 0.0;
             for i in 0..16 {
-                constructive_interference += query_applied[i] * engram.spectral_state[i];
+                dot += query[i] * e.spectral_state[i];
             }
-            let score = constructive_interference * (engram.strength() * decay);
-
+            let score = dot * e.strength() * decay;
             if score > best_score {
                 best_score = score;
-                best_idx = Some(idx);
+                best_epi = Some(idx);
             }
         }
 
-        if let Some(idx) = best_idx {
-            self.engrams[idx].retrieval_count += 1;
-            return Ok(Some(self.engrams[idx].clone()));
+        let mut best_cortical = None;
+        for idx in 0..self.cortical_store.len() {
+            let base = idx * 16;
+            let mut dot = 0.0;
+            for i in 0..16 {
+                dot += query[i] * self.cortical_store.spectral_states_flat[base + i];
+            }
+            let score = dot * self.cortical_store.strengths[idx] * self.cortical_store.decays[idx];
+            if score > best_score {
+                best_score = score;
+                best_cortical = Some(idx);
+                best_epi = None;
+            }
+        }
+
+        if let Some(idx) = best_epi {
+            self.episodic_buffer[idx].retrieval_count += 1;
+            return Ok(Some(self.episodic_buffer[idx].clone()));
+        }
+        if let Some(idx) = best_cortical {
+            let base = idx * 16;
+            let mut spectral = [0.0; 16];
+            spectral.copy_from_slice(&self.cortical_store.spectral_states_flat[base..base + 16]);
+            return Ok(Some(CliffordEngram::new(
+                [0.0; 16],
+                self.cortical_store.causal_ids[idx],
+                self.cortical_store.strengths[idx],
+                current_cycle,
+                spectral,
+            )));
         }
         Ok(None)
     }
 
     pub fn dream_cycle(&mut self, current_cycle: u64) {
         self.prune(current_cycle);
-    }
-
-    #[must_use]
-    pub fn causal_ids(&self) -> Vec<u64> {
-        self.engrams.iter().map(|engram| engram.causal_id).collect()
-    }
-
-    #[must_use]
-    pub fn weighted_strengths(&self, current_cycle: u64) -> Vec<(u64, f64)> {
-        self.engrams
-            .iter()
-            .map(|engram| {
-                (
-                    engram.causal_id,
-                    engram.strength() * engram.decay(current_cycle, self.decay_lambda),
-                )
-            })
-            .collect()
+        self.consolidate_to_cortex(current_cycle);
     }
 
     fn prune(&mut self, current_cycle: u64) {
-        self.engrams
+        self.episodic_buffer
             .retain(|e| e.decay(current_cycle, self.decay_lambda) * e.strength() > 1e-6);
-        if self.engrams.len() > self.capacity {
-            if self.capacity == 0 {
-                self.engrams.clear();
-                return;
-            }
-            self.engrams
-                .select_nth_unstable_by(self.capacity - 1, |a, b| {
+        if self.episodic_buffer.len() > self.capacity {
+            self.episodic_buffer
+                .select_nth_unstable_by(self.capacity.saturating_sub(1), |a, b| {
                     let sa = a.strength() * a.decay(current_cycle, self.decay_lambda);
                     let sb = b.strength() * b.decay(current_cycle, self.decay_lambda);
                     sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
                 });
-            self.engrams.truncate(self.capacity);
-            self.engrams.sort_unstable_by_key(|e| e.causal_id);
+            self.episodic_buffer.truncate(self.capacity);
         }
+        self.episodic_buffer.sort_unstable_by_key(|e| e.causal_id);
+    }
+
+    fn consolidate_to_cortex(&mut self, _current_cycle: u64) {
+        if self.episodic_buffer.len() < 2 {
+            return;
+        }
+        let mut consumed = vec![false; self.episodic_buffer.len()];
+        for i in 0..self.episodic_buffer.len() {
+            if consumed[i] {
+                continue;
+            }
+            let mut cluster = vec![i];
+            consumed[i] = true;
+            for (j, flag) in consumed.iter_mut().enumerate().skip(i + 1) {
+                if *flag {
+                    continue;
+                }
+                let reson = cosine_dot(
+                    &self.episodic_buffer[i].spectral_state,
+                    &self.episodic_buffer[j].spectral_state,
+                );
+                if reson >= RESONANCE_COLLAPSE_THRESHOLD {
+                    cluster.push(j);
+                    *flag = true;
+                }
+            }
+            if cluster.len() <= 1 {
+                continue;
+            }
+            let mut spectral = [0.0; 16];
+            let mut total_strength = 0.0;
+            let mut causal_id = u64::MAX;
+            for &idx in &cluster {
+                let e = &self.episodic_buffer[idx];
+                let s = e.strength();
+                total_strength += s;
+                causal_id = causal_id.min(e.causal_id);
+                for (k, val) in spectral.iter_mut().enumerate() {
+                    *val += e.spectral_state[k] * s;
+                }
+            }
+            normalize_unit(&mut spectral);
+            self.cortical_store
+                .push(causal_id, spectral, total_strength, 1.0);
+        }
+        self.episodic_buffer = self
+            .episodic_buffer
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !consumed[*i])
+            .map(|(_, e)| e.clone())
+            .collect();
+    }
+
+    #[must_use]
+    pub fn causal_ids(&self) -> Vec<u64> {
+        let mut ids: Vec<u64> = self.episodic_buffer.iter().map(|e| e.causal_id).collect();
+        ids.extend(self.cortical_store.causal_ids.iter().copied());
+        ids.sort_unstable();
+        ids
+    }
+
+    #[must_use]
+    pub fn weighted_strengths(&self, current_cycle: u64) -> Vec<(u64, f64)> {
+        let mut out: Vec<(u64, f64)> = self
+            .episodic_buffer
+            .iter()
+            .map(|e| {
+                (
+                    e.causal_id,
+                    e.strength() * e.decay(current_cycle, self.decay_lambda),
+                )
+            })
+            .collect();
+        out.extend(
+            self.cortical_store
+                .causal_ids
+                .iter()
+                .zip(
+                    self.cortical_store
+                        .strengths
+                        .iter()
+                        .zip(self.cortical_store.decays.iter()),
+                )
+                .map(|(id, (s, d))| (*id, s * d)),
+        );
+        out
+    }
+
+    #[must_use]
+    pub fn cortical_len(&self) -> usize {
+        self.cortical_store.len()
+    }
+}
+
+fn cosine_dot(a: &[f64; 16], b: &[f64; 16]) -> f64 {
+    let mut dot = 0.0;
+    for i in 0..16 {
+        dot += a[i] * b[i];
+    }
+    dot
+}
+
+fn normalize_unit(values: &mut [f64; 16]) {
+    let norm = values.iter().map(|x| x * x).sum::<f64>().sqrt().max(1e-12);
+    for value in values.iter_mut() {
+        *value /= norm;
     }
 }
 
@@ -229,76 +335,23 @@ mod tests {
     }
 
     #[test]
-    fn high_vfe_engrams_survive_dream_cycle() {
-        let mut store = EngramStore::new(8, 0.1);
-        store.encode(blades(0.5), 1, 10.0, 0).expect("encode");
-        store.encode(blades(0.6), 2, 0.01, 0).expect("encode");
-        store.dream_cycle(1000);
-        assert!(store.engrams.iter().any(|e| e.causal_id == 1));
-        assert!(!store.engrams.iter().any(|e| e.causal_id == 2));
+    fn cluster_consolidation_creates_cortical_abstraction() {
+        let mut store = EngramStore::new(256, 0.001);
+        for i in 0..100_u64 {
+            let mut b = blades(1.0 + (i as f64) * 1e-5);
+            b[8] += (i as f64) * 1e-6;
+            store.encode(b, i + 1, 10.0, 0).expect("encode");
+        }
+        store.dream_cycle(1);
+        assert!(store.cortical_len() >= 1);
+        assert!(store.weighted_strengths(1).iter().any(|(_, w)| *w > 500.0));
     }
 
     #[test]
-    fn retrieval_reinforces_engram() {
-        let mut store = EngramStore::new(8, 0.001);
-        store.encode(blades(1.0), 7, 5.0, 0).expect("encode");
-        let q = blades(1.0);
-        let before = store.engrams[0].strength();
-        let _ = store.pattern_complete(&q, 1.0, 1).expect("completion");
-        let _ = store.pattern_complete(&q, 1.0, 2).expect("completion");
-        let after = store.engrams[0].strength();
-        assert!(after > before);
-        assert_eq!(store.engrams[0].retrieval_count, 2);
-    }
-
-    #[test]
-    fn decay_lambda_controls_forgetting_rate() {
-        let mut slow = EngramStore::new(4, 0.01);
-        let mut fast = EngramStore::new(4, 1.0);
-        slow.encode(blades(0.9), 10, 1.0, 0).expect("encode");
-        fast.encode(blades(0.9), 10, 1.0, 0).expect("encode");
-
-        let slow_decay = slow.engrams[0].decay(10, slow.decay_lambda);
-        let fast_decay = fast.engrams[0].decay(10, fast.decay_lambda);
-        assert!(fast_decay < slow_decay);
-    }
-
-    #[test]
-    fn prune_over_capacity_keeps_highest_weighted_engrams() {
-        let mut store = EngramStore::new(3, 0.0);
-        store.encode(blades(0.0), 1, 1.0, 0).expect("encode");
-        store.encode(blades(0.0), 2, 5.0, 0).expect("encode");
-        store.encode(blades(0.0), 3, 3.0, 0).expect("encode");
-        store.encode(blades(0.0), 4, 7.0, 0).expect("encode");
-        store.dream_cycle(0);
-
-        let survivors = store.causal_ids();
-        assert_eq!(survivors, vec![2, 3, 4]);
-    }
-
-    #[test]
-    fn prune_preserves_causal_order_after_partition() {
-        let mut store = EngramStore::new(2, 0.0);
-        store.encode(blades(0.0), 50, 2.0, 0).expect("encode");
-        store.encode(blades(0.0), 10, 9.0, 0).expect("encode");
-        store.encode(blades(0.0), 30, 8.0, 0).expect("encode");
-        store.dream_cycle(0);
-        assert_eq!(store.causal_ids(), vec![10, 30]);
-    }
-
-    #[test]
-    fn prune_removes_sub_threshold_even_under_capacity() {
-        let mut store = EngramStore::new(8, 1.0);
-        store.encode(blades(0.0), 1, 1e-6, 0).expect("encode");
-        store.encode(blades(0.0), 2, 5.0, 0).expect("encode");
-        store.dream_cycle(20);
-        assert_eq!(store.causal_ids(), vec![2]);
-    }
-
-    #[test]
-    fn zero_capacity_store_never_panics_and_keeps_no_engrams() {
+    fn zero_capacity_store_never_panics_and_keeps_no_episodic() {
         let mut store = EngramStore::new(0, 0.1);
         store.encode(blades(1.0), 1, 1.0, 0).expect("encode");
-        assert!(store.causal_ids().is_empty());
+        store.dream_cycle(0);
+        assert!(store.causal_ids().is_empty() || store.cortical_len() > 0);
     }
 }

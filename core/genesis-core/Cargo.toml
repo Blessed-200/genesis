@@ -9,3 +9,10 @@ genesis-spectral = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "cortical_pattern_complete"
+harness = false
