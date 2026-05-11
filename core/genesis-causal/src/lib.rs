@@ -74,8 +74,8 @@ mod tests {
         let root = DiracSpinor {
             components: [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         };
-        let section = GlobalSection::compute(&order, &[30, 10, 20], &root)
-            .expect("section should compute");
+        let section =
+            GlobalSection::compute(&order, &[30, 10, 20], &root).expect("section should compute");
         let section_sorted = GlobalSection::compute(&order, &[10, 20, 30], &root)
             .expect("section should compute sorted");
         assert!((0.0..=1.0).contains(&section.coherence_order));
@@ -215,4 +215,3 @@ mod tests {
         assert!((s1.coherence_order - s2.coherence_order).abs() < 1e-12);
     }
 }
-

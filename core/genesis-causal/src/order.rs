@@ -226,7 +226,6 @@ impl CausalOrder {
         }
     }
 
-
     #[must_use]
     pub fn is_before(&self, a: u64, b: u64) -> bool {
         match (self.node_idx(a), self.node_idx(b)) {
