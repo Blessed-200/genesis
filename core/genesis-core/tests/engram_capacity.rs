@@ -11,9 +11,10 @@ fn blades(seed: f64) -> [f64; 16] {
 #[test]
 fn hundred_similar_episodic_collapse_to_single_cortical_abstraction() {
     let mut store = EngramStore::new(10_000, 0.0001);
+    #[allow(clippy::cast_precision_loss)]
     for i in 0..100_u64 {
-        let mut b = blades(1.0 + (i as f64) * 1e-6);
-        b[8] += (i as f64) * 1e-7;
+        let mut b = blades((i as f64).mul_add(1e-6, 1.0));
+        b[8] = (i as f64).mul_add(1e-7, b[8]);
         store.encode(b, i + 1, 5.0, 0).expect("encode");
     }
     store.dream_cycle(1);
@@ -26,6 +27,7 @@ fn hundred_similar_episodic_collapse_to_single_cortical_abstraction() {
 #[test]
 fn capacity_stress_keeps_strongest_engrams() {
     let mut store = EngramStore::new(5, 0.0);
+    #[allow(clippy::cast_precision_loss)]
     for i in 0..20_u64 {
         store
             .encode(blades((i + 1) as f64), i, (i + 1) as f64, 0)

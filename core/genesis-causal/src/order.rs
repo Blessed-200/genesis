@@ -27,7 +27,7 @@ struct NodeEntry {
     topo_rank: u32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct CausalEdge {
     pub cause_id: u64,
     pub effect_id: u64,
@@ -35,6 +35,18 @@ pub struct CausalEdge {
     pub causal_strength: f64,
     pub edge_proof: [u8; 32],
 }
+
+impl PartialEq for CausalEdge {
+    fn eq(&self, other: &Self) -> bool {
+        self.cause_id == other.cause_id
+            && self.effect_id == other.effect_id
+            && self.separation == other.separation
+            && self.causal_strength.total_cmp(&other.causal_strength).is_eq()
+            && self.edge_proof == other.edge_proof
+    }
+}
+
+impl Eq for CausalEdge {}
 
 impl CausalEdge {
     /// Computes the causal edge between two nodes.

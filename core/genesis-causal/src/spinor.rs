@@ -12,6 +12,17 @@ pub struct DiracSpinor {
     pub components: [f64; 8],
 }
 
+impl PartialEq for DiracSpinor {
+    fn eq(&self, other: &Self) -> bool {
+        self.components
+            .iter()
+            .zip(other.components.iter())
+            .all(|(a, b)| a.total_cmp(b).is_eq())
+    }
+}
+
+impl Eq for DiracSpinor {}
+
 impl DiracSpinor {
     #[must_use]
     pub fn norm(&self) -> f64 {
@@ -35,7 +46,7 @@ impl DiracSpinor {
         let theta = edge.causal_strength * std::f64::consts::FRAC_PI_2;
         let (s, c) = theta.sin_cos();
         let mut transported = *self;
-        transported.components[0] = c.mul_add(self.components[0], -s * self.components[1]);
+        transported.components[0] = (-s).mul_add(self.components[1], c * self.components[0]);
         transported.components[1] = s.mul_add(self.components[0], c * self.components[1]);
         transported.normalize();
         Ok(transported)

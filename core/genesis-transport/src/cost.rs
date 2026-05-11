@@ -3,7 +3,7 @@ use genesis_types::METRIC_WEIGHTS;
 
 /// Lorentzian 16x16 transport cost matrix in row-major storage.
 ///
-/// AX-ID: AXIOMA-001, AXIOMA-002, H_compresión
+/// AX-ID: AXIOMA-001, AXIOMA-002, `H_compresión`
 pub struct CostMatrix16 {
     values: [f64; 256],
 }
@@ -17,11 +17,16 @@ impl CostMatrix16 {
         let mut values = [0.0; 256];
         for i in 0..16 {
             for j in 0..16 {
-                let dt = ((j & 1) as f64) - ((i & 1) as f64);
-                let dx = (((j >> 1) & 1) as f64) - (((i >> 1) & 1) as f64);
-                let dy = (((j >> 2) & 1) as f64) - (((i >> 2) & 1) as f64);
-                let dz = (((j >> 3) & 1) as f64) - (((i >> 3) & 1) as f64);
-                let s_sq = dt * dt - dx * dx - dy * dy - dz * dz;
+                #[allow(clippy::cast_precision_loss)]
+                // Se acepta la pérdida de precisión entrópica para índices de blades pequeños.
+                let dt = (j & 1) as f64 - (i & 1) as f64;
+                #[allow(clippy::cast_precision_loss)]
+                let dx = ((j >> 1) & 1) as f64 - ((i >> 1) & 1) as f64;
+                #[allow(clippy::cast_precision_loss)]
+                let dy = ((j >> 2) & 1) as f64 - ((i >> 2) & 1) as f64;
+                #[allow(clippy::cast_precision_loss)]
+                let dz = ((j >> 3) & 1) as f64 - ((i >> 3) & 1) as f64;
+                let s_sq = dt.mul_add(dt, -dx.mul_add(dx, dy.mul_add(dy, dz.mul_add(dz, 0.0))));
                 values[i * 16 + j] = s_sq.abs() * METRIC_WEIGHTS[i] * METRIC_WEIGHTS[j];
             }
         }
@@ -34,13 +39,13 @@ impl CostMatrix16 {
     /// Returns c(i,j).
     #[inline]
     #[must_use]
-    pub fn get(&self, i: usize, j: usize) -> f64 {
+    pub const fn get(&self, i: usize, j: usize) -> f64 {
         self.values[i * 16 + j]
     }
 
     /// Lower bound of weighted outgoing transport cost.
     ///
-    /// AX-ID: H_compresión
+    /// AX-ID: `H_compresión`
     #[must_use]
     pub fn min_cost_lower_bound(&self, source: &BeliefDistribution) -> f64 {
         source
