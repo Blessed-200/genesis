@@ -89,8 +89,17 @@ impl EngramStore {
         vfe_weight: f64,
         current_cycle: u64,
     ) -> Result<(), GenesisError> {
-        let spectral_state =
+        let mut spectral_state =
             DiracOperator::from_blades(&blades, self.spectral_lambda)?.apply(&blades)?;
+        let spectral_norm = spectral_state
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>()
+            .sqrt()
+            .max(1e-12);
+        for value in &mut spectral_state {
+            *value /= spectral_norm;
+        }
         let engram =
             CliffordEngram::new(blades, causal_id, vfe_weight, current_cycle, spectral_state);
         let pos = self.engrams.partition_point(|e| e.causal_id < causal_id);
@@ -112,7 +121,16 @@ impl EngramStore {
         }
 
         let query_dirac = DiracOperator::from_blades(partial_query, self.spectral_lambda)?;
-        let query_applied = query_dirac.apply(partial_query)?;
+        let mut query_applied = query_dirac.apply(partial_query)?;
+        let query_norm = query_applied
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>()
+            .sqrt()
+            .max(1e-12);
+        for value in &mut query_applied {
+            *value /= query_norm;
+        }
 
         let mut best_score = f64::NEG_INFINITY;
         let mut best_idx = None;
@@ -123,18 +141,10 @@ impl EngramStore {
                 continue;
             }
 
-            let mut dot = 0.0;
-            let mut query_norm_sq = 0.0;
-            let mut engram_norm_sq = 0.0;
+            let mut constructive_interference = 0.0;
             for i in 0..16 {
-                let q = query_applied[i];
-                let e = engram.spectral_state[i];
-                dot += q * e;
-                query_norm_sq += q * q;
-                engram_norm_sq += e * e;
+                constructive_interference += query_applied[i] * engram.spectral_state[i];
             }
-            let denom = (query_norm_sq.sqrt() * engram_norm_sq.sqrt()).max(1e-12);
-            let constructive_interference = dot / denom;
             let score = constructive_interference * (engram.strength() * decay);
 
             if score > best_score {
