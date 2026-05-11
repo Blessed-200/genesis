@@ -1,6 +1,0 @@
-    Checking genesis-spectral v0.1.0 (/home/engine/project/core/genesis-spectral)
-    Checking genesis-causal v0.1.0 (/home/engine/project/core/genesis-causal)
-    Checking genesis-core v0.1.0 (/home/engine/project/core/genesis-core)
-    Checking genesis-transport v0.1.0 (/home/engine/project/core/genesis-transport)
-    Checking genesis-types v0.1.0 (/home/engine/project/shared/genesis-types)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.84s

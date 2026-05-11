@@ -41,7 +41,10 @@ impl PartialEq for CausalEdge {
         self.cause_id == other.cause_id
             && self.effect_id == other.effect_id
             && self.separation == other.separation
-            && self.causal_strength.total_cmp(&other.causal_strength).is_eq()
+            && self
+                .causal_strength
+                .total_cmp(&other.causal_strength)
+                .is_eq()
             && self.edge_proof == other.edge_proof
     }
 }

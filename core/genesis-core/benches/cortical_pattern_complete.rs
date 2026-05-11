@@ -6,7 +6,9 @@ fn rand_blades(seed: u64) -> [f64; 16] {
     let mut out = [0.0; 16];
     #[allow(clippy::cast_precision_loss)]
     for v in &mut out {
-        x = x.wrapping_mul(2_862_933_555_777_941_757).wrapping_add(3_037_000_493);
+        x = x
+            .wrapping_mul(2_862_933_555_777_941_757)
+            .wrapping_add(3_037_000_493);
         *v = ((x >> 11) as f64 / (u64::MAX >> 11) as f64).mul_add(2.0, -1.0);
     }
     out
@@ -17,7 +19,12 @@ fn bench_pattern_complete(c: &mut Criterion) {
     #[allow(clippy::cast_precision_loss)]
     for i in 0..100_000_u64 {
         store
-            .encode(rand_blades(i), i + 1, ((i % 10) as f64).mul_add(1.0, 1.0), 0)
+            .encode(
+                rand_blades(i),
+                i + 1,
+                ((i % 10) as f64).mul_add(1.0, 1.0),
+                0,
+            )
             .expect("encode");
     }
     store.dream_cycle(1);
