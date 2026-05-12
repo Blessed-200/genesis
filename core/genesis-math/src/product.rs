@@ -235,18 +235,82 @@ fn geometric_product_scalar_dense(
     b_coeffs: &[f64; TOTAL_BLADES],
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    // HOT PATH: O(16²), dense G(1,3) geometric product.
-    // Keep `i` outer so `sign_row[j]` and `b_coeffs[j]` stream sequentially; the
-    // only non-sequential access left is the algebraically unavoidable scatter
-    // store into `result_buf[i ^ j]`.
-    for i in 0..TOTAL_BLADES {
-        let coef_a = a_coeffs[i];
-        let sign_row = &CAYLEY_SIGN_F64_REF[i];
-        for j in 0..TOTAL_BLADES {
-            let k = i ^ j;
-            result_buf[k] = (coef_a * sign_row[j]).mul_add(b_coeffs[j], result_buf[k]);
-        }
-    }
+    geometric_product_dense_unrolled(a_coeffs, b_coeffs, result_buf);
+}
+
+/// Fully unrolled dense geometric product kernel for G(1,3).
+/// All 256 terms are hardcoded with compile-time Cayley signs.
+/// LLVM will automatically emit FMA and SIMD instructions for this dependency graph.
+///
+/// AX-ID: AXIOMA-001, HPC-OPTIMIZATION
+#[inline(always)]
+fn geometric_product_dense_unrolled(a: &[f64; TOTAL_BLADES], b: &[f64; TOTAL_BLADES], res: &mut [f64; TOTAL_BLADES]) {
+    let a0 = a[0];
+    let a1 = a[1];
+    let a2 = a[2];
+    let a3 = a[3];
+    let a4 = a[4];
+    let a5 = a[5];
+    let a6 = a[6];
+    let a7 = a[7];
+    let a8 = a[8];
+    let a9 = a[9];
+    let a10 = a[10];
+    let a11 = a[11];
+    let a12 = a[12];
+    let a13 = a[13];
+    let a14 = a[14];
+    let a15 = a[15];
+    let b0 = b[0];
+    let b1 = b[1];
+    let b2 = b[2];
+    let b3 = b[3];
+    let b4 = b[4];
+    let b5 = b[5];
+    let b6 = b[6];
+    let b7 = b[7];
+    let b8 = b[8];
+    let b9 = b[9];
+    let b10 = b[10];
+    let b11 = b[11];
+    let b12 = b[12];
+    let b13 = b[13];
+    let b14 = b[14];
+    let b15 = b[15];
+
+    let res0 = a0.mul_add(b0, a1.mul_add(b1, (-a2).mul_add(b2, a3.mul_add(b3, (-a4).mul_add(b4, a5.mul_add(b5, (-a6).mul_add(b6, (-a7).mul_add(b7, (-a8).mul_add(b8, a9.mul_add(b9, (-a10).mul_add(b10, (-a11).mul_add(b11, (-a12).mul_add(b12, (-a13).mul_add(b13, a14.mul_add(b14, -(a15 * b15))))))))))))))));
+    let res1 = a0.mul_add(b1, a1.mul_add(b0, a2.mul_add(b3, (-a3).mul_add(b2, a4.mul_add(b5, (-a5).mul_add(b4, (-a6).mul_add(b7, (-a7).mul_add(b6, a8.mul_add(b9, (-a9).mul_add(b8, (-a10).mul_add(b11, (-a11).mul_add(b10, (-a12).mul_add(b13, (-a13).mul_add(b12, (-a14).mul_add(b15, a15 * b14)))))))))))))));
+    let res2 = a0.mul_add(b2, a1.mul_add(b3, a2.mul_add(b0, (-a3).mul_add(b1, a4.mul_add(b6, (-a5).mul_add(b7, (-a6).mul_add(b4, (-a7).mul_add(b5, a8.mul_add(b10, (-a9).mul_add(b11, (-a10).mul_add(b8, (-a11).mul_add(b9, (-a12).mul_add(b14, (-a13).mul_add(b15, (-a14).mul_add(b12, a15 * b13)))))))))))))));
+    let res3 = a0.mul_add(b3, a1.mul_add(b2, (-a2).mul_add(b1, a3.mul_add(b0, (-a4).mul_add(b7, a5.mul_add(b6, (-a6).mul_add(b5, (-a7).mul_add(b4, (-a8).mul_add(b11, a9.mul_add(b10, (-a10).mul_add(b9, (-a11).mul_add(b8, (-a12).mul_add(b15, (-a13).mul_add(b14, a14.mul_add(b13, -(a15 * b12))))))))))))))));
+    let res4 = a0.mul_add(b4, a1.mul_add(b5, (-a2).mul_add(b6, a3.mul_add(b7, a4.mul_add(b0, (-a5).mul_add(b1, a6.mul_add(b2, a7.mul_add(b3, a8.mul_add(b12, (-a9).mul_add(b13, a10.mul_add(b14, a11.mul_add(b15, (-a12).mul_add(b8, (-a13).mul_add(b9, a14.mul_add(b10, -(a15 * b11))))))))))))))));
+    let res5 = a0.mul_add(b5, a1.mul_add(b4, a2.mul_add(b7, (-a3).mul_add(b6, (-a4).mul_add(b1, a5.mul_add(b0, a6.mul_add(b3, a7.mul_add(b2, (-a8).mul_add(b13, a9.mul_add(b12, a10.mul_add(b15, a11.mul_add(b14, (-a12).mul_add(b9, (-a13).mul_add(b8, (-a14).mul_add(b11, a15 * b10)))))))))))))));
+    let res6 = a0.mul_add(b6, a1.mul_add(b7, a2.mul_add(b4, (-a3).mul_add(b5, (-a4).mul_add(b2, a5.mul_add(b3, a6.mul_add(b0, a7.mul_add(b1, (-a8).mul_add(b14, a9.mul_add(b15, a10.mul_add(b12, a11.mul_add(b13, (-a12).mul_add(b10, (-a13).mul_add(b11, (-a14).mul_add(b8, a15 * b9)))))))))))))));
+    let res7 = a0.mul_add(b7, a1.mul_add(b6, (-a2).mul_add(b5, a3.mul_add(b4, a4.mul_add(b3, (-a5).mul_add(b2, a6.mul_add(b1, a7.mul_add(b0, a8.mul_add(b15, (-a9).mul_add(b14, a10.mul_add(b13, a11.mul_add(b12, (-a12).mul_add(b11, (-a13).mul_add(b10, a14.mul_add(b9, -(a15 * b8))))))))))))))));
+    let res8 = a0.mul_add(b8, a1.mul_add(b9, (-a2).mul_add(b10, a3.mul_add(b11, (-a4).mul_add(b12, a5.mul_add(b13, (-a6).mul_add(b14, (-a7).mul_add(b15, a8.mul_add(b0, (-a9).mul_add(b1, a10.mul_add(b2, a11.mul_add(b3, a12.mul_add(b4, a13.mul_add(b5, (-a14).mul_add(b6, a15 * b7)))))))))))))));
+    let res9 = a0.mul_add(b9, a1.mul_add(b8, a2.mul_add(b11, (-a3).mul_add(b10, a4.mul_add(b13, (-a5).mul_add(b12, (-a6).mul_add(b15, (-a7).mul_add(b14, (-a8).mul_add(b1, a9.mul_add(b0, a10.mul_add(b3, a11.mul_add(b2, a12.mul_add(b5, a13.mul_add(b4, a14.mul_add(b7, -(a15 * b6))))))))))))))));
+    let res10 = a0.mul_add(b10, a1.mul_add(b11, a2.mul_add(b8, (-a3).mul_add(b9, a4.mul_add(b14, (-a5).mul_add(b15, (-a6).mul_add(b12, (-a7).mul_add(b13, (-a8).mul_add(b2, a9.mul_add(b3, a10.mul_add(b0, a11.mul_add(b1, a12.mul_add(b6, a13.mul_add(b7, a14.mul_add(b4, -(a15 * b5))))))))))))))));
+    let res11 = a0.mul_add(b11, a1.mul_add(b10, (-a2).mul_add(b9, a3.mul_add(b8, (-a4).mul_add(b15, a5.mul_add(b14, (-a6).mul_add(b13, (-a7).mul_add(b12, a8.mul_add(b3, (-a9).mul_add(b2, a10.mul_add(b1, a11.mul_add(b0, a12.mul_add(b7, a13.mul_add(b6, (-a14).mul_add(b5, a15 * b4)))))))))))))));
+    let res12 = a0.mul_add(b12, a1.mul_add(b13, (-a2).mul_add(b14, a3.mul_add(b15, a4.mul_add(b8, (-a5).mul_add(b9, a6.mul_add(b10, a7.mul_add(b11, (-a8).mul_add(b4, a9.mul_add(b5, (-a10).mul_add(b6, (-a11).mul_add(b7, a12.mul_add(b0, a13.mul_add(b1, (-a14).mul_add(b2, a15 * b3)))))))))))))));
+    let res13 = a0.mul_add(b13, a1.mul_add(b12, a2.mul_add(b15, (-a3).mul_add(b14, (-a4).mul_add(b9, a5.mul_add(b8, a6.mul_add(b11, a7.mul_add(b10, a8.mul_add(b5, (-a9).mul_add(b4, (-a10).mul_add(b7, (-a11).mul_add(b6, a12.mul_add(b1, a13.mul_add(b0, a14.mul_add(b3, -(a15 * b2))))))))))))))));
+    let res14 = a0.mul_add(b14, a1.mul_add(b15, a2.mul_add(b12, (-a3).mul_add(b13, (-a4).mul_add(b10, a5.mul_add(b11, a6.mul_add(b8, a7.mul_add(b9, a8.mul_add(b6, (-a9).mul_add(b7, (-a10).mul_add(b4, (-a11).mul_add(b5, a12.mul_add(b2, a13.mul_add(b3, a14.mul_add(b0, -(a15 * b1))))))))))))))));
+    let res15 = a0.mul_add(b15, a1.mul_add(b14, (-a2).mul_add(b13, a3.mul_add(b12, a4.mul_add(b11, (-a5).mul_add(b10, a6.mul_add(b9, a7.mul_add(b8, (-a8).mul_add(b7, a9.mul_add(b6, (-a10).mul_add(b5, (-a11).mul_add(b4, a12.mul_add(b3, a13.mul_add(b2, (-a14).mul_add(b1, a15 * b0)))))))))))))));
+
+    res[0] = res0;
+    res[1] = res1;
+    res[2] = res2;
+    res[3] = res3;
+    res[4] = res4;
+    res[5] = res5;
+    res[6] = res6;
+    res[7] = res7;
+    res[8] = res8;
+    res[9] = res9;
+    res[10] = res10;
+    res[11] = res11;
+    res[12] = res12;
+    res[13] = res13;
+    res[14] = res14;
+    res[15] = res15;
 }
 
 #[inline]
@@ -300,7 +364,13 @@ fn geometric_product_dispatch_by_mask(
     b_mask: u16,
     result_buf: &mut [f64; TOTAL_BLADES],
 ) {
-    if a_mask == DENSE_MASK && b_mask == DENSE_MASK {
+    // HYBRID DENSE-SPARSE DISPATCH
+    // If both inputs have more than 2 active blades, the sparse overhead
+    // (bit manipulation and scatter stores) exceeds the cost of a dense
+    // unrolled SIMD-friendly kernel.
+    if (a_mask == DENSE_MASK && b_mask == DENSE_MASK)
+        || (a_mask.count_ones() > 2 && b_mask.count_ones() > 2)
+    {
         geometric_product_dispatch_dense(a, b, result_buf);
         return;
     }
@@ -470,9 +540,11 @@ unsafe fn geometric_product_aarch64_neon_dense(
 ///
 /// AX-ID: AXIOMA-001, AXIOMA-011
 /// See also: [`crate::sign::fast_cayley_product`]
+#[repr(align(64))]
+struct AlignedBuffer([f64; TOTAL_BLADES]);
+
+/// Fastpath geometric product kernel.
 #[allow(clippy::many_single_char_names)]
-// Canonical GA notation: i = left blade, j = right blade, k = result blade.
-// Renaming diverges from standard literature (Hestenes 2003, §2.1).
 #[inline]
 pub fn sparse_geometric_product(
     a: &SparseCliffordVector,
@@ -490,7 +562,9 @@ pub fn sparse_geometric_product(
 
     // ── Stack buffer ──────────────────────────────────────────────────────────
     // [f64; TOTAL_BLADES] = 128 bytes in G(1,3). Zero heap allocation.
-    let mut result_buf = [0.0f64; TOTAL_BLADES];
+    // 64-byte alignment ensures SIMD efficiency and avoids split loads.
+    let mut aligned = AlignedBuffer([0.0f64; TOTAL_BLADES]);
+    let result_buf = &mut aligned.0;
 
     // ── Fast paths by active-mask pattern ─────────────────────────────────────
     let pop_a = a.active_mask.count_ones();
@@ -522,7 +596,7 @@ pub fn sparse_geometric_product(
     }
 
     Some(SparseCliffordVector::from_dense_with_metadata(
-        result_buf,
+        *result_buf,
         metadata.active_mask as u16,
         metadata.max_abs_coeff,
         metadata.clifford_norm_sq,
@@ -584,7 +658,8 @@ pub fn sparse_geometric_product_deterministic_strict(
         return Ok(None);
     }
 
-    let mut result_buf = [0.0f64; TOTAL_BLADES];
+    let mut aligned = AlignedBuffer([0.0f64; TOTAL_BLADES]);
+    let result_buf = &mut aligned.0;
     let pop_a = a.active_mask.count_ones();
     let pop_b = b.active_mask.count_ones();
 
@@ -614,7 +689,7 @@ pub fn sparse_geometric_product_deterministic_strict(
         );
     }
 
-    strict_finalize_result(result_buf)
+    strict_finalize_result(*result_buf)
 }
 
 /// Lorentz norm of the grade-2 component of A*B in G(1,3).

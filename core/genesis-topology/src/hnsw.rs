@@ -1787,7 +1787,9 @@ impl HnswGraph {
     ///
     /// AX-ID: AXIOMA-013, `H_restricción`
     #[allow(clippy::too_many_lines)]
-    pub fn insert(&mut self, id: NodeId, vec: &SparseCliffordVector) -> Result<(), GenesisError> {
+    pub fn insert(&mut self, id: NodeId, vec: &SparseCliffordVector) -> Result<(), GenesisError> { self.insert_internal(id, vec) }
+
+    fn insert_internal(&mut self, id: NodeId, vec: &SparseCliffordVector) -> Result<(), GenesisError> {
         if self.state == GraphState::Compacted {
             return Err(GenesisError::InvariantViolation { axiom_id: 13 });
         }
@@ -3294,6 +3296,44 @@ impl HnswGraph {
             })
         })
     }
+
+    /// Insert a batch of vectors into the graph.
+    ///
+    /// Clones backing storage only once and publishes the entire batch atomically.
+    ///
+    /// AX-ID: AXIOMA-013, HPC-OPTIMIZATION
+    pub fn insert_batch(
+        &mut self,
+        batch: &[(NodeId, SparseCliffordVector)],
+    ) -> Result<(), GenesisError> {
+        if self.state == GraphState::Compacted {
+            return Err(GenesisError::InvariantViolation { axiom_id: 13 });
+        }
+
+        // 1. Reserve capacity to eliminate reallocations during batch processing.
+        let batch_len = batch.len();
+        Self::cow_vec_mut(&mut self.nodes).reserve(batch_len);
+        Self::cow_vec_mut(&mut self.layer_neighbors).reserve(batch_len);
+        Self::cow_vec_mut(&mut self.id_index).reserve(batch_len);
+        Self::cow_vec_mut(&mut self.direct_index).reserve(batch_len);
+        Self::cow_vec_mut(&mut self.layer0_soa.node_to_slab).reserve(batch_len);
+
+        let needed_blocks = (self.nodes.len() + batch_len).div_ceil(SLAB_LANES);
+        if needed_blocks > self.layer0_soa.blocks.len() {
+            self.layer0_soa
+                .blocks
+                .reserve(needed_blocks - self.layer0_soa.blocks.len());
+        }
+
+        // 2. Sequential insertion phase.
+        // COW clones have already occurred during reservation or initial mutation.
+        for (id, vec) in batch {
+            self.insert_internal(*id, vec)?;
+        }
+
+        Ok(())
+    }
+
 }
 
 impl LockFreeHnswIndex {
@@ -3396,6 +3436,66 @@ impl LockFreeHnswIndex {
             // SAFETY: CAS failed, so `candidate` was never published.
             // SAFETY: `candidate` was created by `Arc::into_raw` for this failed CAS attempt;
             // converting back exactly once restores ownership for proper drop.
+            unsafe {
+                drop(Arc::from_raw(candidate));
+            }
+        }
+    }
+
+    /// Insert a batch of vectors into the latest snapshot via CAS publication.
+    ///
+    /// AX-ID: AXIOMA-013, HPC-OPTIMIZATION
+    pub fn insert_batch(
+        &self,
+        batch: &[(NodeId, SparseCliffordVector)],
+    ) -> Result<(), GenesisError> {
+        loop {
+            let base = self.load_snapshot();
+            let current = Arc::as_ptr(&base).cast_mut();
+            let delta = HnswDelta::Insert;
+            // Single clone of the entire state
+            let mut updated = (*base).clone_with_delta(delta);
+            updated.insert_batch(batch)?;
+            // Single atomic publish
+            let candidate = Arc::into_raw(Arc::new(updated)).cast_mut();
+
+            #[cfg(test)]
+            let force_fail = self
+                .force_first_cas_fail
+                .swap(false, AtomicOrdering::Relaxed);
+
+            #[cfg(test)]
+            let cas_success = !force_fail
+                && self
+                    .head
+                    .compare_exchange(
+                        current,
+                        candidate,
+                        AtomicOrdering::AcqRel,
+                        AtomicOrdering::Acquire,
+                    )
+                    .is_ok();
+
+            #[cfg(not(test))]
+            let cas_success = self
+                .head
+                .compare_exchange(
+                    current,
+                    candidate,
+                    AtomicOrdering::AcqRel,
+                    AtomicOrdering::Acquire,
+                )
+                .is_ok();
+
+            if cas_success {
+                // SAFETY: Successful CAS replaced the head's strong reference.
+                unsafe {
+                    drop(Arc::from_raw(current));
+                }
+                return Ok(());
+            }
+            self.cas_retries.value.fetch_add(1, AtomicOrdering::Relaxed);
+            // SAFETY: CAS failed, candidate snapshot was not published.
             unsafe {
                 drop(Arc::from_raw(candidate));
             }
