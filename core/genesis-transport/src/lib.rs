@@ -2,7 +2,7 @@
 //!
 //! CRATE-006 in the GÉNESIS workspace.
 //!
-//! AX-ID: AXIOMA-001, AXIOMA-002, AXIOMA-003, H_compresión
+//! AX-ID: AXIOMA-001, AXIOMA-002, AXIOMA-003, `H_compresión`
 
 #![deny(missing_docs)]
 

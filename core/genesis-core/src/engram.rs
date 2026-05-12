@@ -566,9 +566,10 @@ mod tests {
     #[test]
     fn cluster_consolidation_creates_cortical_abstraction() {
         let mut store = EngramStore::new(256, 0.001);
+        #[allow(clippy::cast_precision_loss)]
         for i in 0..100_u64 {
-            let mut b = blades(1.0 + (i as f64) * 1e-5);
-            b[8] += (i as f64) * 1e-6;
+            let mut b = blades((i as f64).mul_add(1e-5, 1.0));
+            b[8] = (i as f64).mul_add(1e-6, b[8]);
             store.encode(b, i + 1, 10.0, 0).expect("encode");
         }
         store.dream_cycle(1);
@@ -646,8 +647,8 @@ mod tests {
         let mut axis = [0.0_f64; 16];
         let mut min_idx = 0;
         let mut min_abs = f64::INFINITY;
-        for i in 0..16 {
-            let abs = similar[i].abs();
+        for (i, val) in similar.iter().enumerate() {
+            let abs = val.abs();
             if abs < min_abs {
                 min_abs = abs;
                 min_idx = i;
@@ -656,8 +657,8 @@ mod tests {
         axis[min_idx] = 1.0;
         let projection = similar[min_idx];
         let mut orthogonal = axis;
-        for i in 0..16 {
-            orthogonal[i] -= projection * similar[i];
+        for (i, val) in orthogonal.iter_mut().enumerate() {
+            *val -= projection * similar[i];
         }
 
         let orthogonal_repulsion = store.trauma_repulsion(&orthogonal, 1);

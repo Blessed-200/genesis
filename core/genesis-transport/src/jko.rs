@@ -3,7 +3,7 @@ use genesis_types::{AxiomID, GenesisError, WitnessBuilder};
 
 /// One implicit JKO descent step in causal Wasserstein geometry.
 ///
-/// AX-ID: AXIOMA-003, H_dinámica
+/// AX-ID: AXIOMA-003, `H_dinámica`
 pub struct JKOScheme {
     sinkhorn: CausalSinkhorn,
     /// Implicit time step.
@@ -12,7 +12,7 @@ pub struct JKOScheme {
 
 /// Output of a single JKO update.
 ///
-/// AX-ID: AXIOMA-003, H_dinámica
+/// AX-ID: AXIOMA-003, `H_dinámica`
 pub struct JKOStep {
     /// Updated belief after the implicit step.
     pub new_distribution: BeliefDistribution,
@@ -26,6 +26,9 @@ pub struct JKOStep {
 
 impl JKOScheme {
     /// Creates a new scheme with fixed transport backend.
+    ///
+    /// # Errors
+    /// Returns `GenesisError` if the time step `tau` is not positive.
     pub fn new(sinkhorn: CausalSinkhorn, tau: f64) -> Result<Self, GenesisError> {
         if tau <= 0.0 {
             return Err(GenesisError::InvalidInput("tau must be positive"));
@@ -37,10 +40,13 @@ impl JKOScheme {
     fn compute_adaptive_tau(&self, current: &BeliefDistribution) -> f64 {
         let max_entropy = 16.0_f64.ln();
         let normalized_entropy = (current.entropy() / max_entropy).clamp(0.0, 1.0);
-        self.tau * (1.0 - 0.9 * normalized_entropy)
+        0.9f64.mul_add(-normalized_entropy, 1.0) * self.tau
     }
 
     /// Executes one JKO step.
+    ///
+    /// # Errors
+    /// Returns `GenesisError` if the update results in non-finite weights or Sinkhorn fails to converge.
     pub fn step(
         &self,
         current: &BeliefDistribution,

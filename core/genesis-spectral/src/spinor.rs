@@ -370,7 +370,10 @@ mod tests {
 
         for i in 0..5 {
             let mut b = blades;
-            b[1] = i as f64 * 0.1 + 1.0;
+            #[allow(clippy::cast_lossless)]
+            {
+                b[1] = (i as f64).mul_add(0.1, 1.0);
+            }
             let spinor = Spinor::from_manifold_state(&b, 1.0).expect("valid");
             predictor.push(spinor);
         }

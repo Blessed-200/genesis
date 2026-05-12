@@ -6,7 +6,7 @@ use genesis_types::{GenesisError, METRIC_WEIGHTS};
 /// - `weights.iter().sum() == 1.0`
 /// - `weights[i] >= 0.0` for all i.
 ///
-/// AX-ID: AXIOMA-001, AXIOMA-003, H_información
+/// AX-ID: AXIOMA-001, AXIOMA-003, `H_información`
 #[derive(Clone, Debug)]
 pub struct BeliefDistribution {
     /// Normalized blade probabilities.
@@ -19,6 +19,9 @@ impl BeliefDistribution {
     /// Builds a normalized belief from raw non-negative weights.
     ///
     /// AX-ID: AXIOMA-003
+    ///
+    /// # Errors
+    /// Returns `GenesisError` if any weight is negative, non-finite, or if the sum is zero.
     pub fn from_weights(weights: [f64; 16]) -> Result<Self, GenesisError> {
         if weights.iter().any(|w| !w.is_finite()) {
             return Err(GenesisError::InvalidInput("non-finite belief weight"));
@@ -58,26 +61,32 @@ impl BeliefDistribution {
     /// Returns a uniform distribution over all blades.
     ///
     /// AX-ID: AXIOMA-003
+    ///
+    /// # Panics
+    /// Panics if the internal weight array cannot be normalized (should never happen).
     #[must_use]
     pub fn uniform() -> Self {
         Self::from_weights([1.0 / 16.0; 16]).expect("uniform distribution is valid")
     }
 
-    /// Returns a point mass at blade `k`.
+    /// Returns a point mass at blade `blade_index`.
     ///
     /// AX-ID: AXIOMA-001
-    pub fn point_mass(k: usize) -> Result<Self, GenesisError> {
-        if k >= 16 {
-            return Err(GenesisError::BladeIndexOutOfRange { index: k });
+    ///
+    /// # Errors
+    /// Returns `GenesisError` if `blade_index` is out of range.
+    pub fn point_mass(blade_index: usize) -> Result<Self, GenesisError> {
+        if blade_index >= 16 {
+            return Err(GenesisError::BladeIndexOutOfRange { index: blade_index });
         }
-        let mut w = [0.0; 16];
-        w[k] = 1.0;
-        Self::from_weights(w)
+        let mut weights = [0.0; 16];
+        weights[blade_index] = 1.0;
+        Self::from_weights(weights)
     }
 
     /// Computes `D_KL(self || other)` with metric-aware weighting.
     ///
-    /// AX-ID: AXIOMA-003, H_información
+    /// AX-ID: AXIOMA-003, `H_información`
     #[must_use]
     pub fn kl_divergence(&self, other: &Self) -> f64 {
         self.weights

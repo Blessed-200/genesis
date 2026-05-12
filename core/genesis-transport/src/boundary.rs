@@ -6,7 +6,7 @@ const ROUNDTRIP_TOL: f64 = 3.0;
 
 /// Boundary projector Π and adjoint Π* between sensory events and beliefs.
 ///
-/// AX-ID: AXIOMA-002, AXIOMA-003, H_estructura
+/// AX-ID: AXIOMA-002, AXIOMA-003, `H_estructura`
 pub struct SensoryProjector {
     /// Minimal detectable amplitude.
     pub detection_threshold: f64,
@@ -27,13 +27,17 @@ pub struct SensoryEvent {
 
 impl SensoryProjector {
     /// Creates a sensory projector.
-    pub fn new(detection_threshold: f64) -> Self {
+    #[must_use]
+    pub const fn new(detection_threshold: f64) -> Self {
         Self {
             detection_threshold,
         }
     }
 
     /// Projects an event into a 16-blade belief distribution.
+    ///
+    /// # Errors
+    /// Returns `GenesisError` if the event amplitude is below the threshold or weights are invalid.
     pub fn project(&self, event: &SensoryEvent) -> Result<BeliefDistribution, GenesisError> {
         if event.amplitude < self.detection_threshold {
             return Err(GenesisError::InvalidInput(
@@ -65,6 +69,9 @@ impl SensoryProjector {
     }
 
     /// Computes roundtrip error `||Π*(Π(event)) - event||`.
+    ///
+    /// # Errors
+    /// Returns `GenesisError` if projection fails.
     pub fn roundtrip_error(&self, event: &SensoryEvent) -> Result<f64, GenesisError> {
         let belief = self.project(event)?;
         let reconstructed = self.project_adjoint(&belief);

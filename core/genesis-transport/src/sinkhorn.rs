@@ -4,7 +4,7 @@ use genesis_types::GenesisError;
 
 /// Entropic Sinkhorn solver constrained by a causal mask in G(1,3).
 ///
-/// AX-ID: AXIOMA-002, AXIOMA-003, H_restricción
+/// AX-ID: AXIOMA-002, AXIOMA-003, `H_restricción`
 pub struct CausalSinkhorn {
     epsilon: f64,
     max_iter: u32,
@@ -15,6 +15,9 @@ pub struct CausalSinkhorn {
 
 impl CausalSinkhorn {
     /// Creates a causal Sinkhorn solver.
+    ///
+    /// # Errors
+    /// Returns `GenesisError` if `epsilon` is not positive.
     pub fn new(epsilon: f64, cost_matrix: CostMatrix16) -> Result<Self, GenesisError> {
         if epsilon <= 0.0 {
             return Err(GenesisError::InvalidInput(
@@ -44,6 +47,9 @@ impl CausalSinkhorn {
     }
 
     /// Computes causal W2 squared.
+    ///
+    /// # Errors
+    /// Returns `GenesisError` if the Sinkhorn algorithm fails to converge.
     pub fn distance_sq(
         &self,
         mu: &BeliefDistribution,
@@ -61,6 +67,9 @@ impl CausalSinkhorn {
     }
 
     /// Computes transport plan and causal W2 squared.
+    ///
+    /// # Errors
+    /// Returns `GenesisError` if the Sinkhorn algorithm fails to converge within `max_iter`.
     pub fn transport_plan(
         &self,
         mu: &BeliefDistribution,

@@ -1,13 +1,13 @@
 //! Causal separation classification in G(1,3).
 //!
-//! AX-ID: AXIOMA-002, H_estructura (LEY_FUNDACIONAL §3.1)
+//! AX-ID: AXIOMA-002, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
 
 pub const LIGHTLIKE_TOL: f64 = 1e-10;
 
 /// Separation class between two nodes in G(1,3).
 ///
-/// AX-ID: AXIOMA-002, H_estructura (LEY_FUNDACIONAL §3.1)
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// AX-ID: AXIOMA-002, `H_estructura` (`LEY_FUNDACIONAL` §3.1)
+#[derive(Clone, Copy, Debug)]
 pub enum CausalSeparation {
     /// Timelike interval with positive Minkowski separation.
     Timelike { separation_sq: f64 },
@@ -17,6 +17,21 @@ pub enum CausalSeparation {
     Spacelike { separation_sq: f64 },
 }
 
+impl PartialEq for CausalSeparation {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Timelike { separation_sq: s1 }, Self::Timelike { separation_sq: s2 })
+            | (Self::Spacelike { separation_sq: s1 }, Self::Spacelike { separation_sq: s2 }) => {
+                s1.total_cmp(s2).is_eq()
+            }
+            (Self::Lightlike, Self::Lightlike) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for CausalSeparation {}
+
 impl CausalSeparation {
     /// Computes the separation class.
     #[must_use]
@@ -25,7 +40,13 @@ impl CausalSeparation {
         let delta_x = blade_b[2] - blade_a[2];
         let delta_y = blade_b[4] - blade_a[4];
         let delta_z = blade_b[8] - blade_a[8];
-        let s_sq = delta_t * delta_t - delta_x * delta_x - delta_y * delta_y - delta_z * delta_z;
+        let s_sq = delta_t.mul_add(
+            delta_t,
+            -delta_x.mul_add(
+                delta_x,
+                delta_y.mul_add(delta_y, delta_z.mul_add(delta_z, 0.0)),
+            ),
+        );
 
         if s_sq.abs() < LIGHTLIKE_TOL {
             Self::Lightlike
