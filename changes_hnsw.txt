@@ -1,0 +1,22 @@
+1302:            layer0_soa: HnswLayer0Slab {
+1303:                blocks: Arc::new(Vec::with_capacity(INITIAL_SLAB_BLOCK_CAPACITY)),
+1304:                node_to_slab: Arc::new(Vec::with_capacity(INITIAL_NODE_CAPACITY)),
+1305:            },
+1662:    fn write_node_to_slab(&mut self, dense_idx: usize, vec: &SparseCliffordVector) {
+1663:        let slab_idx = dense_idx;
+1664:        let block = slab_idx / SLAB_LANES;
+1665:        let lane = slab_idx % SLAB_LANES;
+1666:        if block >= self.layer0_soa.blocks.len() {
+1667:            Arc::make_mut(&mut self.layer0_soa.blocks).push(Arc::new(SlabBlock::zeroed()));
+1668:        }
+1669:        let blocks = Arc::make_mut(&mut self.layer0_soa.blocks);
+1670:        let block_ref = Arc::make_mut(&mut blocks[block]);
+1671:        let mut d = 0;
+1672:        while d < SLAB_DIM {
+1673:            block_ref.lanes[d * SLAB_LANES + lane] = vec.coeffs[d] as f32;
+1674:            d += 1;
+1675:        }
+1676:        let slab_idx_u32 = u32::try_from(slab_idx).unwrap_or(u32::MAX - 1);
+1677:        debug_assert_ne!(slab_idx_u32, u32::MAX);
+1678:        Self::cow_vec_mut(&mut self.layer0_soa.node_to_slab).push(slab_idx_u32);
+1679:    }
