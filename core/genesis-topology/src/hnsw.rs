@@ -5863,4 +5863,76 @@ mod structural_edge_tests {
             .expect("structural sweep");
         assert!(accepted <= index.live_node_count());
     }
+
+    #[test]
+    fn smk_find_local_rewire_discovers_better_topology() {
+        let mut graph = HnswGraph::new(16);
+        let a = local_id(0);
+        let b = local_id(1);
+        let c = local_id(2);
+        
+        let mut va = [0.0; 16]; va[1] = 0.0;
+        let mut vb = [0.0; 16]; vb[1] = 1.0;
+        let mut vc = [0.0; 16]; vc[1] = 0.1;
+
+        graph.insert(a, &SparseCliffordVector::from_dense(&va).unwrap()).unwrap();
+        graph.insert(b, &SparseCliffordVector::from_dense(&vb).unwrap()).unwrap();
+        graph.insert(c, &SparseCliffordVector::from_dense(&vc).unwrap()).unwrap();
+        
+        let ia = graph.idx(a).unwrap();
+        let ib = graph.idx(b).unwrap();
+        let ic = graph.idx(c).unwrap();
+        
+        graph.layer_neighbors[ia].layer0.clear();
+        graph.layer_neighbors[ib].layer0.clear();
+        graph.layer_neighbors[ic].layer0.clear();
+        graph.directed_edge_slots_layer0 = 0;
+        
+        graph.add_edge(ia, 0, ib, 1.0);
+        graph.add_edge(ib, 0, ia, 1.0);
+        graph.add_edge(ib, 0, ic, 0.9);
+        graph.add_edge(ic, 0, ib, 0.9);
+        
+        let rewire = graph.smk_find_local_rewire(a, 10.0).unwrap();
+        assert!(rewire.is_some());
+        let (old_b, new_b) = rewire.unwrap();
+        assert_eq!(old_b, b);
+        assert_eq!(new_b, c);
+    }
+
+    #[test]
+    fn try_remove_edge_preserves_local_connectivity() {
+        let mut graph = HnswGraph::new(16);
+        // Create a triangle a-b, b-c, c-a.
+        // Removing any edge should be fine.
+        let a = local_id(0);
+        let b = local_id(1);
+        let c = local_id(2);
+        for i in 0..3_u64 {
+            graph.insert(local_id(i), &local_vec(i)).unwrap();
+        }
+        let ia = graph.idx(a).unwrap();
+        let ib = graph.idx(b).unwrap();
+        let ic = graph.idx(c).unwrap();
+        
+        graph.layer_neighbors[ia].layer0.clear();
+        graph.layer_neighbors[ib].layer0.clear();
+        graph.layer_neighbors[ic].layer0.clear();
+        graph.directed_edge_slots_layer0 = 0;
+        
+        graph.add_edge(ia, 0, ib, 1.0);
+        graph.add_edge(ib, 0, ia, 1.0);
+        graph.add_edge(ib, 0, ic, 1.0);
+        graph.add_edge(ic, 0, ib, 1.0);
+        graph.add_edge(ic, 0, ia, 1.0);
+        graph.add_edge(ia, 0, ic, 1.0);
+        
+        // Remove a-b. There's still a-c-b.
+        assert!(graph.try_remove_edge(a, b).unwrap().is_some());
+        
+        // Now try to remove a-c. Only edge from a is a-c.
+        // Wait, if a-b was removed, a's only neighbor is c.
+        // If we remove a-c, a becomes disconnected.
+        assert!(graph.try_remove_edge(a, c).unwrap().is_none(), "Should reject disconnecting removal");
+    }
 }

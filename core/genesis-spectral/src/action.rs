@@ -155,4 +155,11 @@ mod tests {
         let engine = SpectralActionEngine::new(CutoffFunction::Gaussian, 1.0);
         assert!(engine.gradient_only(&[]).is_err());
     }
+
+    #[test]
+    fn evaluate_rejects_invalid_lambda() {
+        let engine = SpectralActionEngine::new(CutoffFunction::Gaussian, 0.0);
+        let nodes = vec![(1, [1.0; 16])];
+        assert!(engine.evaluate(&nodes).is_err());
+    }
 }

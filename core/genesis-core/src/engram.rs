@@ -758,4 +758,51 @@ mod tests {
         store.dream_cycle(0);
         assert!(store.causal_ids().is_empty() || store.cortical_len() > 0);
     }
+
+    #[test]
+    fn lambda_decay_sensitivity_scales_survival_horizon() {
+        let mut store_fast = EngramStore::new(10, 0.1); // Fast decay
+        let mut store_slow = EngramStore::new(10, 0.001); // Slow decay
+
+        store_fast.encode(blades(1.0), 1, 1.0, 0).expect("encode");
+        store_slow.encode(blades(1.0), 1, 1.0, 0).expect("encode");
+
+        // After 100 cycles
+        store_fast.prune(100);
+        store_slow.prune(100);
+
+        assert!(store_fast.episodic_buffer.is_empty(), "Fast store should have pruned");
+        assert!(!store_slow.episodic_buffer.is_empty(), "Slow store should have kept engram");
+    }
+
+    #[test]
+    fn retrieval_reinforcement_increases_engram_strength() {
+        let mut store = EngramStore::new(10, 0.001);
+        store.encode(blades(1.0), 1, 1.0, 0).expect("encode");
+        
+        let strength_before = store.episodic_buffer[0].strength();
+        
+        // Retrieve it multiple times
+        for _ in 0..5 {
+            store.pattern_complete(&blades(1.0), 1.0, 0).expect("retrieve");
+        }
+        
+        let strength_after = store.episodic_buffer[0].strength();
+        assert!(strength_after > strength_before, "Strength should increase with retrieval");
+    }
+
+    #[test]
+    fn vfe_based_survival_prioritizes_high_weight_engrams() {
+        let mut store = EngramStore::new(1, 0.1); // Capacity 1
+        
+        // Encode low VFE engram
+        store.encode(blades(1.0), 1, 1.0, 0).expect("encode low");
+        // Encode high VFE engram later but they will compete
+        store.encode(blades(2.0), 2, 10.0, 0).expect("encode high");
+        
+        store.prune(0);
+        
+        assert_eq!(store.episodic_buffer.len(), 1);
+        assert_eq!(store.episodic_buffer[0].causal_id, 2, "High VFE engram should survive");
+    }
 }

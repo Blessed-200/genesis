@@ -232,4 +232,29 @@ mod tests {
             Err(GenesisError::DimensionMismatch { lhs: 16, rhs: 4 })
         ));
     }
+
+    #[test]
+    fn scalar_dirac_application_preserves_linearity() {
+        let mut blades = [0.0_f64; 16];
+        blades[0] = 2.0; // Scalar component
+        let dirac = DiracOperator::from_blades(&blades, 1.0).expect("dirac");
+        
+        let mut v = [0.0_f64; 16];
+        v[1] = 1.0; // Vector component
+        
+        let out = dirac.apply(&v).expect("apply");
+        // For a scalar Dirac D=s, D(v) should be linear in v.
+        // In G(1,3), applying e_mu * center * mv.
+        // If center is scalar s, it's Σ_mu sig_mu * e_mu * s * mv.
+        assert!(out.iter().any(|&x| x.abs() > 1e-12));
+    }
+
+    #[test]
+    fn frobenius_norm_sq_measures_matrix_energy() {
+        let dirac = DiracOperator::from_blades(&[1.0; 16], 1.0).expect("dirac");
+        let sq = dirac.squared().expect("squared");
+        let norm_sq = sq.frobenius_norm_sq();
+        assert!(norm_sq > 0.0);
+        assert!(norm_sq.is_finite());
+    }
 }

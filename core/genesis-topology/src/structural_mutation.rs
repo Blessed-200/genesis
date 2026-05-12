@@ -336,4 +336,21 @@ mod tests {
         assert!(kernel.should_suppress(edge_hash));
         assert_eq!(kernel.convergence_stats(), (0, 0.1));
     }
+
+    #[test]
+    fn adaptive_sweep_behavior_decays_max_delta_on_stagnation() {
+        let mut kernel = StructuralMutationKernel::new(1.0);
+        let mut graph = crate::hnsw::HnswGraph::new(16);
+        // Mock intents that will fail (empty graph, so try_rewire might fail or we just mock intents)
+        let id = NodeId::try_new(1).expect("id");
+        let intents = vec![(id, id, id)];
+
+        // Force consecutive stable sweeps (accepted = 0)
+        for _ in 0..10 {
+            kernel.apply_intents(&mut graph, &intents).expect("apply");
+        }
+
+        let (_, current_delta) = kernel.convergence_stats();
+        assert!(current_delta < 1.0, "Delta should have decayed from 1.0, got {current_delta}");
+    }
 }
