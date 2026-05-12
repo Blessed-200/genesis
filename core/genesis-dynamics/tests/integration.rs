@@ -73,6 +73,8 @@ fn stress_kuramoto_10k_steps_no_nan() {
         net.step(0.01);
         if step % 1000 == 0 {
             for osc in net.phases() {
+                // Inner loop is constant-bounded by Clifford basis dimensionality (G=5).
+                // AX-ID: AXIOMA-013, HOT-122 mitigation.
                 for &p in &osc.phases {
                     assert!(
                         p.is_finite(),

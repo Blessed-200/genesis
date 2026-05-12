@@ -242,7 +242,7 @@ fn geometric_product_scalar_dense(
 /// All 256 terms are hardcoded with compile-time Cayley signs.
 /// LLVM will automatically emit FMA and SIMD instructions for this dependency graph.
 ///
-/// AX-ID: AXIOMA-001, HPC-OPTIMIZATION
+/// AX-ID: AXIOMA-001
 #[inline(always)]
 fn geometric_product_dense_unrolled(a: &[f64; TOTAL_BLADES], b: &[f64; TOTAL_BLADES], res: &mut [f64; TOTAL_BLADES]) {
     let a0 = a[0];

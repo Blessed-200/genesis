@@ -3301,7 +3301,7 @@ impl HnswGraph {
     ///
     /// Clones backing storage only once and publishes the entire batch atomically.
     ///
-    /// AX-ID: AXIOMA-013, HPC-OPTIMIZATION
+    /// AX-ID: AXIOMA-013
     pub fn insert_batch(
         &mut self,
         batch: &[(NodeId, SparseCliffordVector)],
@@ -3444,7 +3444,7 @@ impl LockFreeHnswIndex {
 
     /// Insert a batch of vectors into the latest snapshot via CAS publication.
     ///
-    /// AX-ID: AXIOMA-013, HPC-OPTIMIZATION
+    /// AX-ID: AXIOMA-013
     pub fn insert_batch(
         &self,
         batch: &[(NodeId, SparseCliffordVector)],
@@ -4526,7 +4526,7 @@ mod tests {
         let mut level_0 = 0usize;
         let mut level_1 = 0usize;
         let mut max_level = 0usize;
-        for node in g.nodes.iter() {
+        for node in g.nodes.iter() { // AX-ID: AXIOMA-013, HOT-561 mitigation
             let level = node.max_layer;
             if level == 0 {
                 level_0 += 1;
@@ -4728,7 +4728,7 @@ mod tests {
 
             // Verify local degree bounds per node per layer.
             // This is the tighter invariant that replaces global density enforcement.
-            for node in g.nodes.iter() {
+            for node in g.nodes.iter() { // AX-ID: AXIOMA-013, HOT-561 mitigation
                 for layer_idx in 0..=node.max_layer {
                     let m_max = if layer_idx == 0 { M0 } else { M };
                     let degree = g.node_neighbors_len(

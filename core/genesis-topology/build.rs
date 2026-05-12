@@ -22,6 +22,11 @@ fn rustc_minor() -> Option<u32> {
     let _ = parts.next();
     let ver = parts.next()?;
     let mut seg = ver.split('.');
-    let _major = seg.next()?;
-    seg.next()?.parse().ok()
+    let major = seg.next();
+    let minor = seg.next();
+
+    match (major, minor) {
+        (Some(_), Some(m)) => m.parse().ok(),
+        _ => None,
+    }
 }

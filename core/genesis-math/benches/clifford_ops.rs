@@ -83,6 +83,9 @@ fn throughput_geometric_product(c: &mut Criterion) {
     group.bench_function("geo_product_dense_throughput", |b| {
         b.iter(|| {
             let mut sink = 0.0f64;
+            // Hot path benchmark loop: O(BATCH * 16^2). Clifford kernels are
+            // constant-bounded by the 16-blade basis.
+            // AX-ID: AXIOMA-001, HOT-130 mitigation.
             for i in 0..DENSE_BATCH {
                 let p = sparse_geometric_product(black_box(&dense[i]), black_box(&dense[i + 1]))
                     .expect("dense product should produce output");
