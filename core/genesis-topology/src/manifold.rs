@@ -469,20 +469,8 @@ impl ManifoldCollector {
                 tri_tmp,
             );
 
-            let residual_norm = lanczos_residual_norm(
-                n,
-                sigma,
-                &degrees[..n],
-                &adj_offsets[..n],
-                adj_flat.as_slice(),
-                &q_curr[..n],
-                &mut y[..n],
-                lanczos.lambda,
-            );
             debug_assert!(lanczos.iterations <= max_iters);
-            let needs_refinement = !lanczos.lambda.is_finite()
-                || !lanczos.converged
-                || residual_norm > POWER_REFINE_RESIDUAL_EPS;
+            let needs_refinement = !lanczos.lambda.is_finite() || !lanczos.converged;
 
             let lambda = if needs_refinement {
                 let lambda_refined = power_refine_shifted_eigenvalue(
@@ -850,25 +838,6 @@ fn lanczos_largest_shifted_eigenvalue(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lanczos_residual_norm(
-    n: usize,
-    sigma: f64,
-    degrees: &[f64],
-    adj_offsets: &[(usize, usize)],
-    adj_flat: &[usize],
-    v: &[f64],
-    y: &mut [f64],
-    lambda: f64,
-) -> f64 {
-    if !lambda.is_finite() {
-        return f64::INFINITY;
-    }
-    shifted_mv_inplace(n, sigma, degrees, adj_offsets, adj_flat, v, y);
-    deflate_ones(y);
-    refinement_residual_norm(v, y, lambda)
-}
-
-#[allow(clippy::too_many_arguments)]
 fn power_refine_shifted_eigenvalue(
     n: usize,
     sigma: f64,
@@ -1043,62 +1012,76 @@ fn reorthogonalize(w: &mut [f64], basis: &[f64], vectors: usize, stride: usize, 
 fn largest_tridiagonal_eigenvalue(
     alpha: &[f64],
     beta: &[f64],
-    v: &mut [f64],
-    tmp: &mut [f64],
+    _v: &mut [f64],
+    _tmp: &mut [f64],
 ) -> f64 {
     let m = alpha.len();
     if m == 0 {
         return 0.0;
     }
-    for (i, vi) in v.iter_mut().enumerate() {
-        *vi = if i % 2 == 0 { 1.0 } else { -1.0 };
-    }
-    let mut norm = vec_norm(v);
-    if norm < 1e-14 {
+    if m == 1 {
         return alpha[0];
     }
-    for vi in v.iter_mut() {
-        *vi /= norm;
+
+    let mut lower = f64::INFINITY;
+    let mut upper = f64::NEG_INFINITY;
+    for i in 0..m {
+        let left = if i > 0 { beta[i - 1].abs() } else { 0.0 };
+        let right = if i + 1 < m { beta[i].abs() } else { 0.0 };
+        let radius = left + right;
+        lower = lower.min(alpha[i] - radius);
+        upper = upper.max(alpha[i] + radius);
     }
 
-    let mut lambda_prev = f64::NEG_INFINITY;
-    for _ in 0..32 {
-        tridiagonal_mv(alpha, beta, v, tmp);
-        let lambda = dot(v, tmp);
-        norm = vec_norm(tmp);
-        if norm < 1e-14 {
-            break;
-        }
-        for (vi, ti) in v.iter_mut().zip(tmp.iter()) {
-            *vi = *ti / norm;
-        }
-        if (lambda - lambda_prev).abs() < 1e-12 {
-            lambda_prev = lambda;
-            break;
-        }
-        lambda_prev = lambda;
+    if !lower.is_finite() || !upper.is_finite() {
+        return f64::NAN;
     }
-    lambda_prev
+    if (upper - lower).abs() <= f64::EPSILON {
+        return upper;
+    }
+
+    for _ in 0..64 {
+        let mid = 0.5 * (lower + upper);
+        if tridiagonal_eigenvalues_leq(alpha, beta, mid) >= m {
+            upper = mid;
+        } else {
+            lower = mid;
+        }
+    }
+    upper
 }
 
-fn tridiagonal_mv(alpha: &[f64], beta: &[f64], x: &[f64], out: &mut [f64]) {
-    let m = alpha.len();
-    for i in 0..m {
-        let mut acc = alpha[i].mul_add(x[i], 0.0);
-        if i > 0 {
-            acc = beta[i - 1].mul_add(x[i - 1], acc);
-        }
-        if i + 1 < m {
-            acc = beta[i].mul_add(x[i + 1], acc);
-        }
-        out[i] = acc;
+fn tridiagonal_eigenvalues_leq(alpha: &[f64], beta: &[f64], x: f64) -> usize {
+    const PIVOT_EPS: f64 = 1e-18;
+
+    let mut count = 0usize;
+    let mut pivot = alpha[0] - x;
+    if pivot <= 0.0 {
+        count += 1;
     }
+
+    for i in 1..alpha.len() {
+        let safe_pivot = if pivot.abs() < PIVOT_EPS {
+            if pivot.is_sign_negative() {
+                -PIVOT_EPS
+            } else {
+                PIVOT_EPS
+            }
+        } else {
+            pivot
+        };
+        pivot = alpha[i] - x - beta[i - 1] * beta[i - 1] / safe_pivot;
+        if pivot <= 0.0 {
+            count += 1;
+        }
+    }
+    count
 }
 
 /// Project out the all-ones component from v (deflation for λ₁=0).
 fn deflate_ones(v: &mut [f64]) {
-    // Length of the eigenvector ≤ N. For N < 2^52, cast exact. Normalization of
-    // eigenvector normalization does not require exact integer arithmetic.
+    // Length of the eigenvector ≤ N. For N < 2^52, cast exact.
+    // Eigenvector normalization does not require exact integer arithmetic.
     #[allow(clippy::cast_precision_loss)]
     let n = v.len() as f64;
     let mean = v.iter().sum::<f64>() / n;
@@ -1147,7 +1130,7 @@ mod tests {
         degrees: &[f64],
         adj_offsets: &[(usize, usize)],
         adj_flat: &[usize],
-    ) -> (LanczosResult, Vec<f64>, f64) {
+    ) -> (LanczosResult, Vec<f64>) {
         let max_iters = LANCZOS_MAX_ITERS_DEFAULT.min(n);
         let mut y = vec![0.0; n];
         let mut q_prev = vec![0.0; n];
@@ -1175,17 +1158,7 @@ mod tests {
             &mut tri_vec,
             &mut tri_tmp,
         );
-        let residual = lanczos_residual_norm(
-            n,
-            sigma,
-            degrees,
-            adj_offsets,
-            adj_flat,
-            &q_curr,
-            &mut y,
-            result.lambda,
-        );
-        (result, q_curr, residual)
+        (result, q_curr)
     }
 
     fn power_iteration_lambda2_reference(manifold: &ManifoldCollector, max_iters: usize) -> f64 {
@@ -1544,17 +1517,10 @@ mod tests {
         let (degrees, adj_offsets, adj_flat) = build_graph_csr(n, &edges);
         let sigma = degrees.iter().copied().fold(0.0f64, f64::max) + 1e-6;
 
-        let (lanczos, q_curr, residual) =
-            run_lanczos_on_csr(n, sigma, &degrees, &adj_offsets, &adj_flat);
-        let needs_refinement = !lanczos.lambda.is_finite()
-            || !lanczos.converged
-            || residual > POWER_REFINE_RESIDUAL_EPS;
+        let (lanczos, q_curr) = run_lanczos_on_csr(n, sigma, &degrees, &adj_offsets, &adj_flat);
+        let needs_refinement = !lanczos.lambda.is_finite() || !lanczos.converged;
 
         assert!(lanczos.converged, "exact invariant subspace must converge");
-        assert!(
-            residual <= POWER_REFINE_RESIDUAL_EPS,
-            "exact eigenvector residual must pass the skip gate: {residual}"
-        );
         assert!(
             !needs_refinement,
             "converged Lanczos result should skip power refinement"
@@ -1572,21 +1538,18 @@ mod tests {
     }
 
     #[test]
-    fn lambda2_near_threshold_lanczos_triggers_refinement_on_path_graph() {
+    fn lambda2_path_graph_converged_lanczos_skips_refinement() {
         let n = 10usize;
         let edges: Vec<_> = (0..(n - 1)).map(|i| (i, i + 1)).collect();
         let (degrees, adj_offsets, adj_flat) = build_graph_csr(n, &edges);
         let sigma = degrees.iter().copied().fold(0.0f64, f64::max) + 1e-6;
 
-        let (lanczos, mut q_curr, residual) =
-            run_lanczos_on_csr(n, sigma, &degrees, &adj_offsets, &adj_flat);
-        let needs_refinement = !lanczos.lambda.is_finite()
-            || !lanczos.converged
-            || residual > POWER_REFINE_RESIDUAL_EPS;
+        let (lanczos, mut q_curr) = run_lanczos_on_csr(n, sigma, &degrees, &adj_offsets, &adj_flat);
+        let needs_refinement = !lanczos.lambda.is_finite() || !lanczos.converged;
 
         assert!(
-            needs_refinement,
-            "Lanczos should not skip refinement when convergence metadata or residual is insufficient"
+            !needs_refinement,
+            "converged Lanczos metadata should skip refinement without a Krylov-basis residual gate"
         );
 
         let mut y = vec![0.0; n];
@@ -1604,9 +1567,16 @@ mod tests {
             refined.is_finite(),
             "refinement must produce a finite value"
         );
+        let theoretical_lambda2 = 2.0 - 2.0 * (core::f64::consts::PI / n as f64).cos();
+        let theoretical_shifted = sigma - theoretical_lambda2;
         assert!(
-            (refined - lanczos.lambda).abs() > 1e-8 || residual > POWER_REFINE_RESIDUAL_EPS,
-            "fixture must exercise the refinement branch rather than a no-op path"
+            (lanczos.lambda - theoretical_shifted).abs() <= 1e-9,
+            "Lanczos path-graph eigenvalue must match theory: lanczos={}, theoretical={theoretical_shifted}",
+            lanczos.lambda
+        );
+        assert!(
+            refined.abs() <= sigma + 1.0,
+            "manual refinement must remain bounded: refined={refined}, sigma={sigma}"
         );
     }
 
