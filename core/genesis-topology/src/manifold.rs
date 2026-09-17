@@ -19,13 +19,13 @@ const POWER_REFINE_DELTA_EPS: f64 = 1e-8;
 const POWER_REFINE_STABLE_ITERS: usize = 3;
 const POWER_REFINE_RESIDUAL_EPS: f64 = 1e-6;
 
-// Policy of maintenance for collectors topological critical.
+// Maintenance policy for critical topological collectors.
 //
 // - `#[inline(always)]` is forbidden by default; an exception requires
-//   justification documentada (benchmark + architectural rationale + risk).
-// - `cfg` rules of the codec: any branch conditioned by
-//   `feature = "hnsw-f16"` or `genesis_const_layer0_codec` must keep
-//   counterpart `not(...)` verifiesble for prevent symbols orphan.
+//   documented justification with benchmarks, architectural rationale, and risk.
+// - Codec `cfg` rules: every branch conditioned by `feature = "hnsw-f16"`
+//   or `genesis_const_layer0_codec` must keep its `not(...)` counterpart
+//   verifiable to prevent orphaned symbols.
 //
 // AX-ID: AXIOMA-007, AXIOMA-013, H_restricción (LEY_FUNDACIONAL §5.6)
 
@@ -39,26 +39,26 @@ const POWER_REFINE_RESIDUAL_EPS: f64 = 1e-6;
 /// # Cognitive semantics
 ///
 /// The Poincaré disk represents hierarchies naturally:
-/// - **Center of the disk** (`|coord| → 0`): concepts root of high connectivity
-///   (baja Ollivier-Ricci curvature, muchos vecinos HNSW).
-/// - **Edge of the disk** (`|coord| → 1`): concepts hoja of baja connectivity
-///   (high curvature, pocos vecinos, high especificidad semantic).
+/// - **Center of the disk** (`|coord| → 0`): root concepts with high connectivity
+///   (low Ollivier-Ricci curvature, many HNSW neighbors).
+/// - **Edge of the disk** (`|coord| → 1`): leaf concepts with low connectivity
+///   (high curvature, few neighbors, high semantic specificity).
 ///
 /// The hyperbolic distance between two points grows exponentially towards the
-///edge, which allows representing hierarchies with exponential depth
-/// in espacio lineal.
+/// edge, which allows representing hierarchies with exponential depth
+/// in linear space.
 ///
 /// # State of activation
 ///
-/// **Contract — no active yet.**
+/// **Contract — not active yet.**
 /// The field `hyperbolic_coords` in `ManifoldCollector` exists but always
 /// returns `None` until `DiscreteRicciFlow` (CRATE-004) starts
-/// updatesr coordenadas with `ManifoldCollector::set_hyperbolic_coord()`.
+/// updating coordinates through `ManifoldCollector::set_hyperbolic_coord()`.
 ///
 /// CRATE-004 will compute coordinates using the projection formula based on
-/// curvature local: `r = tanh(K_avg_node / 2)`, an angle derived from Kuramoto synchrony.
+/// local curvature: `r = tanh(K_avg_node / 2)`, with an angle derived from Kuramoto synchrony.
 ///
-/// # Invariants physical of the disk of Poincaré
+/// # Physical invariants of the Poincaré disk
 /// ```
 /// use genesis_topology::manifold::HyperbolicCoord;
 ///
@@ -74,20 +74,20 @@ const POWER_REFINE_RESIDUAL_EPS: f64 = 1e-6;
 /// assert!((d - 2.0_f64 * 0.5_f64.atanh()).abs() < 1e-12);
 /// ```
 ///
-/// AX-ID: AXIOMA-004 (paisaje of atractores), LEY_FUNDACIONAL §7.2
+/// AX-ID: AXIOMA-004 (attractor landscape), LEY_FUNDACIONAL §7.2
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HyperbolicCoord {
     /// Coordinate x on the disk of Poincaré. `x² + y² < 1`.
     pub x: f64,
-    /// Coordinate and on the disk of Poincaré. `x² + y² < 1`.
+    /// Coordinate y on the disk of Poincaré. `x² + y² < 1`.
     pub y: f64,
 }
 
 impl HyperbolicCoord {
-    /// Constructor validated. Returns `None` if `x² + y² ≥ 1`.
+    /// Validated constructor. Returns `None` if `x² + y² ≥ 1`.
     ///
     /// # Invariant
-    /// Todo `HyperbolicCoord` valid satisfies `self.norm_sq() < 1.0`.
+    /// Every valid `HyperbolicCoord` satisfies `self.norm_sq() < 1.0`.
     ///
     /// ```
     /// use genesis_topology::manifold::HyperbolicCoord;
@@ -129,10 +129,10 @@ impl HyperbolicCoord {
     }
 }
 
-/// Workspace per thread for `compute_lambda2`. All the buffers are `Vec` dynamic.
-/// It redimensionan lazy with crecimiento geometric (`next_power_of_two`) para
-/// amortize reallocations and improve locality of cache.
-/// Sin limit fijo of nodes — only the memory of the system lo acotat.
+/// Per-thread workspace for `compute_lambda2`; all buffers are dynamic `Vec`s.
+/// Buffers grow lazily to the next power of two to amortize reallocations and
+/// improve cache locality.
+/// Node count is bounded only by available system memory.
 #[repr(C, align(32))]
 #[derive(Default)]
 struct LambdaWorkspace {
@@ -161,7 +161,7 @@ impl LambdaWorkspace {
 }
 
 fn ensure_lambda_workspace_capacity(ws: &mut LambdaWorkspace, n: usize, max_iters: usize) {
-    // ── Redimensionamiento lazy with crecimiento geometric ──────────
+    // Lazily grow buffers geometrically to preserve amortized allocation cost.
     let n_cap = n.next_power_of_two();
     if ws.degrees.len() < n {
         ws.degrees.resize(n_cap, 0.0);
@@ -204,7 +204,7 @@ use genesis_types::{GenesisError, NodeId, REDUNDANCY_RADIUS};
 /// Wraps `HnswGraph` and provides:
 /// - Topological metrics (λ₂, edge density, H¹)
 /// - Structural queries (affected nodes)
-/// - Invariant verifiestion interfaces
+/// - Invariant verification interfaces
 /// - Hyperbolic coordinates (contract for CRATE-004 — inactive until Ricci flow)
 ///
 /// AX-ID: AXIOMA-007, AXIOMA-013, AXIOMA-014, `H_restricción` §3.5
@@ -214,12 +214,12 @@ pub struct ManifoldCollector {
     /// Hyperbolic coordinates per node on the disk of Poincaré.
     ///
     /// **Contract — populated by CRATE-004 (`DiscreteRicciFlow`).**
-    /// Before of that CRATE-004 this implementado, this Vec is empty y
-    /// `hyperbolic_coord(id)` siempre returns `None`.
+    /// Until CRATE-004 is implemented, this vector is empty and
+    /// `hyperbolic_coord(id)` always returns `None`.
     ///
     /// Stored as Vec sorted by `NodeId::get()` for search O(log N)
-    /// without HashMap (cumple restricción of hot-path of the workspace).
-    /// Insertado mediante `set_hyperbolic_coord()` with maintenance of order.
+    /// without `HashMap`, preserving the workspace hot-path restriction.
+    /// Inserted through `set_hyperbolic_coord()` while maintaining order.
     ///
     /// AX-ID: AXIOMA-004, LEY_FUNDACIONAL §7.2
     hyperbolic_coords: Vec<(u64, HyperbolicCoord)>,
@@ -252,7 +252,7 @@ impl ManifoldCollector {
     pub fn insert(&mut self, id: NodeId, vec: &SparseCliffordVector) -> Result<(), GenesisError> {
         self.graph.insert(id, vec)?;
 
-        // Actualizar state incremental of H¹.
+        // Update the incremental H¹ state.
         self.h1_state.add_node();
 
         // BN-02: Stack-allocated neighbour buffer for full multi-layer unique union.
@@ -365,12 +365,13 @@ impl ManifoldCollector {
         if n < 2 {
             return 0.0;
         }
-        // N = node_count(). Para N < 2^52 (limit físico of memory), usize→f64 exact.
-        // Calculation of density of edges: N·log(N) no requires precisión of entero exact.
+        // For N < 2^52, which exceeds practical memory limits, usize-to-f64
+        // conversion is exact; the density denominator does not require exact
+        // integer arithmetic beyond that bound.
         #[allow(clippy::cast_precision_loss)]
         let n_f = n as f64;
         let log_n = n_f.log(EDGE_DENSITY_LOG_BASE).max(1.0);
-        // edge_count ≤ N² and for N < 2^52 the cast a f64 is aceptable for metric.
+        // edge_count ≤ N²; for N < 2^52, casting to f64 is acceptable for this metric.
         #[allow(clippy::cast_precision_loss)]
         let edge_count_f = self.graph.edge_count() as f64;
         edge_count_f / (n_f * log_n)
@@ -383,8 +384,8 @@ impl ManifoldCollector {
     /// Convergence: `|λ_new - λ_old| < 1e-9` or max 50 iterations.
     /// Reorthogonalisation: every 10 iterations.
     ///
-    /// En graphs N<200 power iteration can be competitivo; Lanczos gana
-    /// at scale N>1000 by convergence in fewer iterations.
+    /// For graphs with N < 200, power iteration can be competitive; Lanczos wins
+    /// at N > 1000 by converging in fewer iterations.
     /// Returns 0.0 for disconnected graphs or graphs with < 2 nodes.
     ///
     /// # Panics
@@ -392,6 +393,8 @@ impl ManifoldCollector {
     ///
     /// AX-ID: `LEY_FUNDACIONAL` §5.3, `H_restricción` §3.5
     pub fn compute_lambda2(&self) -> f64 {
+        // HOT PATH: O(N + E) per spectral constraint evaluation; all scratch
+        // buffers come from `LAMBDA_SCRATCH` to avoid steady-state allocation.
         let n = self.graph.node_count();
         if n < 2 {
             return 0.0;
@@ -449,7 +452,7 @@ impl ManifoldCollector {
                 return 0.0;
             }
 
-            let lambda_lanczos = lanczos_largest_shifted_eigenvalue(
+            let lanczos = lanczos_largest_shifted_eigenvalue(
                 n,
                 sigma,
                 &degrees[..n],
@@ -465,20 +468,28 @@ impl ManifoldCollector {
                 tri_vec,
                 tri_tmp,
             );
-            let lambda_refined = power_refine_shifted_eigenvalue(
-                n,
-                sigma,
-                &degrees[..n],
-                &adj_offsets[..n],
-                adj_flat.as_slice(),
-                &mut q_curr[..n],
-                &mut y[..n],
-                POWER_REFINE_MAX_ITERS,
-            );
-            let lambda = if lambda_refined.is_finite() {
-                lambda_refined
+
+            debug_assert!(lanczos.iterations <= max_iters);
+            let needs_refinement = !lanczos.lambda.is_finite() || !lanczos.converged;
+
+            let lambda = if needs_refinement {
+                let lambda_refined = power_refine_shifted_eigenvalue(
+                    n,
+                    sigma,
+                    &degrees[..n],
+                    &adj_offsets[..n],
+                    adj_flat.as_slice(),
+                    &mut q_curr[..n],
+                    &mut y[..n],
+                    POWER_REFINE_MAX_ITERS,
+                );
+                if lambda_refined.is_finite() {
+                    lambda_refined
+                } else {
+                    lanczos.lambda
+                }
             } else {
-                lambda_lanczos
+                lanczos.lambda
             };
 
             if !lambda.is_finite() {
@@ -498,10 +509,10 @@ impl ManifoldCollector {
         Ok(usize::from(!CohomologyValidator::check_h1(&complex)))
     }
 
-    /// Verifica H¹ = 0 using the state incremental (O(1)).
+    /// Verify H¹ = 0 using the incremental state (O(1)).
     ///
-    /// Para verifiestion full (con rebuild of RipsComplex), use
-    /// `compute_h1()` which is still available for checkpointing.
+    /// For full verification with `RipsComplex` reconstruction, use
+    /// `compute_h1()`, which remains available for checkpointing.
     ///
     /// AX-ID: AXIOMA-007, AXIOMA-009
     #[allow(clippy::inline_always)]
@@ -552,13 +563,13 @@ impl ManifoldCollector {
 
     /// Returns the hyperbolic coordinate of the node, if it has been assigned by CRATE-004.
     ///
-    /// # State actual
+    /// # Current state
     /// Always returns `None` until `DiscreteRicciFlow` (CRATE-004) starts
-    /// a llamar `set_hyperbolic_coord()`. Ver `HyperbolicCoord` for la
-    /// full specification of the activation protocol.
+    /// calling `set_hyperbolic_coord()`. See `HyperbolicCoord` for the full
+    /// activation protocol specification.
     ///
     /// # Complexity
-    /// O(log N) — search binaria over Vec sorted (sin HashMap).
+    /// O(log N) — binary search over a sorted `Vec`, without `HashMap`.
     ///
     /// AX-ID: AXIOMA-004, LEY_FUNDACIONAL §7.2
     pub fn hyperbolic_coord(&self, id: NodeId) -> Option<HyperbolicCoord> {
@@ -571,8 +582,8 @@ impl ManifoldCollector {
 
     /// Assigns or updates the hyperbolic coordinate of a node.
     ///
-    /// # Contract of llamada
-    ///Only must be called per `DiscreteRicciFlow` (CRATE-004) tras compute
+    /// # Call contract
+    /// Must only be called by `DiscreteRicciFlow` (CRATE-004) after computing
     /// the Ollivier-Ricci curvature of the node.
     ///
     /// # Invariant preservado
@@ -595,8 +606,8 @@ impl ManifoldCollector {
 
     /// Number of nodes with assigned hyperbolic coordinates.
     ///
-    /// En state normal (CRATE-004 no implementado): siempre 0.
-    /// Useful for diagnóstico and tests.
+    /// In the normal state before CRATE-004 is implemented, this is always 0.
+    /// Useful for diagnostics and tests.
     pub const fn hyperbolic_coord_count(&self) -> usize {
         self.hyperbolic_coords.len()
     }
@@ -676,7 +687,7 @@ fn prepare_laplacian_data(
         }
 
         let pushed = graph.extend_neighbors_dedup(
-            NodeId::try_new(raw_id).expect("NodeId válido por construcción"),
+            NodeId::try_new(raw_id).expect("NodeId valid by construction"),
             seen_marks,
             *seen_generation,
             adj_flat,
@@ -713,6 +724,19 @@ fn prepare_laplacian_data(
     )
 }
 
+/// Convergence metadata for the shifted Lanczos estimate.
+///
+/// Keeps the public `compute_lambda2` API scalar while allowing the private
+/// path to decide whether power refinement is numerically necessary.
+///
+/// AX-ID: `LEY_FUNDACIONAL` §5.3, `H_restricción` §3.5
+#[derive(Debug, Clone, Copy)]
+struct LanczosResult {
+    lambda: f64,
+    converged: bool,
+    iterations: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn lanczos_largest_shifted_eigenvalue(
     n: usize,
@@ -729,7 +753,7 @@ fn lanczos_largest_shifted_eigenvalue(
     beta: &mut [f64],
     tri_vec: &mut [f64],
     tri_tmp: &mut [f64],
-) -> f64 {
+) -> LanczosResult {
     for i in 0..n {
         q_curr[i] = if i % 2 == 0 { 1.0 } else { -1.0 };
         q_prev[i] = 0.0;
@@ -739,7 +763,11 @@ fn lanczos_largest_shifted_eigenvalue(
     deflate_ones(q_curr);
     let norm = vec_norm(q_curr);
     if norm < 1e-14 {
-        return 0.0;
+        return LanczosResult {
+            lambda: 0.0,
+            converged: false,
+            iterations: 0,
+        };
     }
     for x in q_curr.iter_mut() {
         *x /= norm;
@@ -751,7 +779,11 @@ fn lanczos_largest_shifted_eigenvalue(
 
     let mut lambda_prev = f64::NEG_INFINITY;
 
+    let mut converged = false;
+    let mut iterations = 0usize;
+
     for k in 0..max_iters {
+        iterations = k + 1;
         shifted_mv_inplace(n, sigma, degrees, adj_offsets, adj_flat, q_curr, w);
         deflate_ones(w);
 
@@ -778,11 +810,16 @@ fn lanczos_largest_shifted_eigenvalue(
         );
         if (lambda_new - lambda_prev).abs() < LANCZOS_CONVERGENCE_EPS {
             lambda_prev = lambda_new;
+            converged = true;
             break;
         }
         lambda_prev = lambda_new;
 
-        if beta[k] < 1e-14 || k + 1 == max_iters {
+        if beta[k] < 1e-14 {
+            converged = lambda_prev.is_finite();
+            break;
+        }
+        if k + 1 == max_iters {
             break;
         }
 
@@ -793,7 +830,11 @@ fn lanczos_largest_shifted_eigenvalue(
         q_curr.copy_from_slice(y);
     }
 
-    lambda_prev
+    LanczosResult {
+        lambda: lambda_prev,
+        converged,
+        iterations,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -971,62 +1012,76 @@ fn reorthogonalize(w: &mut [f64], basis: &[f64], vectors: usize, stride: usize, 
 fn largest_tridiagonal_eigenvalue(
     alpha: &[f64],
     beta: &[f64],
-    v: &mut [f64],
-    tmp: &mut [f64],
+    _v: &mut [f64],
+    _tmp: &mut [f64],
 ) -> f64 {
     let m = alpha.len();
     if m == 0 {
         return 0.0;
     }
-    for (i, vi) in v.iter_mut().enumerate() {
-        *vi = if i % 2 == 0 { 1.0 } else { -1.0 };
-    }
-    let mut norm = vec_norm(v);
-    if norm < 1e-14 {
+    if m == 1 {
         return alpha[0];
     }
-    for vi in v.iter_mut() {
-        *vi /= norm;
+
+    let mut lower = f64::INFINITY;
+    let mut upper = f64::NEG_INFINITY;
+    for i in 0..m {
+        let left = if i > 0 { beta[i - 1].abs() } else { 0.0 };
+        let right = if i + 1 < m { beta[i].abs() } else { 0.0 };
+        let radius = left + right;
+        lower = lower.min(alpha[i] - radius);
+        upper = upper.max(alpha[i] + radius);
     }
 
-    let mut lambda_prev = f64::NEG_INFINITY;
-    for _ in 0..32 {
-        tridiagonal_mv(alpha, beta, v, tmp);
-        let lambda = dot(v, tmp);
-        norm = vec_norm(tmp);
-        if norm < 1e-14 {
-            break;
-        }
-        for (vi, ti) in v.iter_mut().zip(tmp.iter()) {
-            *vi = *ti / norm;
-        }
-        if (lambda - lambda_prev).abs() < 1e-12 {
-            lambda_prev = lambda;
-            break;
-        }
-        lambda_prev = lambda;
+    if !lower.is_finite() || !upper.is_finite() {
+        return f64::NAN;
     }
-    lambda_prev
+    if (upper - lower).abs() <= f64::EPSILON {
+        return upper;
+    }
+
+    for _ in 0..64 {
+        let mid = 0.5 * (lower + upper);
+        if tridiagonal_eigenvalues_leq(alpha, beta, mid) >= m {
+            upper = mid;
+        } else {
+            lower = mid;
+        }
+    }
+    upper
 }
 
-fn tridiagonal_mv(alpha: &[f64], beta: &[f64], x: &[f64], out: &mut [f64]) {
-    let m = alpha.len();
-    for i in 0..m {
-        let mut acc = alpha[i].mul_add(x[i], 0.0);
-        if i > 0 {
-            acc = beta[i - 1].mul_add(x[i - 1], acc);
-        }
-        if i + 1 < m {
-            acc = beta[i].mul_add(x[i + 1], acc);
-        }
-        out[i] = acc;
+fn tridiagonal_eigenvalues_leq(alpha: &[f64], beta: &[f64], x: f64) -> usize {
+    const PIVOT_EPS: f64 = 1e-18;
+
+    let mut count = 0usize;
+    let mut pivot = alpha[0] - x;
+    if pivot <= 0.0 {
+        count += 1;
     }
+
+    for i in 1..alpha.len() {
+        let safe_pivot = if pivot.abs() < PIVOT_EPS {
+            if pivot.is_sign_negative() {
+                -PIVOT_EPS
+            } else {
+                PIVOT_EPS
+            }
+        } else {
+            pivot
+        };
+        pivot = alpha[i] - x - beta[i - 1] * beta[i - 1] / safe_pivot;
+        if pivot <= 0.0 {
+            count += 1;
+        }
+    }
+    count
 }
 
 /// Project out the all-ones component from v (deflation for λ₁=0).
 fn deflate_ones(v: &mut [f64]) {
-    // Length of the eigenvector ≤ N. For N < 2^52, cast exact. Normalization of
-    // eigenvector no requires arithmetic of entero exact.
+    // Length of the eigenvector ≤ N. For N < 2^52, cast exact.
+    // Eigenvector normalization does not require exact integer arithmetic.
     #[allow(clippy::cast_precision_loss)]
     let n = v.len() as f64;
     let mean = v.iter().sum::<f64>() / n;
@@ -1041,6 +1096,70 @@ mod tests {
     use genesis_types::NodeId;
 
     use super::*;
+
+    fn build_graph_csr(
+        n: usize,
+        edges: &[(usize, usize)],
+    ) -> (Vec<f64>, Vec<(usize, usize)>, Vec<usize>) {
+        let mut neighbors = vec![Vec::<usize>::new(); n];
+        for &(u, v) in edges {
+            neighbors[u].push(v);
+            neighbors[v].push(u);
+        }
+        for row in &mut neighbors {
+            row.sort_unstable();
+            row.dedup();
+        }
+
+        let mut degrees = vec![0.0; n];
+        let mut adj_offsets = vec![(0usize, 0usize); n];
+        let mut adj_flat = Vec::new();
+        for i in 0..n {
+            let start = adj_flat.len();
+            adj_flat.extend_from_slice(&neighbors[i]);
+            let end = adj_flat.len();
+            degrees[i] = (end - start) as f64;
+            adj_offsets[i] = (start, end);
+        }
+        (degrees, adj_offsets, adj_flat)
+    }
+
+    fn run_lanczos_on_csr(
+        n: usize,
+        sigma: f64,
+        degrees: &[f64],
+        adj_offsets: &[(usize, usize)],
+        adj_flat: &[usize],
+    ) -> (LanczosResult, Vec<f64>) {
+        let max_iters = LANCZOS_MAX_ITERS_DEFAULT.min(n);
+        let mut y = vec![0.0; n];
+        let mut q_prev = vec![0.0; n];
+        let mut q_curr = vec![0.0; n];
+        let mut w = vec![0.0; n];
+        let mut basis = vec![0.0; n * max_iters];
+        let mut alpha = vec![0.0; max_iters];
+        let mut beta = vec![0.0; max_iters];
+        let mut tri_vec = vec![0.0; max_iters];
+        let mut tri_tmp = vec![0.0; max_iters];
+
+        let result = lanczos_largest_shifted_eigenvalue(
+            n,
+            sigma,
+            degrees,
+            adj_offsets,
+            adj_flat,
+            &mut y,
+            &mut q_prev,
+            &mut q_curr,
+            &mut w,
+            &mut basis,
+            &mut alpha,
+            &mut beta,
+            &mut tri_vec,
+            &mut tri_tmp,
+        );
+        (result, q_curr)
+    }
 
     fn power_iteration_lambda2_reference(manifold: &ManifoldCollector, max_iters: usize) -> f64 {
         let n = manifold.graph.node_count();
@@ -1064,7 +1183,7 @@ mod tests {
                 seen_generation = 1;
             }
             let pushed = manifold.graph.extend_neighbors_dedup(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &mut seen_marks,
                 seen_generation,
                 &mut adj_flat,
@@ -1168,7 +1287,7 @@ mod tests {
         let mut m = ManifoldCollector::new(16);
         for i in 0..50u64 {
             m.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &make_vec(i),
             )
             .unwrap();
@@ -1192,7 +1311,7 @@ mod tests {
         let mut m = ManifoldCollector::new(16);
         for i in 0..8u64 {
             m.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &make_vec(i),
             )
             .unwrap();
@@ -1218,16 +1337,16 @@ mod tests {
         let mut m = ManifoldCollector::new(16);
         for i in 0..10u64 {
             m.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &make_vec(i),
             )
             .unwrap();
         }
         let l2 = m.compute_lambda2();
-        assert!(l2 >= 0.0, "lambda2 nunca puede ser negativo");
+        assert!(l2 >= 0.0, "lambda2 must never be negative");
         assert!(
             l2 > 0.0,
-            "grafo conectado debe tener lambda2 > 0, obtenido {}",
+            "connected graph must have lambda2 > 0, got {}",
             l2
         );
     }
@@ -1236,7 +1355,7 @@ mod tests {
     fn lambda2_zero_for_disconnected_graph() {
         let mut m = ManifoldCollector::new(4);
         m.insert(
-            NodeId::try_new(0).expect("NodeId válido por construcción"),
+            NodeId::try_new(0).expect("NodeId valid by construction"),
             &make_vec(0),
         )
         .unwrap();
@@ -1247,7 +1366,7 @@ mod tests {
     fn lambda2_zero_for_two_disconnected_components() {
         let mut m = ManifoldCollector::new(4);
         m.insert(
-            NodeId::try_new(0).expect("NodeId válido por construcción"),
+            NodeId::try_new(0).expect("NodeId valid by construction"),
             &make_vec(0),
         )
         .unwrap();
@@ -1260,14 +1379,14 @@ mod tests {
         let vecs: Vec<_> = (0..10).map(make_vec).collect();
         for (i, v) in vecs.iter().enumerate() {
             m.insert(
-                NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+                NodeId::try_new(i as u64).expect("NodeId valid by construction"),
                 v,
             )
             .unwrap();
         }
         let l2 = m.compute_lambda2();
-        assert!(l2 >= 0.0, "lambda2 nunca negativa");
-        assert!(l2 < 10.0, "lambda2 acotada por grado máximo");
+        assert!(l2 >= 0.0, "lambda2 must never be negative");
+        assert!(l2 < 10.0, "lambda2 must be bounded by maximum degree");
     }
 
     #[test]
@@ -1275,21 +1394,18 @@ mod tests {
         let mut m = ManifoldCollector::new(16);
         for i in 0..5u64 {
             m.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &make_vec(i),
             )
             .unwrap();
         }
 
-        m.remove_node(NodeId::try_new(2).expect("NodeId válido por construcción"))
+        m.remove_node(NodeId::try_new(2).expect("NodeId valid by construction"))
             .unwrap();
 
         let lambda2 = m.compute_lambda2();
-        assert!(lambda2.is_finite(), "lambda2 debe ser finita");
-        assert!(
-            lambda2 > 0.0,
-            "lambda2 debe ser positiva, obtenido {lambda2}"
-        );
+        assert!(lambda2.is_finite(), "lambda2 must be finite");
+        assert!(lambda2 > 0.0, "lambda2 must be positive, got {lambda2}");
     }
 
     #[test]
@@ -1297,7 +1413,7 @@ mod tests {
         let mut m = ManifoldCollector::new(16);
         for i in 0..20u64 {
             m.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &make_vec(i),
             )
             .unwrap();
@@ -1315,7 +1431,7 @@ mod tests {
         let mut m = ManifoldCollector::new(16);
         for i in 0..5u64 {
             m.insert(
-                NodeId::try_new(i).expect("NodeId válido por construcción"),
+                NodeId::try_new(i).expect("NodeId valid by construction"),
                 &make_vec(i),
             )
             .unwrap();
@@ -1341,7 +1457,7 @@ mod tests {
                 }))
                 .expect("vector must be valid");
                 m.insert(
-                    NodeId::try_new(i as u64).expect("NodeId válido por construcción"),
+                    NodeId::try_new(i as u64).expect("NodeId valid by construction"),
                     &vec,
                 )
                 .unwrap();
@@ -1390,35 +1506,83 @@ mod tests {
     }
 
     #[test]
+    fn lambda2_converged_lanczos_skips_refinement_on_complete_graph() {
+        let n = 8usize;
+        let mut edges = Vec::new();
+        for u in 0..n {
+            for v in (u + 1)..n {
+                edges.push((u, v));
+            }
+        }
+        let (degrees, adj_offsets, adj_flat) = build_graph_csr(n, &edges);
+        let sigma = degrees.iter().copied().fold(0.0f64, f64::max) + 1e-6;
+
+        let (lanczos, q_curr) = run_lanczos_on_csr(n, sigma, &degrees, &adj_offsets, &adj_flat);
+        let needs_refinement = !lanczos.lambda.is_finite() || !lanczos.converged;
+
+        assert!(lanczos.converged, "exact invariant subspace must converge");
+        assert!(
+            !needs_refinement,
+            "converged Lanczos result should skip power refinement"
+        );
+
+        let mut y = vec![0.0; n];
+        let rayleigh = {
+            shifted_mv_inplace(n, sigma, &degrees, &adj_offsets, &adj_flat, &q_curr, &mut y);
+            dot(&q_curr, &y) / dot(&q_curr, &q_curr).max(1e-14)
+        };
+        assert!(
+            (lanczos.lambda - rayleigh).abs() <= 1e-12,
+            "Lanczos estimate must match the direct Rayleigh quotient"
+        );
+    }
+
+    #[test]
+    fn lambda2_path_graph_converged_lanczos_skips_refinement() {
+        let n = 10usize;
+        let edges: Vec<_> = (0..(n - 1)).map(|i| (i, i + 1)).collect();
+        let (degrees, adj_offsets, adj_flat) = build_graph_csr(n, &edges);
+        let sigma = degrees.iter().copied().fold(0.0f64, f64::max) + 1e-6;
+
+        let (lanczos, mut q_curr) = run_lanczos_on_csr(n, sigma, &degrees, &adj_offsets, &adj_flat);
+        let needs_refinement = !lanczos.lambda.is_finite() || !lanczos.converged;
+
+        assert!(
+            !needs_refinement,
+            "converged Lanczos metadata should skip refinement without a Krylov-basis residual gate"
+        );
+
+        let mut y = vec![0.0; n];
+        let refined = power_refine_shifted_eigenvalue(
+            n,
+            sigma,
+            &degrees,
+            &adj_offsets,
+            &adj_flat,
+            &mut q_curr,
+            &mut y,
+            POWER_REFINE_MAX_ITERS,
+        );
+        assert!(
+            refined.is_finite(),
+            "refinement must produce a finite value"
+        );
+        let theoretical_lambda2 = 2.0 - 2.0 * (core::f64::consts::PI / n as f64).cos();
+        let theoretical_shifted = sigma - theoretical_lambda2;
+        assert!(
+            (lanczos.lambda - theoretical_shifted).abs() <= 1e-9,
+            "Lanczos path-graph eigenvalue must match theory: lanczos={}, theoretical={theoretical_shifted}",
+            lanczos.lambda
+        );
+        assert!(
+            refined.abs() <= sigma + 1.0,
+            "manual refinement must remain bounded: refined={refined}, sigma={sigma}"
+        );
+    }
+
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn power_refine_matches_reference_on_test_graphs() {
-        fn build_graph_csr(
-            n: usize,
-            edges: &[(usize, usize)],
-        ) -> (Vec<f64>, Vec<(usize, usize)>, Vec<usize>) {
-            let mut neighbors = vec![Vec::<usize>::new(); n];
-            for &(u, v) in edges {
-                neighbors[u].push(v);
-                neighbors[v].push(u);
-            }
-            for row in &mut neighbors {
-                row.sort_unstable();
-                row.dedup();
-            }
-
-            let mut degrees = vec![0.0; n];
-            let mut adj_offsets = vec![(0usize, 0usize); n];
-            let mut adj_flat = Vec::new();
-            for i in 0..n {
-                let start = adj_flat.len();
-                adj_flat.extend_from_slice(&neighbors[i]);
-                let end = adj_flat.len();
-                degrees[i] = (end - start) as f64;
-                adj_offsets[i] = (start, end);
-            }
-            (degrees, adj_offsets, adj_flat)
-        }
-
         fn power_reference_shifted(
             n: usize,
             sigma: f64,
@@ -1658,36 +1822,36 @@ mod tests {
 
     // ── HyperbolicCoord contract tests ────────────────────────────────────────
 
-    /// Verifies that HyperbolicCoord::new rejects puntos fuera of the disk unitario.
+    /// Verifies that HyperbolicCoord::new rejects points outside the unit disk.
     #[test]
     fn hyperbolic_coord_rejects_outside_disk() {
         assert!(
             HyperbolicCoord::new(1.0, 0.0).is_none(),
-            "punto en el borde debe rechazarse"
+            "point on the boundary must be rejected"
         );
         assert!(
             HyperbolicCoord::new(0.8, 0.8).is_none(),
-            "0.64+0.64=1.28 fuera del disco"
+            "0.64+0.64=1.28 outside the disk"
         );
         assert!(
             HyperbolicCoord::new(f64::NAN, 0.0).is_none(),
-            "NaN debe rechazarse"
+            "NaN must be rejected"
         );
         assert!(
             HyperbolicCoord::new(f64::INFINITY, 0.0).is_none(),
-            "Inf debe rechazarse"
+            "Inf must be rejected"
         );
     }
 
-    /// Verifies that HyperbolicCoord::new acepta puntos valids dentro of the disk.
+    /// Verifies that HyperbolicCoord::new accepts valid points inside the disk.
     #[test]
     fn hyperbolic_coord_accepts_inside_disk() {
-        let c = HyperbolicCoord::new(0.5, 0.5).expect("0.25+0.25=0.5 < 1, debe aceptarse");
+        let c = HyperbolicCoord::new(0.5, 0.5).expect("0.25+0.25=0.5 < 1, must be accepted");
         assert!(c.norm_sq() < 1.0);
         assert_eq!(c.x, 0.5);
         assert_eq!(c.y, 0.5);
 
-        let origin = HyperbolicCoord::new(0.0, 0.0).expect("origen debe aceptarse");
+        let origin = HyperbolicCoord::new(0.0, 0.0).expect("origin must be accepted");
         assert_eq!(origin.norm_sq(), 0.0);
         assert_eq!(origin.hyperbolic_distance_to_origin(), 0.0);
     }
@@ -1699,11 +1863,11 @@ mod tests {
         for i in 0..5u64 {
             m.insert(NodeId::try_new(i).unwrap(), &make_vec(i)).unwrap();
         }
-        // Before of CRATE-004: any node has hyperbolic coordinate.
+        // Before CRATE-004, no node has a hyperbolic coordinate.
         for i in 0..5u64 {
             assert!(
                 m.hyperbolic_coord(NodeId::try_new(i).unwrap()).is_none(),
-                "nodo {i} no debe tener coord hiperbólica antes de CRATE-004"
+                "node {i} must not have a hyperbolic coordinate before CRATE-004"
             );
         }
         assert_eq!(m.hyperbolic_coord_count(), 0);
@@ -1735,7 +1899,7 @@ mod tests {
         );
     }
 
-    /// Verifies that set_hyperbolic_coord updates instead of duplicar.
+    /// Verifies that set_hyperbolic_coord updates instead of duplicating.
     #[test]
     fn manifold_hyperbolic_coord_update_preserves_count() {
         let mut m = ManifoldCollector::new(16);
@@ -1751,7 +1915,7 @@ mod tests {
         assert_eq!(
             m.hyperbolic_coord_count(),
             1,
-            "update no debe crear duplicado"
+            "update must not create a duplicate"
         );
         assert_eq!(m.hyperbolic_coord(NodeId::try_new(0).unwrap()), Some(c2));
     }
@@ -1802,7 +1966,7 @@ mod tests {
     }
 
     /// Checks the hyperbolic distance to the origin for a known point.
-    /// d(0, (r,0)) = 2·arctanh(r). Para r=0.5: 2·arctanh(0.5) ≈ 1.0986.
+    /// d(0, (r,0)) = 2·arctanh(r). For r=0.5: 2·arctanh(0.5) ≈ 1.0986.
     #[test]
     fn hyperbolic_distance_to_origin_known_value() {
         let c = HyperbolicCoord::new(0.5, 0.0).unwrap();
@@ -1810,7 +1974,7 @@ mod tests {
         let got = c.hyperbolic_distance_to_origin();
         assert!(
             (got - expected).abs() < 1e-12,
-            "d(0,(0.5,0)) = {got}, esperado {expected}"
+            "d(0,(0.5,0)) = {got}, expected {expected}"
         );
     }
 }
